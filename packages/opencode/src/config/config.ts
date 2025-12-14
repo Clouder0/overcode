@@ -665,6 +665,24 @@ export namespace Config {
         })
         .optional(),
       tools: z.record(z.string(), z.boolean()).optional(),
+      job: z
+        .object({
+          maxConcurrent: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Maximum number of concurrent subagent jobs per session (default: 10)"),
+          maxPerSession: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Maximum total subagent jobs per session (default: 256)"),
+          maxFrames: z.number().int().positive().optional().describe("Maximum stream frames per job (default: 1000)"),
+        })
+        .optional()
+        .describe("Job execution limits and timeouts"),
       enterprise: z
         .object({
           url: z.string().optional().describe("Enterprise URL"),
@@ -705,6 +723,12 @@ export namespace Config {
             .array(z.string())
             .optional()
             .describe("Tools that should only be available to primary agents."),
+          allowFileRefsOutsideWorktree: z
+            .boolean()
+            .optional()
+            .describe(
+              "Allow @file references to paths outside the worktree (e.g., ~/foo or /abs/path). Default is false for security.",
+            ),
         })
         .optional(),
     })

@@ -145,4 +145,13 @@ export namespace SystemPrompt {
         return [PROMPT_TITLE]
     }
   }
+
+  export function jobs(): string[] {
+    return [
+      `You may receive notifications from background jobs. These appear as messages with [Job Notification] header including job type, title, and ID. When you see these:
+- For questions: Respond by sending input to the job using the job ID
+- For errors: Decide whether to retry, cancel, or inform the user
+- For progress: Acknowledge if relevant, or continue with other work`,
+    ]
+  }
 }

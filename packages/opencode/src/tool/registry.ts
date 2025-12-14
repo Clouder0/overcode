@@ -3,13 +3,13 @@ import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { ListTool } from "./ls"
-import { BatchTool } from "./batch"
 import { ReadTool } from "./read"
-import { TaskTool } from "./task"
 import { TodoWriteTool, TodoReadTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
+import { JobListTool, JobGetTool, JobCancelTool, JobWaitTool } from "./job"
+import { JobGenerator } from "./job-generator"
 import type { Agent } from "../agent/agent"
 import { Tool } from "./tool"
 import { Instance } from "../project/instance"
@@ -83,6 +83,7 @@ export namespace ToolRegistry {
   async function all(): Promise<Tool.Info[]> {
     const custom = await state().then((x) => x.custom)
     const config = await Config.get()
+    const jobTools = JobGenerator.generateAll()
 
     return [
       InvalidTool,
@@ -93,13 +94,16 @@ export namespace ToolRegistry {
       ListTool,
       EditTool,
       WriteTool,
-      TaskTool,
+      JobListTool,
+      JobGetTool,
+      JobCancelTool,
+      JobWaitTool,
+      ...jobTools,
       WebFetchTool,
       TodoWriteTool,
       TodoReadTool,
       WebSearchTool,
       CodeSearchTool,
-      ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...custom,
     ]
   }

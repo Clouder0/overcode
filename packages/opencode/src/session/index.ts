@@ -16,6 +16,7 @@ import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
+import { Job } from "@/job"
 
 import type { Provider } from "@/provider/provider"
 
@@ -331,6 +332,12 @@ export namespace Session {
       for (const child of await children(sessionID)) {
         await remove(child.id)
       }
+      // Cancel and remove all jobs for this session (best-effort)
+      const jobs = await Job.list({ parentSessionID: sessionID })
+      await Promise.all(jobs.map((job) => Job.remove(job.id).catch(() => {})))
+      // Clean up any pending job notifications for this session
+      const { JobNotification } = await import("@/job/notification")
+      JobNotification.drain(sessionID)
       await unshare(sessionID).catch(() => {})
       for (const msg of await Storage.list(["message", sessionID])) {
         for (const part of await Storage.list(["part", msg.at(-1)!])) {

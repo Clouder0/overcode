@@ -20,6 +20,34 @@ export namespace Storage {
     }),
   )
 
+  export const InvalidKeyError = NamedError.create(
+    "StorageInvalidKeyError",
+    z.object({
+      key: z.array(z.string()),
+      reason: z.string(),
+    }),
+  )
+
+  function assertSafeSegments(segments: string[], label: string) {
+    for (const segment of segments) {
+      if (!segment) {
+        throw new InvalidKeyError({ key: segments, reason: `${label} contains empty segment` })
+      }
+      if (segment.includes("\0")) {
+        throw new InvalidKeyError({ key: segments, reason: `${label} contains null byte` })
+      }
+      if (segment === "." || segment === "..") {
+        throw new InvalidKeyError({ key: segments, reason: `${label} contains traversal segment` })
+      }
+      if (segment.includes("/") || segment.includes("\\")) {
+        throw new InvalidKeyError({ key: segments, reason: `${label} contains path separator` })
+      }
+      if (path.isAbsolute(segment)) {
+        throw new InvalidKeyError({ key: segments, reason: `${label} contains absolute segment` })
+      }
+    }
+  }
+
   const MIGRATIONS: Migration[] = [
     async (dir) => {
       const project = path.resolve(dir, "../project")
@@ -158,14 +186,17 @@ export namespace Storage {
   })
 
   export async function remove(key: string[]) {
+    assertSafeSegments(key, "key")
     const dir = await state().then((x) => x.dir)
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
+      using _ = await Lock.write(target)
       await fs.unlink(target).catch(() => {})
     })
   }
 
   export async function read<T>(key: string[]) {
+    assertSafeSegments(key, "key")
     const dir = await state().then((x) => x.dir)
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
@@ -176,6 +207,7 @@ export namespace Storage {
   }
 
   export async function update<T>(key: string[], fn: (draft: T) => void) {
+    assertSafeSegments(key, "key")
     const dir = await state().then((x) => x.dir)
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
@@ -188,6 +220,7 @@ export namespace Storage {
   }
 
   export async function write<T>(key: string[], content: T) {
+    assertSafeSegments(key, "key")
     const dir = await state().then((x) => x.dir)
     const target = path.join(dir, ...key) + ".json"
     return withErrorHandling(async () => {
@@ -209,6 +242,7 @@ export namespace Storage {
 
   const glob = new Bun.Glob("**/*")
   export async function list(prefix: string[]) {
+    assertSafeSegments(prefix, "prefix")
     const dir = await state().then((x) => x.dir)
     try {
       const result = await Array.fromAsync(
@@ -219,8 +253,12 @@ export namespace Storage {
       ).then((results) => results.map((x) => [...prefix, ...x.slice(0, -5).split(path.sep)]))
       result.sort()
       return result
-    } catch {
-      return []
+    } catch (e) {
+      // Only return empty for "directory not found" - re-throw other errors
+      if (e instanceof Error && (e as NodeJS.ErrnoException).code === "ENOENT") {
+        return []
+      }
+      throw e
     }
   }
 }
