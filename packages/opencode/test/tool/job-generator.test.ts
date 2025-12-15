@@ -557,10 +557,10 @@ describe("Batch parameter validation", () => {
       const validParsed = initialized.parameters.safeParse(validParams)
       expect(validParsed.success).toBe(true)
 
-      // Invalid limit (> 200)
+      // Invalid limit (> 65536)
       const invalidParams = {
         job_ids: ["job_123"],
-        limit: 300,
+        limit: 70000,
       }
       const invalidParsed = initialized.parameters.safeParse(invalidParams)
       expect(invalidParsed.success).toBe(false)

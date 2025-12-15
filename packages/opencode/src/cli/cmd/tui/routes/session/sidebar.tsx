@@ -1,5 +1,5 @@
 import { useSync } from "@tui/context/sync"
-import { createMemo, For, Show, Switch, Match } from "solid-js"
+import { createMemo, createSignal, createEffect, onCleanup, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { Locale } from "@/util/locale"
@@ -9,6 +9,7 @@ import { Global } from "@/global"
 import { Installation } from "@/installation"
 import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
+import { statusIcon, jobStatusColor, type JobInfo } from "../../lib/job"
 
 export function Sidebar(props: { sessionID: string }) {
   const sync = useSync()
@@ -23,10 +24,40 @@ export function Sidebar(props: { sessionID: string }) {
     diff: true,
     todo: true,
     lsp: true,
+    jobs: true,
   })
 
   // Sort MCP servers alphabetically for consistent display order
   const mcpEntries = createMemo(() => Object.entries(sync.data.mcp).sort(([a], [b]) => a.localeCompare(b)))
+
+  // Collect jobs from current session and all descendant sessions
+  const allJobs = createMemo(() => {
+    const getDescendantJobs = (parentID: string, depth: number): Array<{ job: JobInfo; depth: number }> => {
+      const children = sync.data.session.filter((s) => s.parentID === parentID)
+      const directJobs = (sync.data.job[parentID] ?? []).map((job) => ({ job, depth }))
+      const descendantJobs = children.flatMap((child) => getDescendantJobs(child.id, depth + 1))
+      return [...directJobs, ...descendantJobs]
+    }
+
+    return getDescendantJobs(props.sessionID, 0)
+  })
+
+  // Tick signal for updating job durations
+  const [tick, setTick] = createSignal(Date.now())
+  const hasRunningJobs = createMemo(() => allJobs().some(({ job }) => job.status === "running"))
+
+  createEffect(() => {
+    if (!hasRunningJobs()) return
+    const interval = setInterval(() => setTick(Date.now()), 100)
+    onCleanup(() => clearInterval(interval))
+  })
+
+  const jobDuration = (job: JobInfo) => {
+    if (job.status === "pending") return "pending"
+    const start = job.time.started ?? job.time.created
+    const end = job.time.completed ?? tick()
+    return Locale.duration(end - start)
+  }
 
   const cost = createMemo(() => {
     const total = messages().reduce((sum, x) => sum + (x.role === "assistant" ? x.cost : 0), 0)
@@ -241,6 +272,37 @@ export function Sidebar(props: { sessionID: string }) {
                         </box>
                       )
                     }}
+                  </For>
+                </Show>
+              </box>
+            </Show>
+            <Show when={allJobs().length > 0}>
+              <box>
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseDown={() => allJobs().length > 2 && setExpanded("jobs", !expanded.jobs)}
+                >
+                  <Show when={allJobs().length > 2}>
+                    <text fg={theme.text}>{expanded.jobs ? "▼" : "▶"}</text>
+                  </Show>
+                  <text fg={theme.text}>
+                    <b>Jobs</b>
+                  </text>
+                </box>
+                <Show when={allJobs().length <= 2 || expanded.jobs}>
+                  <For each={allJobs()}>
+                    {({ job, depth }) => (
+                      <box flexDirection="row" gap={1} paddingLeft={depth * 2}>
+                        <text flexShrink={0} style={{ fg: jobStatusColor(job.status, theme) }}>
+                          {statusIcon(job.status)}
+                        </text>
+                        <text fg={theme.text} wrapMode="word">
+                          {job.title}
+                          <span style={{ fg: theme.textMuted }}> ({jobDuration(job)})</span>
+                        </text>
+                      </box>
+                    )}
                   </For>
                 </Show>
               </box>

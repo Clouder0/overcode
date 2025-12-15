@@ -51,7 +51,6 @@ export namespace JobGenerator {
               throw new Error("Operation aborted")
             }
 
-            // Transform flattened jobs to createBatch format
             const jobsToCreate = params.jobs.map((job) => {
               const { title, ...rest } = job as { title: string; [key: string]: unknown }
               return { title, params: rest }
@@ -64,22 +63,12 @@ export namespace JobGenerator {
             })
 
             const successCount = result.jobs.filter((j) => j.id).length
-            ctx.metadata({
-              title: `${successCount}/${result.jobs.length} started`,
-              metadata: { successCount, total: result.jobs.length },
-            })
-
-            const lines: string[] = []
-            for (const job of result.jobs) {
-              if (job.id) {
-                lines.push(`- ${job.id}: ${job.title} (${job.status})`)
-              } else {
-                lines.push(`- FAILED: ${job.title} - ${job.error}`)
-              }
-            }
+            const lines = result.jobs.map((job) =>
+              job.id ? `- ${job.id}: ${job.title} (${job.status})` : `- FAILED: ${job.title} - ${job.error}`,
+            )
 
             return {
-              title: `${successCount}/${result.jobs.length} started`,
+              title: `${successCount}/${result.jobs.length} jobs`,
               metadata: { jobs: result.jobs },
               output: lines.join("\n"),
             }
@@ -170,7 +159,7 @@ export namespace JobGenerator {
             description: `Read outputs from one or more ${name} jobs. ${desc}`,
             parameters: z.object({
               job_ids: z.array(z.string()).describe("Job IDs to read from"),
-              limit: z.number().int().positive().max(200).optional().default(50).describe("Maximum frames per job"),
+              limit: z.number().int().positive().max(65536).optional().default(50).describe("Maximum frames per job"),
             }),
             async execute(params, ctx) {
               if (ctx.abort.aborted) {

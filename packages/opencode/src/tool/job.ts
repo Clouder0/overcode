@@ -77,6 +77,10 @@ export const JobGetTool = Tool.define("job_get", async () => {
 
       // Filter to only jobs in current session
       const result = await Job.get({ jobIDs: params.job_ids })
+      const jobs = await Job.list({ parentSessionID: ctx.sessionID })
+      const valid = new Set(jobs.map((j) => j.id))
+      const jobMap = new Map(jobs.map((j) => [j.id, j]))
+
       const sessionJobs: Array<{
         id: string
         found: boolean
@@ -93,14 +97,13 @@ export const JobGetTool = Tool.define("job_get", async () => {
           sessionJobs.push(job)
           continue
         }
-        // Verify job belongs to current session by checking via list
-        const fullJobs = await Job.list({ parentSessionID: ctx.sessionID })
-        const fullJob = fullJobs.find((j) => j.id === job.id)
-        if (!fullJob) {
+        // Verify job belongs to current session
+        if (!valid.has(job.id)) {
           sessionJobs.push({ id: job.id, found: false, lookup_error: "Access denied" })
-        } else {
-          sessionJobs.push({ ...job, parentSessionID: fullJob.parentSessionID })
+          continue
         }
+        const full = jobMap.get(job.id)!
+        sessionJobs.push({ ...job, parentSessionID: full.parentSessionID })
       }
 
       const foundCount = sessionJobs.filter((j) => j.found).length
@@ -147,13 +150,12 @@ export const JobCancelTool = Tool.define("job_cancel", async () => {
 
       // Verify all jobs belong to current session first
       const jobCheck = await Job.get({ jobIDs: params.job_ids })
+      const jobs = await Job.list({ parentSessionID: ctx.sessionID })
+      const valid = new Set(jobs.map((j) => j.id))
+
       for (const job of jobCheck.jobs) {
-        if (job.found) {
-          const fullJobs = await Job.list({ parentSessionID: ctx.sessionID })
-          const fullJob = fullJobs.find((j) => j.id === job.id)
-          if (!fullJob) {
-            throw new Error(`Cannot access job ${job.id} from different session`)
-          }
+        if (job.found && !valid.has(job.id)) {
+          throw new Error(`Cannot access job ${job.id} from different session`)
         }
       }
 
@@ -207,13 +209,12 @@ export const JobWaitTool = Tool.define("job_wait", async () => {
 
       // Verify all jobs belong to current session first
       const jobCheck = await Job.get({ jobIDs: params.job_ids })
+      const jobs = await Job.list({ parentSessionID: ctx.sessionID })
+      const valid = new Set(jobs.map((j) => j.id))
+
       for (const job of jobCheck.jobs) {
-        if (job.found) {
-          const fullJobs = await Job.list({ parentSessionID: ctx.sessionID })
-          const fullJob = fullJobs.find((j) => j.id === job.id)
-          if (!fullJob) {
-            throw new Error(`Cannot access job ${job.id} from different session`)
-          }
+        if (job.found && !valid.has(job.id)) {
+          throw new Error(`Cannot access job ${job.id} from different session`)
         }
       }
 

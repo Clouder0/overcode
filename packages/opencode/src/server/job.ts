@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { describeRoute, resolver, validator } from "hono-openapi"
 import z from "zod"
 import { Job } from "@/job"
+import { JobInfo, JobStatus } from "@/job/schema"
 import { JobStream } from "@/job/stream"
 
 const Bool = z.preprocess((v) => {
@@ -22,7 +23,7 @@ export const JobRoute = new Hono()
           description: "Jobs",
           content: {
             "application/json": {
-              schema: resolver(Job.Info.array()),
+              schema: resolver(JobInfo.array()),
             },
           },
         },
@@ -33,7 +34,7 @@ export const JobRoute = new Hono()
       z.object({
         parentSessionID: z.string().optional(),
         type: z.string().optional(),
-        status: Job.Status.optional(),
+        status: JobStatus.optional(),
         limit: z.coerce.number().int().positive().max(500).optional(),
       }),
     ),

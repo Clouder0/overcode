@@ -545,6 +545,35 @@ export type EventTodoUpdated = {
   }
 }
 
+export type JobStreamFrame = {
+  id: string
+  jobID: string
+  direction: "in" | "out"
+  data: unknown
+  notify: boolean
+  time: {
+    created: number
+  }
+}
+
+export type EventJobOutput = {
+  type: "job.output"
+  properties: {
+    jobID: string
+    sessionID: string
+    frame: JobStreamFrame
+  }
+}
+
+export type EventJobNotify = {
+  type: "job.notify"
+  properties: {
+    jobID: string
+    sessionID: string
+    frame: JobStreamFrame
+  }
+}
+
 export type EventCommandExecuted = {
   type: "command.executed"
   properties: {
@@ -552,6 +581,49 @@ export type EventCommandExecuted = {
     sessionID: string
     arguments: string
     messageID: string
+  }
+}
+
+export type JobStatus = "pending" | "running" | "completed" | "error" | "canceled"
+
+export type Job = {
+  id: string
+  projectID: string
+  type: string
+  title: string
+  parentSessionID: string
+  status: JobStatus
+  params: unknown
+  metadata?: {
+    [key: string]: unknown
+  }
+  error?: string
+  time: {
+    created: number
+    updated: number
+    started?: number
+    completed?: number
+  }
+}
+
+export type EventJobCreated = {
+  type: "job.created"
+  properties: {
+    info: Job
+  }
+}
+
+export type EventJobUpdated = {
+  type: "job.updated"
+  properties: {
+    info: Job
+  }
+}
+
+export type EventJobDeleted = {
+  type: "job.deleted"
+  properties: {
+    id: string
   }
 }
 
@@ -743,7 +815,12 @@ export type Event =
   | EventSessionCompacted
   | EventFileEdited
   | EventTodoUpdated
+  | EventJobOutput
+  | EventJobNotify
   | EventCommandExecuted
+  | EventJobCreated
+  | EventJobUpdated
+  | EventJobDeleted
   | EventSessionCreated
   | EventSessionUpdated
   | EventSessionDeleted
@@ -765,12 +842,12 @@ export type GlobalEvent = {
   payload: Event
 }
 
-export type BadRequestError = {
-  data: unknown
-  errors: Array<{
-    [key: string]: unknown
-  }>
-  success: false
+export type StorageInvalidKeyError = {
+  name: "StorageInvalidKeyError"
+  data: {
+    key: Array<string>
+    reason: string
+  }
 }
 
 export type NotFoundError = {
@@ -779,6 +856,16 @@ export type NotFoundError = {
     message: string
   }
 }
+
+export type BadRequestError = {
+  data: unknown
+  errors: Array<{
+    [key: string]: unknown
+  }>
+  success: false
+}
+
+export type BadRequest = StorageInvalidKeyError | NotFoundError | BadRequestError
 
 /**
  * Custom keybind configurations
@@ -1338,6 +1425,23 @@ export type Config = {
   tools?: {
     [key: string]: boolean
   }
+  /**
+   * Job execution limits and timeouts
+   */
+  job?: {
+    /**
+     * Maximum number of concurrent subagent jobs per session (default: 10)
+     */
+    maxConcurrent?: number
+    /**
+     * Maximum total subagent jobs per session (default: 256)
+     */
+    maxPerSession?: number
+    /**
+     * Maximum stream frames per job (default: 1000)
+     */
+    maxFrames?: number
+  }
   enterprise?: {
     /**
      * Enterprise URL
@@ -1378,6 +1482,10 @@ export type Config = {
      * Tools that should only be available to primary agents.
      */
     primary_tools?: Array<string>
+    /**
+     * Allow @file references to paths outside the worktree (e.g., ~/foo or /abs/path). Default is false for security.
+     */
+    allowFileRefsOutsideWorktree?: boolean
   }
 }
 
@@ -1687,9 +1795,20 @@ export type Auth = OAuth | ApiAuth | WellKnownAuth
 export type GlobalEventData = {
   body?: never
   path?: never
-  query?: never
+  query: {
+    directory: string
+  }
   url: "/global/event"
 }
+
+export type GlobalEventErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+}
+
+export type GlobalEventError = GlobalEventErrors[keyof GlobalEventErrors]
 
 export type GlobalEventResponses = {
   /**
@@ -1757,7 +1876,7 @@ export type ProjectUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -1774,6 +1893,72 @@ export type ProjectUpdateResponses = {
 }
 
 export type ProjectUpdateResponse = ProjectUpdateResponses[keyof ProjectUpdateResponses]
+
+export type JobListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    parentSessionID?: string
+    type?: string
+    status?: JobStatus
+    limit?: number
+  }
+  url: "/job/list"
+}
+
+export type JobListResponses = {
+  /**
+   * Jobs
+   */
+  200: Array<Job>
+}
+
+export type JobListResponse = JobListResponses[keyof JobListResponses]
+
+export type JobFramesData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    jobID: string
+    after?: string
+    limit?: number
+    direction?: "in" | "out"
+    notify?: boolean
+  }
+  url: "/job/frames"
+}
+
+export type JobFramesResponses = {
+  /**
+   * Frames
+   */
+  200: Array<JobStreamFrame>
+}
+
+export type JobFramesResponse = JobFramesResponses[keyof JobFramesResponses]
+
+export type JobFrameLatestData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    jobID: string
+    direction?: "in" | "out"
+    notify?: boolean
+  }
+  url: "/job/frame/latest"
+}
+
+export type JobFrameLatestResponses = {
+  /**
+   * Latest frame (or null)
+   */
+  200: JobStreamFrame | null
+}
+
+export type JobFrameLatestResponse = JobFrameLatestResponses[keyof JobFrameLatestResponses]
 
 export type PtyListData = {
   body?: never
@@ -1814,7 +1999,7 @@ export type PtyCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type PtyCreateError = PtyCreateErrors[keyof PtyCreateErrors]
@@ -1907,7 +2092,7 @@ export type PtyUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type PtyUpdateError = PtyUpdateErrors[keyof PtyUpdateErrors]
@@ -1981,7 +2166,7 @@ export type ConfigUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ConfigUpdateError = ConfigUpdateErrors[keyof ConfigUpdateErrors]
@@ -2008,7 +2193,7 @@ export type ToolIdsErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ToolIdsError = ToolIdsErrors[keyof ToolIdsErrors]
@@ -2037,7 +2222,7 @@ export type ToolListErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ToolListError = ToolListErrors[keyof ToolListErrors]
@@ -2139,7 +2324,7 @@ export type SessionCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type SessionCreateError = SessionCreateErrors[keyof SessionCreateErrors]
@@ -2166,7 +2351,7 @@ export type SessionStatusErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type SessionStatusError = SessionStatusErrors[keyof SessionStatusErrors]
@@ -2197,7 +2382,7 @@ export type SessionDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2230,7 +2415,7 @@ export type SessionGetErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2268,7 +2453,7 @@ export type SessionUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2301,7 +2486,7 @@ export type SessionChildrenErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2337,7 +2522,7 @@ export type SessionTodoErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2377,7 +2562,7 @@ export type SessionInitErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2432,7 +2617,7 @@ export type SessionAbortErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2465,7 +2650,7 @@ export type SessionUnshareErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2498,7 +2683,7 @@ export type SessionShareErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2535,7 +2720,7 @@ export type SessionDiffErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2574,7 +2759,7 @@ export type SessionSummarizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2611,7 +2796,7 @@ export type SessionMessagesErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2663,7 +2848,7 @@ export type SessionPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2706,7 +2891,7 @@ export type SessionMessageErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2758,7 +2943,7 @@ export type SessionPromptAsyncErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2800,7 +2985,7 @@ export type SessionCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2846,7 +3031,7 @@ export type SessionShellErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2882,7 +3067,7 @@ export type SessionRevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2915,7 +3100,7 @@ export type SessionUnrevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2951,7 +3136,7 @@ export type PermissionRespondErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3131,7 +3316,7 @@ export type ProviderOauthAuthorizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ProviderOauthAuthorizeError = ProviderOauthAuthorizeErrors[keyof ProviderOauthAuthorizeErrors]
@@ -3172,7 +3357,7 @@ export type ProviderOauthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ProviderOauthCallbackError = ProviderOauthCallbackErrors[keyof ProviderOauthCallbackErrors]
@@ -3348,7 +3533,7 @@ export type AppLogErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type AppLogError = AppLogErrors[keyof AppLogErrors]
@@ -3416,7 +3601,7 @@ export type McpAddErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type McpAddError = McpAddErrors[keyof McpAddErrors]
@@ -3478,7 +3663,7 @@ export type McpAuthStartErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3521,7 +3706,7 @@ export type McpAuthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3554,7 +3739,7 @@ export type McpAuthAuthenticateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3663,7 +3848,7 @@ export type TuiAppendPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type TuiAppendPromptError = TuiAppendPromptErrors[keyof TuiAppendPromptErrors]
@@ -3800,7 +3985,7 @@ export type TuiExecuteCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type TuiExecuteCommandError = TuiExecuteCommandErrors[keyof TuiExecuteCommandErrors]
@@ -3853,7 +4038,7 @@ export type TuiPublishErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type TuiPublishError = TuiPublishErrors[keyof TuiPublishErrors]
@@ -3921,7 +4106,7 @@ export type AuthSetErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type AuthSetError = AuthSetErrors[keyof AuthSetErrors]

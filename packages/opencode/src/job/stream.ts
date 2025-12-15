@@ -10,7 +10,7 @@ import z from "zod"
 
 export namespace JobStream {
   const log = Log.create({ service: "job.stream" })
-  const DEFAULT_MAX_FRAMES_PER_JOB = 1000
+  const DEFAULT_MAX_FRAMES_PER_JOB = 65536
 
   export const InvalidJobIDError = NamedError.create(
     "JobStreamInvalidJobIDError",
@@ -147,5 +147,30 @@ export namespace JobStream {
     const frames = await Promise.all(filteredKeys.map((key) => Storage.read<Frame>(key).catch(() => undefined)))
 
     return frames.filter((f): f is Frame => f !== undefined)
+  }
+
+  export async function latest(input: {
+    jobID: string
+    direction?: "in" | "out"
+    notify?: boolean
+  }): Promise<Frame | undefined> {
+    assertSafeJobID(input.jobID)
+
+    // Get all frame keys for this job
+    const keys = await Storage.list(["job_stream", input.jobID])
+
+    // Read frames in reverse order (most recent first) until we find a match
+    for (let i = keys.length - 1; i >= 0; i--) {
+      const frame = await Storage.read<Frame>(keys[i]).catch(() => undefined)
+      if (!frame) continue
+
+      // Apply filters
+      if (input.direction !== undefined && frame.direction !== input.direction) continue
+      if (input.notify !== undefined && frame.notify !== input.notify) continue
+
+      return frame
+    }
+
+    return undefined
   }
 }

@@ -28,8 +28,13 @@ import type {
   FindSymbolsResponses,
   FindTextResponses,
   FormatterStatusResponses,
+  GlobalEventErrors,
   GlobalEventResponses,
   InstanceDisposeResponses,
+  JobFrameLatestResponses,
+  JobFramesResponses,
+  JobListResponses,
+  JobStatus,
   LspStatusResponses,
   McpAddErrors,
   McpAddResponses,
@@ -187,10 +192,17 @@ export class Global extends HeyApiClient {
    *
    * Subscribe to global events from the OpenCode system using server-sent events.
    */
-  public event<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).sse.get<GlobalEventResponses, unknown, ThrowOnError>({
+  public event<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).sse.get<GlobalEventResponses, GlobalEventErrors, ThrowOnError>({
       url: "/global/event",
       ...options,
+      ...params,
     })
   }
 }
@@ -275,6 +287,120 @@ export class Project extends HeyApiClient {
       },
     })
   }
+}
+
+export class Frame extends HeyApiClient {
+  /**
+   * Get latest job stream frame
+   *
+   * Get the latest frame from the job stream matching optional filters.
+   */
+  public latest<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      jobID: string
+      direction?: "in" | "out"
+      notify?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "jobID" },
+            { in: "query", key: "direction" },
+            { in: "query", key: "notify" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<JobFrameLatestResponses, unknown, ThrowOnError>({
+      url: "/job/frame/latest",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Job extends HeyApiClient {
+  /**
+   * List jobs
+   *
+   * List jobs for the current project, optionally filtered by session/type/status.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      parentSessionID?: string
+      type?: string
+      status?: JobStatus
+      limit?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "parentSessionID" },
+            { in: "query", key: "type" },
+            { in: "query", key: "status" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<JobListResponses, unknown, ThrowOnError>({
+      url: "/job/list",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * List job stream frames
+   *
+   * List frames from the job stream with simple filtering.
+   */
+  public frames<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      jobID: string
+      after?: string
+      limit?: number
+      direction?: "in" | "out"
+      notify?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "jobID" },
+            { in: "query", key: "after" },
+            { in: "query", key: "limit" },
+            { in: "query", key: "direction" },
+            { in: "query", key: "notify" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<JobFramesResponses, unknown, ThrowOnError>({
+      url: "/job/frames",
+      ...options,
+      ...params,
+    })
+  }
+
+  frame = new Frame({ client: this.client })
 }
 
 export class Pty extends HeyApiClient {
@@ -2560,6 +2686,8 @@ export class OpencodeClient extends HeyApiClient {
   global = new Global({ client: this.client })
 
   project = new Project({ client: this.client })
+
+  job = new Job({ client: this.client })
 
   pty = new Pty({ client: this.client })
 

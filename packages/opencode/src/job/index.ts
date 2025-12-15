@@ -12,10 +12,9 @@ import { JobRegistry } from "./registry"
 import { JobContext } from "./context"
 import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
-import { Agent } from "@/agent/agent"
-import { MessageV2 } from "@/session/message-v2"
 import { NamedError } from "@opencode-ai/util/error"
 import { Config } from "@/config/config"
+import { JobInfo, JobStatus } from "./schema"
 
 // Import job definitions to register them
 import "./definitions"
@@ -98,11 +97,12 @@ export namespace Job {
     z.object({ agentName: z.string() }),
   )
 
-  export const Status = z.enum(["pending", "running", "completed", "error", "canceled"]).meta({
-    ref: "JobStatus",
-  })
-
+  // Re-export schemas from schema.ts to avoid circular dependencies
+  export const Status = JobStatus
   export type Status = z.infer<typeof Status>
+
+  export const Info = JobInfo
+  export type Info = z.infer<typeof Info>
 
   export const TerminalStateError = NamedError.create(
     "JobTerminalStateError",
@@ -112,30 +112,6 @@ export namespace Job {
   export function isTerminal(status: Status): boolean {
     return status === "completed" || status === "error" || status === "canceled"
   }
-
-  export const Info = z
-    .object({
-      id: Identifier.schema("job"),
-      projectID: z.string(),
-      type: z.string(),
-      title: z.string(),
-      parentSessionID: Identifier.schema("session"),
-      status: Status,
-      params: z.unknown(),
-      metadata: z.record(z.string(), z.any()).optional(),
-      error: z.string().optional(),
-      time: z.object({
-        created: z.number(),
-        updated: z.number(),
-        started: z.number().optional(),
-        completed: z.number().optional(),
-      }),
-    })
-    .meta({
-      ref: "Job",
-    })
-
-  export type Info = z.infer<typeof Info>
 
   export const Event = {
     Created: BusEvent.define(
