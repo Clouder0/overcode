@@ -32,8 +32,9 @@ export namespace JobNotification {
       const { Job } = await import(".")
 
       // Get job info for type and title
-      const job = await Job.get(jobID).catch(() => null)
-      if (!job) return
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const job = jobs[0]
+      if (!job?.found) return
 
       const notifications = state().notifications
       if (!notifications.has(sessionID)) {
@@ -43,8 +44,8 @@ export namespace JobNotification {
       if (queue) {
         queue.push({
           jobID,
-          jobType: job.type,
-          jobTitle: job.title,
+          jobType: job.type ?? "",
+          jobTitle: job.title ?? "",
           frame,
         })
       }

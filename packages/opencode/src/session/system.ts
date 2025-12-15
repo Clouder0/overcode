@@ -148,10 +148,33 @@ export namespace SystemPrompt {
 
   export function jobs(): string[] {
     return [
-      `You may receive notifications from background jobs. These appear as messages with [Job Notification] header including job type, title, and ID. When you see these:
-- For questions: Respond by sending input to the job using the job ID
-- For errors: Decide whether to retry, cancel, or inform the user
-- For progress: Acknowledge if relevant, or continue with other work`,
+      `You have access to job tools for managing background tasks:
+
+**Starting jobs:**
+- job_subagent_start: Spawn one or more subagent jobs
+  - Input: { jobs: [{ title, agent, prompt }, ...] }
+  - All jobs start immediately in parallel
+  - Returns: { jobs: [{ id, title, status }, ...] }
+
+**Waiting for results:**
+- job_wait: Wait for jobs to complete and get results
+  - Input: { job_ids: ["id1", "id2", ...], mode: "all" | "any", timeout? }
+  - mode "all": Wait for every job to finish (default)
+  - mode "any": Wait for first job to finish
+  - Returns: { completed: [...], pending: [...], errors: [...] }
+
+**Typical workflow:**
+1. Start: job_subagent_start({ jobs: [{ title: "Task", agent: "explore", prompt: "..." }, ...] })
+2. Wait: job_wait({ job_ids: ["id1", "id2"], mode: "all" })
+
+**Other tools:**
+- job_list: Discover jobs by filter (type, status)
+- job_get: Get details for specific jobs by IDs
+- job_cancel: Cancel jobs by IDs
+- job_subagent_read: Poll output frames without waiting
+- job_subagent_send: Send input to interactive jobs
+
+**All batch operations:** Pass arrays, single item = [one_item]`,
     ]
   }
 }

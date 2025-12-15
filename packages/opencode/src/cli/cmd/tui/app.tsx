@@ -1,4 +1,7 @@
 import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
+// Register spinner component before any TUI rendering
+// This must be imported early to ensure the component is available
+import "opentui-spinner/solid"
 import { Clipboard } from "@tui/util/clipboard"
 import { TextAttributes } from "@opentui/core"
 import { RouteProvider, useRoute } from "@tui/context/route"

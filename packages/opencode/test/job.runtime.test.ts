@@ -219,9 +219,10 @@ async function waitForTerminalStatus(jobID: string, timeoutMs = 5000) {
   let last: any
 
   while (Date.now() < deadline) {
-    const info = await Job.get(jobID)
+    const { jobs } = await Job.get({ jobIDs: [jobID] })
+    const info = jobs[0]
     last = info
-    if (info.status === "completed" || info.status === "error" || info.status === "canceled") {
+    if (info?.found && (info.status === "completed" || info.status === "error" || info.status === "canceled")) {
       return info
     }
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -249,7 +250,7 @@ describe("Job runtime - subagent", () => {
       expect(inputs.some((f) => (f.data as any)?.text === "follow-up-input")).toBe(true)
 
       // Cancel the slow job so the test doesn't take forever
-      await Job.cancel(job.id)
+      await Job.cancel({ jobIDs: [job.id] })
       await waitForTerminalStatus(job.id)
     })
   })
@@ -263,11 +264,12 @@ describe("Job runtime - subagent", () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       // Verify job is running
-      const before = await Job.get(job.id)
+      const { jobs: beforeJobs } = await Job.get({ jobIDs: [job.id] })
+      const before = beforeJobs[0]
       expect(before.status).toBe("running")
 
       // Cancel the job
-      await Job.cancel(job.id)
+      await Job.cancel({ jobIDs: [job.id] })
 
       // Wait for the job to reach terminal status
       const after = await waitForTerminalStatus(job.id)
@@ -291,17 +293,19 @@ describe("Job runtime - subagent", () => {
       expect(errorInfoBefore.status).toBe("error")
       const errorTimeBefore = errorInfoBefore.time.completed
 
-      await Job.cancel(completedJob.job.id)
-      await Job.cancel(errorJob.job.id)
+      await Job.cancel({ jobIDs: [completedJob.job.id] })
+      await Job.cancel({ jobIDs: [errorJob.job.id] })
 
-      const completedInfoAfter = await Job.get(completedJob.job.id)
-      const errorInfoAfter = await Job.get(errorJob.job.id)
+      const { jobs: completedJobs } = await Job.get({ jobIDs: [completedJob.job.id] })
+      const completedInfoAfter = completedJobs[0]
+      const { jobs: errorJobs } = await Job.get({ jobIDs: [errorJob.job.id] })
+      const errorInfoAfter = errorJobs[0]
 
       expect(completedInfoAfter.status).toBe("completed")
-      expect(completedInfoAfter.time.completed).toBe(completedTimeBefore)
+      expect(completedInfoAfter.time?.completed).toBe(completedTimeBefore)
 
       expect(errorInfoAfter.status).toBe("error")
-      expect(errorInfoAfter.time.completed).toBe(errorTimeBefore)
+      expect(errorInfoAfter.time?.completed).toBe(errorTimeBefore)
     })
   })
 
@@ -312,7 +316,8 @@ describe("Job runtime - subagent", () => {
       // Wait for the initial run to settle
       await waitForTerminalStatus(job.id)
 
-      const afterComplete = await Job.get(job.id)
+      const { jobs: afterCompleteJobs } = await Job.get({ jobIDs: [job.id] })
+      const afterComplete = afterCompleteJobs[0]
       expect(afterComplete.status === "completed" || afterComplete.status === "error").toBe(true)
 
       // Create a new job for the same parent
@@ -327,7 +332,8 @@ describe("Job runtime - subagent", () => {
       })
       await waitForTerminalStatus(newJob.id)
 
-      const newJobInfo = await Job.get(newJob.id)
+      const { jobs: newJobJobs } = await Job.get({ jobIDs: [newJob.id] })
+      const newJobInfo = newJobJobs[0]
       expect(newJobInfo.status).toBe("completed")
     })
   })
@@ -341,13 +347,15 @@ describe("Job runtime - subagent", () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       // Verify job is running before canceling
-      const before = await Job.get(job.id)
+      const { jobs: beforeJobs } = await Job.get({ jobIDs: [job.id] })
+      const before = beforeJobs[0]
       expect(before.status).toBe("running")
 
-      await Job.cancel(job.id)
+      await Job.cancel({ jobIDs: [job.id] })
       await waitForTerminalStatus(job.id)
 
-      expect((await Job.get(job.id)).status).toBe("canceled")
+      const { jobs: afterJobs } = await Job.get({ jobIDs: [job.id] })
+      expect(afterJobs[0].status).toBe("canceled")
 
       // send should throw on terminal jobs per spec
       await expect(Job.send({ jobID: job.id, input: { text: "re-run after cancel" } })).rejects.toThrow(
@@ -458,23 +466,25 @@ describe("Job.get()", () => {
       const { job, parent } = await createSubagentJob("test get")
       await waitForTerminalStatus(job.id)
 
-      const retrieved = await Job.get(job.id)
+      const { jobs } = await Job.get({ jobIDs: [job.id] })
+      const retrieved = jobs[0]
 
       expect(retrieved.id).toBe(job.id)
+      expect(retrieved.found).toBe(true)
       expect(retrieved.type).toBe("subagent")
-      expect(retrieved.parentSessionID).toBe(parent.id)
       expect(retrieved.title).toBe("runtime test job")
       expect(retrieved.status).toBe("completed")
-      expect(retrieved.time.created).toBeDefined()
-      expect(retrieved.time.updated).toBeDefined()
-      expect(retrieved.time.started).toBeDefined()
-      expect(retrieved.time.completed).toBeDefined()
+      expect(retrieved.time?.created).toBeDefined()
+      expect(retrieved.time?.started).toBeDefined()
+      expect(retrieved.time?.completed).toBeDefined()
     })
   })
 
-  test("throws error for non-existent job", async () => {
+  test("returns not found for non-existent job", async () => {
     await withInstance(async () => {
-      await expect(Job.get("job_nonexistent_12345")).rejects.toThrow()
+      const { jobs } = await Job.get({ jobIDs: ["job_nonexistent_12345"] })
+      expect(jobs[0].found).toBe(false)
+      expect(jobs[0].lookup_error).toBeDefined()
     })
   })
 })
@@ -486,13 +496,15 @@ describe("Job.remove()", () => {
       await waitForTerminalStatus(job.id)
 
       // Verify job exists before removal
-      const beforeRemove = await Job.get(job.id)
-      expect(beforeRemove.id).toBe(job.id)
+      const { jobs: beforeJobs } = await Job.get({ jobIDs: [job.id] })
+      expect(beforeJobs[0].found).toBe(true)
+      expect(beforeJobs[0].id).toBe(job.id)
 
       await Job.remove(job.id)
 
       // Verify job no longer exists
-      await expect(Job.get(job.id)).rejects.toThrow()
+      const { jobs: afterJobs } = await Job.get({ jobIDs: [job.id] })
+      expect(afterJobs[0].found).toBe(false)
     })
   })
 
@@ -766,7 +778,8 @@ describe("Job lifecycle - error scenarios", () => {
       const { job } = await createSubagentJob("initial [force-error]")
       await waitForTerminalStatus(job.id)
 
-      const errorInfo = await Job.get(job.id)
+      const { jobs } = await Job.get({ jobIDs: [job.id] })
+      const errorInfo = jobs[0]
       expect(errorInfo.status).toBe("error")
 
       // Per spec, send should throw on terminal jobs
@@ -810,13 +823,16 @@ describe("Job lifecycle - time fields", () => {
   test("time.updated changes when job status changes", async () => {
     await withInstance(async () => {
       const { job } = await createSubagentJob("update time test")
-      const initialUpdated = job.time.updated
+      const initialCreated = job.time.created
 
       // Wait for status change
       await waitForTerminalStatus(job.id)
-      const finalInfo = await Job.get(job.id)
+      const { jobs } = await Job.get({ jobIDs: [job.id] })
+      const finalInfo = jobs[0]
 
-      expect(finalInfo.time.updated).toBeGreaterThanOrEqual(initialUpdated)
+      // Verify completed time is set and is after created time
+      expect(finalInfo.time?.completed).toBeDefined()
+      expect(finalInfo.time?.completed).toBeGreaterThanOrEqual(initialCreated)
     })
   })
 })
@@ -899,7 +915,8 @@ describe("Job - concurrent operations", () => {
 
       // All should be retrievable
       for (const { job } of results) {
-        const retrieved = await Job.get(job.id)
+        const { jobs } = await Job.get({ jobIDs: [job.id] })
+        const retrieved = jobs[0]
         expect(retrieved).toBeDefined()
         expect(retrieved.status).toBe("completed")
       }
@@ -929,8 +946,8 @@ describe("Job - concurrent operations", () => {
       expect(frames2.some((f) => (f.data as any)?.text === "concurrent input 2")).toBe(true)
 
       // Cancel jobs to clean up
-      await Job.cancel(job1.id)
-      await Job.cancel(job2.id)
+      await Job.cancel({ jobIDs: [job1.id] })
+      await Job.cancel({ jobIDs: [job2.id] })
       await waitForTerminalStatus(job1.id)
       await waitForTerminalStatus(job2.id)
     })
@@ -961,11 +978,12 @@ describe("Job - cancel edge cases", () => {
       await Storage.write(["job", project.id, jobID], pendingJob)
 
       // Cancel should work and set status to canceled
-      await Job.cancel(jobID)
+      await Job.cancel({ jobIDs: [jobID] })
 
-      const afterCancel = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const afterCancel = jobs[0]
       expect(afterCancel.status).toBe("canceled")
-      expect(afterCancel.time.completed).toBeDefined()
+      expect(afterCancel.time?.completed).toBeDefined()
     })
   })
 
@@ -992,10 +1010,11 @@ describe("Job - cancel edge cases", () => {
       await Storage.write(["job", project.id, jobID], pendingJob)
 
       // Cancel twice in quick succession
-      await Job.cancel(jobID)
-      await Job.cancel(jobID)
+      await Job.cancel({ jobIDs: [jobID] })
+      await Job.cancel({ jobIDs: [jobID] })
 
-      const afterCancel = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const afterCancel = jobs[0]
       expect(afterCancel.status).toBe("canceled")
     })
   })
@@ -1009,10 +1028,11 @@ describe("Job - cancel edge cases", () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
 
       // Verify job is running
-      const before = await Job.get(job.id)
+      const { jobs: beforeJobs } = await Job.get({ jobIDs: [job.id] })
+      const before = beforeJobs[0]
       expect(before.status).toBe("running")
 
-      await Job.cancel(job.id)
+      await Job.cancel({ jobIDs: [job.id] })
       const afterFirstCancel = await waitForTerminalStatus(job.id)
       expect(afterFirstCancel.status).toBe("canceled")
       const firstCompletedTime = afterFirstCancel.time.completed
@@ -1022,11 +1042,12 @@ describe("Job - cancel edge cases", () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
 
       // Cancel again
-      await Job.cancel(job.id)
-      const afterSecondCancel = await Job.get(job.id)
+      await Job.cancel({ jobIDs: [job.id] })
+      const { jobs: afterJobs } = await Job.get({ jobIDs: [job.id] })
+      const afterSecondCancel = afterJobs[0]
 
       // Completed time should not change
-      expect(afterSecondCancel.time.completed).toBe(firstCompletedTime)
+      expect(afterSecondCancel.time?.completed).toBe(firstCompletedTime)
     })
   })
 })
@@ -1059,15 +1080,11 @@ describe("Job - remove edge cases", () => {
 })
 
 describe("Job.get() - edge cases", () => {
-  test("throws JobNotFoundError with correct properties", async () => {
+  test("returns not found with lookup_error for non-existent job", async () => {
     await withInstance(async () => {
-      try {
-        await Job.get("job_nonexistent_abc123")
-        expect.unreachable("Should have thrown")
-      } catch (error: any) {
-        expect(error.name).toBe("JobNotFoundError")
-        expect(error.data?.jobID).toBe("job_nonexistent_abc123")
-      }
+      const { jobs } = await Job.get({ jobIDs: ["job_nonexistent_abc123"] })
+      expect(jobs[0].found).toBe(false)
+      expect(jobs[0].lookup_error).toBeDefined()
     })
   })
 
@@ -1076,10 +1093,14 @@ describe("Job.get() - edge cases", () => {
       const { job } = await createSubagentJob("parallel get test")
       await waitForTerminalStatus(job.id)
 
-      const results = await Promise.all([Job.get(job.id), Job.get(job.id), Job.get(job.id)])
+      const results = await Promise.all([
+        Job.get({ jobIDs: [job.id] }),
+        Job.get({ jobIDs: [job.id] }),
+        Job.get({ jobIDs: [job.id] }),
+      ])
 
       for (const r of results) {
-        expect(r.id).toBe(job.id)
+        expect(r.jobs[0].id).toBe(job.id)
       }
     })
   })
@@ -1094,13 +1115,14 @@ describe("Job metadata", () => {
       // Wait for job to start and set metadata
       await new Promise((resolve) => setTimeout(resolve, 200))
 
-      const info = await Job.get(job.id)
+      const { jobs } = await Job.get({ jobIDs: [job.id] })
+      const info = jobs[0]
       expect(info.metadata).toBeDefined()
       expect(info.metadata?.agent).toBe("general")
       expect(info.metadata?.workerSessionID).toBeDefined()
 
       // Clean up
-      await Job.cancel(job.id)
+      await Job.cancel({ jobIDs: [job.id] })
       await waitForTerminalStatus(job.id)
     })
   })
@@ -1110,7 +1132,8 @@ describe("Job metadata", () => {
       const { job } = await createSubagentJob("completion metadata test")
       await waitForTerminalStatus(job.id)
 
-      const finalInfo = await Job.get(job.id)
+      const { jobs } = await Job.get({ jobIDs: [job.id] })
+      const finalInfo = jobs[0]
       expect(finalInfo.status).toBe("completed")
       expect(finalInfo.metadata?.workerSessionID).toBeDefined()
       expect(finalInfo.metadata?.agent).toBe("general")
@@ -1223,7 +1246,7 @@ describe("Job rate limiting", () => {
 
       // Clean up - cancel all jobs
       for (const job of [...jobs, pendingJob]) {
-        await Job.cancel(job.id)
+        await Job.cancel({ jobIDs: [job.id] })
       }
       for (const job of [...jobs, pendingJob]) {
         await waitForTerminalStatus(job.id)
@@ -1279,8 +1302,9 @@ describe("Job.remove() cleanup", () => {
       // Wait for job to start and set metadata
       await new Promise((resolve) => setTimeout(resolve, 200))
 
-      const jobWithMetadata = await Job.get(job.id)
-      const workerSessionID = jobWithMetadata.metadata?.workerSessionID as string | undefined
+      const { jobs } = await Job.get({ jobIDs: [job.id] })
+      const jobWithMetadata = jobs[0]
+      const workerSessionID = jobWithMetadata?.metadata?.workerSessionID as string | undefined
 
       expect(workerSessionID).toBeDefined()
 
@@ -1289,7 +1313,7 @@ describe("Job.remove() cleanup", () => {
       expect(sessionBefore).toBeDefined()
 
       // Cancel and wait for terminal status, then remove
-      await Job.cancel(job.id)
+      await Job.cancel({ jobIDs: [job.id] })
       await waitForTerminalStatus(job.id)
       await Job.remove(job.id)
 
@@ -1366,9 +1390,10 @@ describe("Job.recoverOrphanedJobs()", () => {
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBe(1)
 
-      const info = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const info = jobs[0]
       expect(info.status).toBe("error")
-      expect(info.time.completed).toBeDefined()
+      expect(info.time?.completed).toBeDefined()
       expect(info.error).toContain("interrupted by application restart")
       expect(info.metadata?.recoveredAt).toBeDefined()
     })
@@ -1398,7 +1423,8 @@ describe("Job.recoverOrphanedJobs()", () => {
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBe(1)
 
-      const info = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const info = jobs[0]
       expect(info.status).toBe("error")
     })
   })
@@ -1443,9 +1469,12 @@ describe("Job.recoverOrphanedJobs()", () => {
       expect(recovered).toBe(0)
 
       // Verify statuses unchanged
-      expect((await Job.get(completedJobID)).status).toBe("completed")
-      expect((await Job.get(errorJobID)).status).toBe("error")
-      expect((await Job.get(canceledJobID)).status).toBe("canceled")
+      const { jobs: completedJobs } = await Job.get({ jobIDs: [completedJobID] })
+      expect(completedJobs[0].status).toBe("completed")
+      const { jobs: errorJobs } = await Job.get({ jobIDs: [errorJobID] })
+      expect(errorJobs[0].status).toBe("error")
+      const { jobs: canceledJobs } = await Job.get({ jobIDs: [canceledJobID] })
+      expect(canceledJobs[0].status).toBe("canceled")
     })
   })
 

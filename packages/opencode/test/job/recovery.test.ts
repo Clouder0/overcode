@@ -75,7 +75,8 @@ describe("Job.recoverOrphanedJobs", () => {
       expect(recovered).toBeGreaterThanOrEqual(1)
 
       // Verify job status changed to error
-      const job = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const job = jobs[0]
       expect(job.status).toBe("error")
       expect(job.error).toBe("Job interrupted by application restart")
 
@@ -105,9 +106,10 @@ describe("Job.recoverOrphanedJobs", () => {
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBeGreaterThanOrEqual(1)
 
-      const job = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const job = jobs[0]
       expect(job.status).toBe("error")
-      expect(job.time.completed).toBeDefined()
+      expect(job.time?.completed).toBeDefined()
 
       await Job.remove(jobID)
     })
@@ -134,7 +136,8 @@ describe("Job.recoverOrphanedJobs", () => {
 
       await Job.recoverOrphanedJobs()
 
-      const job = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const job = jobs[0]
       expect(job.status).toBe("completed")
 
       await Job.remove(jobID)
@@ -173,11 +176,11 @@ describe("Job.recoverOrphanedJobs", () => {
       expect(recovered).toBeGreaterThanOrEqual(2)
 
       // Both jobs should be recovered regardless of type
-      const subagentJob = await Job.get(subagentJobID)
-      expect(subagentJob.status).toBe("error")
+      const { jobs: subagentJobs } = await Job.get({ jobIDs: [subagentJobID] })
+      expect(subagentJobs[0].status).toBe("error")
 
-      const customJob = await Job.get(customJobID)
-      expect(customJob.status).toBe("error")
+      const { jobs: customJobs } = await Job.get({ jobIDs: [customJobID] })
+      expect(customJobs[0].status).toBe("error")
 
       await Job.remove(subagentJobID)
       await Job.remove(customJobID)
@@ -205,7 +208,8 @@ describe("Job.recoverOrphanedJobs", () => {
 
       await Job.recoverOrphanedJobs()
 
-      const job = await Job.get(jobID)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      const job = jobs[0]
       expect(job.metadata?.recoveredAt).toBeDefined()
       expect(typeof job.metadata?.recoveredAt).toBe("number")
 
@@ -238,15 +242,16 @@ describe("Session cascade delete", () => {
         },
       })
 
-      // Verify job exists
-      const jobBefore = await Job.get(jobID)
-      expect(jobBefore.parentSessionID).toBe(session.id)
+      // Verify job exists by using list
+      const jobsBefore = await Job.list({ parentSessionID: session.id })
+      expect(jobsBefore.some((j) => j.id === jobID)).toBe(true)
 
       // Remove session
       await Session.remove(session.id)
 
       // Verify job was also removed
-      await expect(Job.get(jobID)).rejects.toThrow(Job.NotFoundError)
+      const { jobs } = await Job.get({ jobIDs: [jobID] })
+      expect(jobs[0].found).toBe(false)
     })
   })
 
@@ -281,7 +286,8 @@ describe("Session cascade delete", () => {
 
       // Verify all jobs were removed
       for (const jobID of jobIDs) {
-        await expect(Job.get(jobID)).rejects.toThrow(Job.NotFoundError)
+        const { jobs } = await Job.get({ jobIDs: [jobID] })
+        expect(jobs[0].found).toBe(false)
       }
     })
   })
@@ -330,9 +336,11 @@ describe("Session cascade delete", () => {
       await Session.remove(session1.id)
 
       // Verify job1 was removed but job2 still exists
-      await expect(Job.get(job1ID)).rejects.toThrow(Job.NotFoundError)
-      const job2 = await Job.get(job2ID)
-      expect(job2.parentSessionID).toBe(session2.id)
+      const { jobs: jobs1 } = await Job.get({ jobIDs: [job1ID] })
+      expect(jobs1[0].found).toBe(false)
+
+      const jobs2 = await Job.list({ parentSessionID: session2.id })
+      expect(jobs2.some((j) => j.id === job2ID)).toBe(true)
 
       // Cleanup
       await Session.remove(session2.id)

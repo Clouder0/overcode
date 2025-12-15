@@ -93,7 +93,8 @@ describe("Job.wait schema validation", () => {
     const { Job } = await import("../../src/job")
 
     const validInput = {
-      jobID: "job_123abc",
+      jobIDs: ["job_123abc"],
+      mode: "all" as const,
       timeout: 5000,
     }
 
@@ -105,7 +106,8 @@ describe("Job.wait schema validation", () => {
     const { Job } = await import("../../src/job")
 
     const inputWithoutTimeout = {
-      jobID: "job_123abc",
+      jobIDs: ["job_123abc"],
+      mode: "any" as const,
     }
 
     const result = Job.WaitInput.safeParse(inputWithoutTimeout)
@@ -116,9 +118,9 @@ describe("Job.wait schema validation", () => {
     const { Job } = await import("../../src/job")
 
     const output = {
-      status: "completed" as const,
-      output: [],
-      error: undefined,
+      completed: [{ id: "job_123abc", status: "completed" as const, output: "done" }],
+      pending: [],
+      errors: [],
     }
 
     const result = Job.WaitOutput.safeParse(output)
@@ -340,7 +342,7 @@ describe("Job.send validation", () => {
             }),
           ).rejects.toThrow(Job.InputNotDefinedError)
 
-          await Job.cancel(job.id)
+          await Job.cancel({ jobIDs: [job.id] })
 
           // Cleanup
           const keys = await Storage.list(["job_stream", job.id])
@@ -391,7 +393,7 @@ describe("Job.send validation", () => {
             }),
           ).rejects.toThrow(Job.InputValidationError)
 
-          await Job.cancel(job.id)
+          await Job.cancel({ jobIDs: [job.id] })
 
           // Cleanup
           const keys = await Storage.list(["job_stream", job.id])
@@ -434,7 +436,8 @@ describe("Job.send validation", () => {
           // Wait for job to complete
           await Bun.sleep(100)
 
-          const updated = await Job.get(job.id)
+          const { jobs: updatedJobs } = await Job.get({ jobIDs: [job.id] })
+          const updated = updatedJobs[0]
           expect(updated.status).toBe("completed")
 
           await expect(
@@ -488,10 +491,10 @@ describe("Job.wait behavior", () => {
           await Bun.sleep(100)
 
           const start = Date.now()
-          const result = await Job.wait({ jobID: job.id })
+          const result = await Job.wait({ jobIDs: [job.id], mode: "all" })
           const elapsed = Date.now() - start
 
-          expect(result.status).toBe("completed")
+          expect(result.completed.some((c) => c.status === "completed")).toBe(true)
           expect(elapsed).toBeLessThan(100) // Should be nearly instant
 
           // Cleanup
@@ -534,15 +537,16 @@ describe("Job.wait behavior", () => {
 
           const start = Date.now()
           const result = await Job.wait({
-            jobID: job.id,
+            jobIDs: [job.id],
+            mode: "all",
             timeout: 100,
           })
           const elapsed = Date.now() - start
 
           expect(elapsed).toBeLessThan(500)
-          expect(result.status).toBe("running")
+          expect(result.pending.some((p) => p.status === "running")).toBe(true)
 
-          await Job.cancel(job.id)
+          await Job.cancel({ jobIDs: [job.id] })
 
           // Cleanup
           const keys = await Storage.list(["job_stream", job.id])
@@ -581,10 +585,11 @@ describe("Job.wait behavior", () => {
             params: {},
           })
 
-          const result = await Job.wait({ jobID: job.id })
+          const result = await Job.wait({ jobIDs: [job.id], mode: "all" })
 
-          expect(result.status).toBe("error")
-          expect(result.error).toBe("something went wrong")
+          expect(result.completed.some((c) => c.status === "error")).toBe(true)
+          const errorJob = result.completed.find((c) => c.id === job.id)
+          expect(errorJob?.error).toBe("something went wrong")
 
           // Cleanup
           const keys = await Storage.list(["job_stream", job.id])

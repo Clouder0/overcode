@@ -182,6 +182,20 @@ export namespace Job {
     await Storage.write(["job", info.projectID, info.id], info)
   }
 
+  // Internal helper to get a single job by ID (for internal use)
+  async function getJobInternal(jobID: string): Promise<Info> {
+    assertSafeJobID(jobID)
+    const projectID = Instance.project.id
+    try {
+      return await Storage.read<Info>(["job", projectID, jobID])
+    } catch (error) {
+      if (Storage.NotFoundError.isInstance(error)) {
+        throw new NotFoundError({ jobID })
+      }
+      throw error
+    }
+  }
+
   async function update(jobID: string, fn: (draft: Info) => void): Promise<Info> {
     const project = Instance.project
     try {
@@ -201,18 +215,54 @@ export namespace Job {
     }
   }
 
-  export const get = fn(z.string(), async (jobID): Promise<Info> => {
-    assertSafeJobID(jobID)
-    const projectID = Instance.project.id
-    try {
-      return await Storage.read<Info>(["job", projectID, jobID])
-    } catch (error) {
-      if (Storage.NotFoundError.isInstance(error)) {
-        throw new NotFoundError({ jobID })
+  export const get = fn(
+    z.object({ jobIDs: z.array(z.string()) }),
+    async (
+      input,
+    ): Promise<{
+      jobs: Array<{
+        id: string
+        found: boolean
+        type?: string
+        title?: string
+        status?: Status
+        error?: string
+        metadata?: Record<string, unknown>
+        time?: { created: number; started?: number; completed?: number }
+        lookup_error?: string
+      }>
+    }> => {
+      const project = Instance.project
+      const results = []
+
+      for (const jobID of input.jobIDs) {
+        try {
+          assertSafeJobID(jobID)
+          const info = await Storage.read<Info>(["job", project.id, jobID])
+          results.push({
+            id: jobID,
+            found: true,
+            type: info.type,
+            title: info.title,
+            status: info.status,
+            error: info.error,
+            metadata: info.metadata,
+            time: info.time,
+          })
+        } catch (error) {
+          if (Storage.NotFoundError.isInstance(error)) {
+            results.push({ id: jobID, found: false, lookup_error: "Job not found" })
+          } else if (InvalidIDError.isInstance(error)) {
+            results.push({ id: jobID, found: false, lookup_error: "Invalid job ID" })
+          } else {
+            results.push({ id: jobID, found: false, lookup_error: "Access denied" })
+          }
+        }
       }
-      throw error
-    }
-  })
+
+      return { jobs: results }
+    },
+  )
 
   export const list = fn(
     z
@@ -253,36 +303,72 @@ export namespace Job {
     },
   )
 
-  export const cancel = fn(z.string(), async (jobID): Promise<void> => {
-    assertSafeJobID(jobID)
-    using _jobLock = await Lock.write(`job-op:${jobID}`)
+  export const cancel = fn(
+    z.object({ jobIDs: z.array(z.string()) }),
+    async (
+      input,
+    ): Promise<{
+      jobs: Array<{
+        id: string
+        success: boolean
+        status: Status
+        error?: string
+      }>
+    }> => {
+      const results = []
 
-    const jobs = state()
-    const runtime = jobs.get(jobID)
+      for (const jobID of input.jobIDs) {
+        try {
+          assertSafeJobID(jobID)
+          using _jobLock = await Lock.write(`job-op:${jobID}`)
 
-    // If there is an active run, signal abort and let the per-run executor
-    // handle status transitions and logging.
-    if (runtime?.active && runtime.abort) {
-      runtime.abort.abort()
-      return
-    }
+          const jobs = state()
+          const runtime = jobs.get(jobID)
 
-    let workerSessionID: string | undefined
+          // If there is an active run, signal abort and let the per-run executor
+          // handle status transitions and logging.
+          if (runtime?.active && runtime.abort) {
+            runtime.abort.abort()
+          } else {
+            let workerSessionID: string | undefined
 
-    await update(jobID, (draft) => {
-      workerSessionID = draft.metadata?.workerSessionID as string | undefined
-      if (draft.status === "pending" || draft.status === "running") {
-        draft.status = "canceled"
-        draft.time.completed = draft.time.completed ?? Date.now()
+            await update(jobID, (draft) => {
+              workerSessionID = draft.metadata?.workerSessionID as string | undefined
+              if (draft.status === "pending" || draft.status === "running") {
+                draft.status = "canceled"
+                draft.time.completed = draft.time.completed ?? Date.now()
+              }
+            })
+
+            // Best-effort cancellation if there is no runtime entry but we still
+            // have a worker session.
+            if (!runtime && workerSessionID) {
+              SessionPrompt.cancel(workerSessionID)
+            }
+          }
+
+          // Get current status after cancel attempt
+          const { jobs: jobResults } = await get({ jobIDs: [jobID] })
+          const job = jobResults[0]
+          results.push({
+            id: jobID,
+            success: true,
+            status: job?.found ? job.status! : "canceled",
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error"
+          results.push({
+            id: jobID,
+            success: false,
+            status: "error" as Status,
+            error: message,
+          })
+        }
       }
-    })
 
-    // Best-effort cancellation if there is no runtime entry but we still
-    // have a worker session.
-    if (!runtime && workerSessionID) {
-      SessionPrompt.cancel(workerSessionID)
-    }
-  })
+      return { jobs: results }
+    },
+  )
 
   export const remove = fn(z.string(), async (jobID): Promise<void> => {
     assertSafeJobID(jobID)
@@ -413,8 +499,9 @@ export namespace Job {
 
       // If the job was aborted but didn't call complete/fail, set status to canceled
       if (runtime.abort?.signal.aborted) {
-        const currentJob = await get(input.jobID).catch(() => null)
-        if (currentJob && !isTerminal(currentJob.status)) {
+        const { jobs: jobResults } = await get({ jobIDs: [input.jobID] }).catch(() => ({ jobs: [] }))
+        const currentJob = jobResults[0]
+        if (currentJob?.found && currentJob.status && !isTerminal(currentJob.status)) {
           await update(input.jobID, (draft) => {
             draft.status = "canceled"
             draft.time.completed = Date.now()
@@ -604,6 +691,122 @@ export namespace Job {
     return info
   })
 
+  export const CreateBatchInput = z.object({
+    definition: z.string(),
+    sessionID: Identifier.schema("session"),
+    jobs: z.array(
+      z.object({
+        title: z.string(),
+        params: z.unknown(),
+      }),
+    ),
+  })
+
+  export type CreateBatchInput = z.infer<typeof CreateBatchInput>
+
+  export const createBatch = fn(
+    CreateBatchInput,
+    async (
+      input,
+    ): Promise<{
+      jobs: Array<{
+        id?: string
+        title: string
+        status?: Status
+        error?: string
+      }>
+    }> => {
+      const definition = JobRegistry.get(input.definition)
+      if (!definition) {
+        return {
+          jobs: input.jobs.map((j) => ({
+            title: j.title,
+            error: `Definition not found: ${input.definition}`,
+          })),
+        }
+      }
+
+      // Verify session exists
+      try {
+        await Session.get(input.sessionID)
+      } catch {
+        return {
+          jobs: input.jobs.map((j) => ({
+            title: j.title,
+            error: "Session not found",
+          })),
+        }
+      }
+
+      const results = []
+
+      for (const job of input.jobs) {
+        try {
+          // Validate params
+          const parsed = definition.params.safeParse(job.params)
+          if (!parsed.success) {
+            results.push({
+              title: job.title,
+              error: `Invalid params: ${parsed.error.message}`,
+            })
+            continue
+          }
+
+          // Create job WITHOUT concurrency limit check
+          const now = Date.now()
+          const info: Info = {
+            id: Identifier.descending("job"),
+            projectID: Instance.project.id,
+            type: input.definition,
+            title: job.title,
+            parentSessionID: input.sessionID,
+            status: "running", // Always start running, no pending
+            params: parsed.data,
+            time: {
+              created: now,
+              updated: now,
+              started: now,
+            },
+          }
+
+          await write(info)
+          await Bus.publish(Event.Created, { info })
+
+          // Start execution
+          const jobs = state()
+          const runtime: RuntimeJob = {
+            active: true,
+            abort: new AbortController(),
+          }
+          jobs.set(info.id, runtime)
+
+          executeJob({
+            jobID: info.id,
+            sessionID: input.sessionID,
+            definition,
+            params: parsed.data,
+          }).catch((e) => log.error("batch job execution failed", { jobID: info.id, error: e }))
+
+          // Get current status (might have completed already)
+          const current = await Storage.read<Info>(["job", Instance.project.id, info.id]).catch(() => info)
+
+          results.push({
+            id: info.id,
+            title: job.title,
+            status: current.status,
+          })
+        } catch (error) {
+          results.push({
+            title: job.title,
+            error: error instanceof Error ? error.message : "Unknown error",
+          })
+        }
+      }
+
+      return { jobs: results }
+    },
+  )
+
   export const SendInput = z.object({
     jobID: z.string(),
     input: z.unknown(),
@@ -615,7 +818,7 @@ export namespace Job {
     assertSafeJobID(input.jobID)
 
     // 1. Get job info
-    const info = await get(input.jobID)
+    const info = await getJobInternal(input.jobID)
 
     // 2. Get definition from registry by job.type
     const definition = JobRegistry.get(info.type)
@@ -654,71 +857,207 @@ export namespace Job {
     }
   })
 
+  export const SendBatchInput = z.object({
+    inputs: z.array(
+      z.object({
+        jobID: z.string(),
+        input: z.unknown(),
+      }),
+    ),
+  })
+
+  export type SendBatchInput = z.infer<typeof SendBatchInput>
+
+  export const sendBatch = fn(
+    SendBatchInput,
+    async (
+      input,
+    ): Promise<{
+      jobs: Array<{
+        job_id: string
+        success: boolean
+        error?: string
+      }>
+    }> => {
+      const results = []
+
+      for (const item of input.inputs) {
+        try {
+          // Use existing send logic
+          await send({ jobID: item.jobID, input: item.input })
+          results.push({ job_id: item.jobID, success: true })
+        } catch (error) {
+          results.push({
+            job_id: item.jobID,
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+          })
+        }
+      }
+
+      return { jobs: results }
+    },
+  )
+
   export const ReadInput = z.object({
-    jobID: z.string(),
+    jobIDs: z.array(z.string()),
     limit: z.number().optional(),
-    after: z.string().optional(),
   })
 
   export type ReadInput = z.infer<typeof ReadInput>
 
   /**
-   * Read output frames from a job.
+   * Read output frames from jobs.
    * Returns only output frames (direction: "out").
    */
-  export const read = fn(ReadInput, async (input): Promise<JobStream.Frame[]> => {
-    assertSafeJobID(input.jobID)
+  export const read = fn(
+    ReadInput,
+    async (
+      input,
+    ): Promise<{
+      jobs: Array<{
+        id: string
+        found: boolean
+        status?: Status
+        frames?: JobStream.Frame[]
+        error?: string
+      }>
+    }> => {
+      const results = []
 
-    // Verify job exists (throws NotFoundError if not)
-    await get(input.jobID)
+      for (const jobID of input.jobIDs) {
+        try {
+          assertSafeJobID(jobID)
+          const { jobs } = await get({ jobIDs: [jobID] })
+          const jobInfo = jobs[0]
 
-    const frames = await JobStream.list({
-      jobID: input.jobID,
-      limit: input.limit,
-      after: input.after,
-    })
+          if (!jobInfo?.found) {
+            results.push({ id: jobID, found: false, error: jobInfo?.lookup_error })
+            continue
+          }
 
-    // Return output frames only per spec
-    return frames.filter((f) => f.direction === "out")
-  })
+          const frames = await JobStream.list({
+            jobID,
+            limit: input.limit,
+          })
+
+          // Return most recent frames (output direction only)
+          const outputFrames = frames.filter((f) => f.direction === "out")
+
+          results.push({
+            id: jobID,
+            found: true,
+            status: jobInfo.status,
+            frames: outputFrames,
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown error"
+          results.push({ id: jobID, found: false, error: message })
+        }
+      }
+
+      return { jobs: results }
+    },
+  )
 
   export const WaitInput = z.object({
-    jobID: z.string(),
+    jobIDs: z.array(z.string()),
+    mode: z.enum(["all", "any"]).default("all"),
     timeout: z.number().optional().describe("Timeout in milliseconds. Defaults to 300000 (5 minutes)"),
   })
 
   export type WaitInput = z.infer<typeof WaitInput>
 
-  export const WaitOutput = z.object({
-    status: Status,
-    output: JobStream.Frame.array().optional(),
-    error: z.string().optional(),
+  export const WaitResult = z.object({
+    completed: z.array(
+      z.object({
+        id: z.string(),
+        status: Status,
+        output: z.string().optional(),
+        error: z.string().optional(),
+      }),
+    ),
+    pending: z.array(
+      z.object({
+        id: z.string(),
+        status: Status,
+      }),
+    ),
+    errors: z.array(
+      z.object({
+        id: z.string(),
+        error: z.string(),
+      }),
+    ),
   })
 
-  export type WaitOutput = z.infer<typeof WaitOutput>
+  export type WaitResult = z.infer<typeof WaitResult>
 
-  export const wait = fn(WaitInput, async (input): Promise<WaitOutput> => {
-    assertSafeJobID(input.jobID)
+  // Keep WaitOutput for backward compatibility type reference
+  export const WaitOutput = WaitResult
+  export type WaitOutput = WaitResult
 
-    // 1. Get job info
-    const info = await get(input.jobID)
+  export const wait = fn(WaitInput, async (input): Promise<WaitResult> => {
+    const timeout = input.timeout ?? 5 * 60 * 1000
+    const completed: Array<{ id: string; status: Status; output?: string; error?: string }> = []
+    const pending: Array<{ id: string; status: Status }> = []
+    const errors: Array<{ id: string; error: string }> = []
 
-    // 2. If already terminal, return immediately
-    if (isTerminal(info.status)) {
-      const frames = await JobStream.list({ jobID: input.jobID })
-      const output = frames.filter((f) => f.direction === "out")
-      return {
-        status: info.status,
-        output: output.length > 0 ? output : undefined,
-        error: info.error,
+    // Validate all job IDs first
+    const validJobIDs: string[] = []
+    for (const jobID of input.jobIDs) {
+      try {
+        assertSafeJobID(jobID)
+        const { jobs } = await get({ jobIDs: [jobID] })
+        const jobInfo = jobs[0]
+        if (!jobInfo?.found) {
+          errors.push({ id: jobID, error: jobInfo?.lookup_error ?? "Job not found" })
+        } else if (isTerminal(jobInfo.status!)) {
+          // Already terminal
+          const frames = await JobStream.list({ jobID })
+          const lastOutput = frames.filter((f) => f.direction === "out").pop()
+          completed.push({
+            id: jobID,
+            status: jobInfo.status!,
+            output: lastOutput
+              ? typeof lastOutput.data === "string"
+                ? lastOutput.data
+                : JSON.stringify(lastOutput.data)
+              : undefined,
+            error: jobInfo.error,
+          })
+        } else {
+          validJobIDs.push(jobID)
+        }
+      } catch (e) {
+        errors.push({ id: jobID, error: e instanceof Error ? e.message : "Unknown error" })
       }
     }
 
-    // Default timeout of 5 minutes if not specified
-    const timeout = input.timeout ?? 5 * 60 * 1000
+    // If mode is "any" and we already have completed jobs, return immediately
+    if (input.mode === "any" && completed.length > 0) {
+      for (const jobID of validJobIDs) {
+        const { jobs } = await get({ jobIDs: [jobID] })
+        const jobInfo = jobs[0]
+        if (jobInfo?.found) {
+          pending.push({ id: jobID, status: jobInfo.status! })
+        }
+      }
+      return { completed, pending, errors }
+    }
 
-    // 3. Subscribe to Job.Event.Updated and wait for terminal state or timeout
-    return new Promise<WaitOutput>((resolve) => {
+    // No valid jobs to wait for
+    if (validJobIDs.length === 0) {
+      return { completed, pending, errors }
+    }
+
+    // Wait for jobs using event subscription
+    return new Promise((resolve) => {
+      const jobStates = new Map<string, Status>()
+      for (const id of validJobIDs) {
+        jobStates.set(id, "running")
+      }
+
       let timeoutId: Timer | undefined
 
       const cleanup = () => {
@@ -726,33 +1065,73 @@ export namespace Job {
         if (timeoutId) clearTimeout(timeoutId)
       }
 
-      const unsub = Bus.subscribe(Event.Updated, async (event) => {
-        if (event.properties.info.id !== input.jobID) return
+      const checkCompletion = async () => {
+        const allTerminal = [...jobStates.values()].every((s) => isTerminal(s))
+        const anyTerminal = [...jobStates.values()].some((s) => isTerminal(s))
 
-        const updated = event.properties.info
-        if (isTerminal(updated.status)) {
+        const shouldResolve = input.mode === "all" ? allTerminal : anyTerminal
+
+        if (shouldResolve) {
           cleanup()
-          const frames = await JobStream.list({ jobID: input.jobID })
-          const output = frames.filter((f) => f.direction === "out")
-          resolve({
-            status: updated.status,
-            output: output.length > 0 ? output : undefined,
-            error: updated.error,
-          })
+
+          // Build final results
+          for (const [jobID, status] of jobStates) {
+            if (isTerminal(status)) {
+              const { jobs } = await get({ jobIDs: [jobID] })
+              const frames = await JobStream.list({ jobID })
+              const lastOutput = frames.filter((f) => f.direction === "out").pop()
+              completed.push({
+                id: jobID,
+                status,
+                output: lastOutput
+                  ? typeof lastOutput.data === "string"
+                    ? lastOutput.data
+                    : JSON.stringify(lastOutput.data)
+                  : undefined,
+                error: jobs[0]?.error,
+              })
+            } else {
+              pending.push({ id: jobID, status })
+            }
+          }
+
+          resolve({ completed, pending, errors })
+        }
+      }
+
+      const unsub = Bus.subscribe(Event.Updated, async (event) => {
+        const info = event.properties.info
+        if (jobStates.has(info.id)) {
+          jobStates.set(info.id, info.status)
+          await checkCompletion()
         }
       })
 
-      // 4. Handle timeout
+      // Timeout handler
       timeoutId = setTimeout(async () => {
         cleanup()
-        const current = await get(input.jobID).catch(() => info)
-        const frames = await JobStream.list({ jobID: input.jobID })
-        const output = frames.filter((f) => f.direction === "out")
-        resolve({
-          status: current.status,
-          output: output.length > 0 ? output : undefined,
-          error: current.error,
-        })
+
+        for (const [jobID, status] of jobStates) {
+          if (isTerminal(status)) {
+            const { jobs } = await get({ jobIDs: [jobID] })
+            const frames = await JobStream.list({ jobID })
+            const lastOutput = frames.filter((f) => f.direction === "out").pop()
+            completed.push({
+              id: jobID,
+              status,
+              output: lastOutput
+                ? typeof lastOutput.data === "string"
+                  ? lastOutput.data
+                  : JSON.stringify(lastOutput.data)
+                : undefined,
+              error: jobs[0]?.error,
+            })
+          } else {
+            pending.push({ id: jobID, status })
+          }
+        }
+
+        resolve({ completed, pending, errors })
       }, timeout)
     })
   })

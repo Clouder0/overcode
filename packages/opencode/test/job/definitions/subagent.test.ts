@@ -167,7 +167,7 @@ describe("SubagentJob definition", () => {
       expect(typeof description).toBe("function")
 
       const result = await (description as () => Promise<string>)()
-      expect(result).toContain("Launch a subagent")
+      expect(result).toContain("Launch one or more subagents")
       expect(result).toContain("general")
       expect(result).toContain("explore")
       // Should NOT contain primary agent

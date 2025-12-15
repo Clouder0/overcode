@@ -21,17 +21,21 @@ export const SubagentJob = JobRegistry.define("subagent", {
       .map((a) => a.name)
       .join(", ")
 
-    return `Launch a subagent to perform a task autonomously.
+    return `Launch one or more subagents to perform tasks autonomously in parallel.
 
 Available agents: ${agentNames}
 
-The subagent has these job tools available:
+**Usage:**
+- Start: job_subagent_start({ jobs: [{ title: "Task", agent: "explore", prompt: "..." }, ...] })
+- Wait: job_wait({ job_ids: ["id1", "id2"], mode: "all" })
+
+**Subagent tools (used by the subagent internally):**
 - job_emit: Report progress (you can poll via job_subagent_read)
-- job_notify: Ask you questions or report urgent issues (triggers notification to you)
-- job_complete: Mark task as done successfully
+- job_notify: Ask questions or report urgent issues
+- job_complete: Mark task as done
 - job_fail: Mark task as failed
 
-The subagent will automatically be instructed to call job_complete or job_fail when finished. You can include additional instructions in your prompt, e.g. "use job_notify before making breaking changes" or "use job_emit after each file".`
+The subagent will automatically call job_complete or job_fail when finished.`
   },
 
   params: z.object({

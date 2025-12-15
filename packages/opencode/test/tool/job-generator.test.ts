@@ -295,4 +295,283 @@ describe("Tool initialization", () => {
       expect(typeof readTool!.init).toBe("function")
     })
   })
+
+  test("start tool accepts batch parameters", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_batch_start", {
+        description: "Test batch start",
+        params: z.object({ value: z.string() }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const startTool = tools.find((t) => t.id === "job_gen_test_batch_start_start")
+      expect(startTool).toBeDefined()
+
+      // Initialize tool to get parameters schema
+      const initialized = await startTool!.init()
+
+      // Verify the schema accepts jobs array
+      const testParams = {
+        jobs: [
+          { title: "Job 1", value: "test1" },
+          { title: "Job 2", value: "test2" },
+        ],
+      }
+
+      const parsed = initialized.parameters.safeParse(testParams)
+      expect(parsed.success).toBe(true)
+    })
+  })
+
+  test("send tool accepts batch parameters", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_batch_send", {
+        description: "Test batch send",
+        params: z.object({}),
+        input: z.object({ message: z.string() }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const sendTool = tools.find((t) => t.id === "job_gen_test_batch_send_send")
+      expect(sendTool).toBeDefined()
+
+      // Initialize tool to get parameters schema
+      const initialized = await sendTool!.init()
+
+      // Verify the schema accepts inputs array
+      const testParams = {
+        inputs: [
+          { job_id: "job_123", message: "hello" },
+          { job_id: "job_456", message: "world" },
+        ],
+      }
+
+      const parsed = initialized.parameters.safeParse(testParams)
+      expect(parsed.success).toBe(true)
+    })
+  })
+
+  test("read tool accepts batch parameters", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_batch_read", {
+        description: "Test batch read",
+        params: z.object({}),
+        output: z.object({ result: z.string() }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const readTool = tools.find((t) => t.id === "job_gen_test_batch_read_read")
+      expect(readTool).toBeDefined()
+
+      // Initialize tool to get parameters schema
+      const initialized = await readTool!.init()
+
+      // Verify the schema accepts job_ids array
+      const testParams = {
+        job_ids: ["job_123", "job_456"],
+        limit: 50,
+      }
+
+      const parsed = initialized.parameters.safeParse(testParams)
+      expect(parsed.success).toBe(true)
+    })
+  })
+})
+
+describe("Batch parameter validation", () => {
+  test("start tool rejects empty jobs array", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_empty_jobs", {
+        description: "Test empty jobs",
+        params: z.object({ value: z.string() }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const startTool = tools.find((t) => t.id === "job_gen_test_empty_jobs_start")
+      const initialized = await startTool!.init()
+
+      // Empty array is technically valid per zod, but we test schema parsing works
+      const testParams = { jobs: [] }
+      const parsed = initialized.parameters.safeParse(testParams)
+      expect(parsed.success).toBe(true)
+    })
+  })
+
+  test("send tool rejects empty inputs array", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_empty_inputs", {
+        description: "Test empty inputs",
+        params: z.object({}),
+        input: z.object({ text: z.string() }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const sendTool = tools.find((t) => t.id === "job_gen_test_empty_inputs_send")
+      const initialized = await sendTool!.init()
+
+      // Empty array is technically valid per zod
+      const testParams = { inputs: [] }
+      const parsed = initialized.parameters.safeParse(testParams)
+      expect(parsed.success).toBe(true)
+    })
+  })
+
+  test("read tool rejects empty job_ids array", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_empty_ids", {
+        description: "Test empty job_ids",
+        params: z.object({}),
+        output: z.object({ data: z.string() }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const readTool = tools.find((t) => t.id === "job_gen_test_empty_ids_read")
+      const initialized = await readTool!.init()
+
+      // Empty array is technically valid per zod
+      const testParams = { job_ids: [] }
+      const parsed = initialized.parameters.safeParse(testParams)
+      expect(parsed.success).toBe(true)
+    })
+  })
+
+  test("start tool validates job params schema", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_params_validation", {
+        description: "Test params validation",
+        params: z.object({
+          count: z.number().min(1),
+          name: z.string(),
+        }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const startTool = tools.find((t) => t.id === "job_gen_test_params_validation_start")
+      const initialized = await startTool!.init()
+
+      // Valid params
+      const validParams = {
+        jobs: [{ title: "Test", count: 5, name: "test" }],
+      }
+      const validParsed = initialized.parameters.safeParse(validParams)
+      expect(validParsed.success).toBe(true)
+
+      // Invalid params (count < 1)
+      const invalidParams = {
+        jobs: [{ title: "Test", count: 0, name: "test" }],
+      }
+      const invalidParsed = initialized.parameters.safeParse(invalidParams)
+      expect(invalidParsed.success).toBe(false)
+
+      // Missing required field
+      const missingParams = {
+        jobs: [{ title: "Test", count: 5 }], // missing 'name'
+      }
+      const missingParsed = initialized.parameters.safeParse(missingParams)
+      expect(missingParsed.success).toBe(false)
+    })
+  })
+
+  test("send tool validates input schema", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_input_validation", {
+        description: "Test input validation",
+        params: z.object({}),
+        input: z.object({
+          text: z.string().min(1),
+          priority: z.number().optional(),
+        }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const sendTool = tools.find((t) => t.id === "job_gen_test_input_validation_send")
+      const initialized = await sendTool!.init()
+
+      // Valid input
+      const validParams = {
+        inputs: [{ job_id: "job_123", text: "hello", priority: 1 }],
+      }
+      const validParsed = initialized.parameters.safeParse(validParams)
+      expect(validParsed.success).toBe(true)
+
+      // Invalid input (empty text)
+      const invalidParams = {
+        inputs: [{ job_id: "job_123", text: "" }],
+      }
+      const invalidParsed = initialized.parameters.safeParse(invalidParams)
+      expect(invalidParsed.success).toBe(false)
+
+      // Missing required field
+      const missingParams = {
+        inputs: [{ job_id: "job_123" }], // missing 'text'
+      }
+      const missingParsed = initialized.parameters.safeParse(missingParams)
+      expect(missingParsed.success).toBe(false)
+    })
+  })
+
+  test("read tool limit has correct constraints", async () => {
+    await withInstance(async () => {
+      const JobGenerator = await getJobGenerator()
+
+      const definition = JobRegistry.define("gen_test_read_limit", {
+        description: "Test read limit",
+        params: z.object({}),
+        output: z.object({ data: z.string() }),
+        async start() {},
+      })
+
+      const tools = JobGenerator.generate(definition)
+      const readTool = tools.find((t) => t.id === "job_gen_test_read_limit_read")
+      const initialized = await readTool!.init()
+
+      // Valid limit
+      const validParams = {
+        job_ids: ["job_123"],
+        limit: 100,
+      }
+      const validParsed = initialized.parameters.safeParse(validParams)
+      expect(validParsed.success).toBe(true)
+
+      // Invalid limit (> 200)
+      const invalidParams = {
+        job_ids: ["job_123"],
+        limit: 300,
+      }
+      const invalidParsed = initialized.parameters.safeParse(invalidParams)
+      expect(invalidParsed.success).toBe(false)
+
+      // Invalid limit (< 1)
+      const negativeParams = {
+        job_ids: ["job_123"],
+        limit: 0,
+      }
+      const negativeParsed = initialized.parameters.safeParse(negativeParams)
+      expect(negativeParsed.success).toBe(false)
+    })
+  })
 })

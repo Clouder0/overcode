@@ -197,12 +197,13 @@ async function createTestJob(prompt = "Test job") {
 // Helper to wait for job terminal status
 async function waitForTerminalStatus(jobID: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs
-  let last: Awaited<ReturnType<typeof Job.get>> | undefined
+  let last: { id: string; found: boolean; status?: string } | undefined
 
   while (Date.now() < deadline) {
-    const info = await Job.get(jobID)
+    const { jobs } = await Job.get({ jobIDs: [jobID] })
+    const info = jobs[0]
     last = info
-    if (info.status === "completed" || info.status === "error" || info.status === "canceled") {
+    if (info?.found && (info.status === "completed" || info.status === "error" || info.status === "canceled")) {
       return info
     }
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -414,19 +415,18 @@ describe("JobGetTool", () => {
       const tool = await JobGetTool.init()
       const ctx = createCtx(parent.id)
 
-      const result = await tool.execute({ job_id: job.id }, ctx)
+      const result = await tool.execute({ job_ids: [job.id] }, ctx)
 
-      expect(result.output).toContain(`job_id: ${job.id}`)
+      expect(result.output).toContain(`- ${job.id}:`)
       expect(result.output).toContain("type: subagent")
       expect(result.output).toContain("title: test job")
       expect(result.output).toContain("status:")
-      expect(result.output).toContain("time:")
-      expect(result.metadata.job).toBeDefined()
-      expect(result.metadata.job.id).toBe(job.id)
+      expect(result.metadata.jobs).toBeDefined()
+      expect(result.metadata.jobs[0].id).toBe(job.id)
     })
   })
 
-  test("throws error for job from different session", async () => {
+  test("returns access denied for job from different session", async () => {
     await withInstance(async () => {
       const { job } = await createTestJob("Session boundary test")
       await waitForTerminalStatus(job.id)
@@ -434,16 +434,78 @@ describe("JobGetTool", () => {
       const tool = await JobGetTool.init()
       const ctx = createCtx("session_different")
 
-      await expect(tool.execute({ job_id: job.id }, ctx)).rejects.toThrow("Cannot access job from different session")
+      const result = await tool.execute({ job_ids: [job.id] }, ctx)
+
+      expect(result.output).toContain("Access denied")
+      expect(result.metadata.jobs[0].found).toBe(false)
     })
   })
 
-  test("throws error for non-existent job", async () => {
+  test("handles non-existent job in batch", async () => {
     await withInstance(async () => {
       const tool = await JobGetTool.init()
       const ctx = createCtx()
 
-      await expect(tool.execute({ job_id: "job_nonexistent123" }, ctx)).rejects.toThrow()
+      const result = await tool.execute({ job_ids: ["job_nonexistent123"] }, ctx)
+
+      expect(result.output).toContain("ERROR")
+      expect(result.metadata.jobs[0].found).toBe(false)
+    })
+  })
+
+  test("returns multiple job details", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+
+      const job1 = await Job.create({
+        definition: "subagent",
+        sessionID: parent.id,
+        title: "batch get test 1",
+        params: {
+          agent: "general",
+          prompt: "Task 1",
+        },
+      })
+      const job2 = await Job.create({
+        definition: "subagent",
+        sessionID: parent.id,
+        title: "batch get test 2",
+        params: {
+          agent: "general",
+          prompt: "Task 2",
+        },
+      })
+
+      await waitForTerminalStatus(job1.id)
+      await waitForTerminalStatus(job2.id)
+
+      const tool = await JobGetTool.init()
+      const ctx = createCtx(parent.id)
+
+      const result = await tool.execute({ job_ids: [job1.id, job2.id] }, ctx)
+
+      expect(result.title).toBe("2 job(s) found")
+      expect(result.output).toContain(job1.id)
+      expect(result.output).toContain(job2.id)
+      expect(result.metadata.jobs.length).toBe(2)
+    })
+  })
+
+  test("handles mixed valid and invalid IDs in batch", async () => {
+    await withInstance(async () => {
+      const { job, parent } = await createTestJob("mixed batch test")
+      await waitForTerminalStatus(job.id)
+
+      const tool = await JobGetTool.init()
+      const ctx = createCtx(parent.id)
+
+      const result = await tool.execute({ job_ids: [job.id, "job_invalid123"] }, ctx)
+
+      expect(result.title).toBe("1 job(s) found")
+      const foundJobs = result.metadata.jobs.filter((j: { found: boolean }) => j.found)
+      const notFoundJobs = result.metadata.jobs.filter((j: { found: boolean }) => !j.found)
+      expect(foundJobs.length).toBe(1)
+      expect(notFoundJobs.length).toBe(1)
     })
   })
 })
@@ -460,15 +522,15 @@ describe("JobCancelTool", () => {
       const tool = await JobCancelTool.init()
       const ctx = createCtx(parent.id)
 
-      const result = await tool.execute({ job_id: job.id }, ctx)
+      const result = await tool.execute({ job_ids: [job.id] }, ctx)
 
-      expect(result.output).toContain("Successfully requested cancellation")
-      expect(result.metadata.jobId).toBe(job.id)
+      expect(result.output).toContain(job.id)
+      expect(result.metadata.jobs[0].id).toBe(job.id)
 
       // Wait and verify job was canceled
       await waitForTerminalStatus(job.id)
-      const updatedJob = await Job.get(job.id)
-      expect(updatedJob.status).toBe("canceled")
+      const { jobs } = await Job.get({ jobIDs: [job.id] })
+      expect(jobs[0]?.status).toBe("canceled")
     })
   })
 
@@ -479,7 +541,9 @@ describe("JobCancelTool", () => {
       const tool = await JobCancelTool.init()
       const ctx = createCtx("session_different")
 
-      await expect(tool.execute({ job_id: job.id }, ctx)).rejects.toThrow("Cannot access job from different session")
+      await expect(tool.execute({ job_ids: [job.id] }, ctx)).rejects.toThrow(
+        `Cannot access job ${job.id} from different session`,
+      )
 
       // Clean up
       await waitForTerminalStatus(job.id)
@@ -494,19 +558,64 @@ describe("JobCancelTool", () => {
       const tool = await JobCancelTool.init()
       const ctx = createCtx(parent.id)
 
-      const result = await tool.execute({ job_id: job.id }, ctx)
+      const result = await tool.execute({ job_ids: [job.id] }, ctx)
 
-      expect(result.output).toContain("already completed")
-      expect(result.metadata.status).toBe("completed")
+      expect(result.output).toContain(job.id)
+      expect(result.metadata.jobs[0].success).toBe(true)
     })
   })
 
-  test("throws error for non-existent job", async () => {
+  test("handles non-existent job in batch", async () => {
     await withInstance(async () => {
+      const parent = await Session.create({})
       const tool = await JobCancelTool.init()
-      const ctx = createCtx()
+      const ctx = createCtx(parent.id)
 
-      await expect(tool.execute({ job_id: "job_nonexistent" }, ctx)).rejects.toThrow()
+      const result = await tool.execute({ job_ids: ["job_nonexistent"] }, ctx)
+
+      expect(result.metadata.jobs[0].success).toBe(false)
+      expect(result.output).toContain("FAILED")
+    })
+  })
+
+  test("cancels multiple jobs", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+
+      // Create two slow jobs
+      const job1 = await Job.create({
+        definition: "subagent",
+        sessionID: parent.id,
+        title: "batch cancel test 1",
+        params: {
+          agent: "general",
+          prompt: "[slow-response:5000] Task 1",
+        },
+      })
+      const job2 = await Job.create({
+        definition: "subagent",
+        sessionID: parent.id,
+        title: "batch cancel test 2",
+        params: {
+          agent: "general",
+          prompt: "[slow-response:5000] Task 2",
+        },
+      })
+
+      // Wait for jobs to start
+      await new Promise((resolve) => setTimeout(resolve, 100))
+
+      const tool = await JobCancelTool.init()
+      const ctx = createCtx(parent.id)
+
+      const result = await tool.execute({ job_ids: [job1.id, job2.id] }, ctx)
+
+      expect(result.title).toContain("2")
+      expect(result.metadata.jobs.length).toBe(2)
+
+      // Clean up
+      await waitForTerminalStatus(job1.id)
+      await waitForTerminalStatus(job2.id)
     })
   })
 })
@@ -521,14 +630,14 @@ describe("JobWaitTool", () => {
       const ctx = createCtx(parent.id)
 
       const startTime = Date.now()
-      const result = await tool.execute({ job_id: job.id, timeout: 5000 }, ctx)
+      const result = await tool.execute({ job_ids: [job.id], mode: "all", timeout: 5000 }, ctx)
       const elapsed = Date.now() - startTime
 
       // Should return quickly (< 1 second) since job is already done
       expect(elapsed).toBeLessThan(1000)
-      expect(result.output).toContain("finished with status: completed")
-      expect(result.metadata.timedOut).toBe(false)
-      expect(result.metadata.status).toBe("completed")
+      expect(result.output).toContain("Completed:")
+      expect(result.metadata.completed.length).toBe(1)
+      expect(result.metadata.completed[0].status).toBe("completed")
     })
   })
 
@@ -539,11 +648,12 @@ describe("JobWaitTool", () => {
       const tool = await JobWaitTool.init()
       const ctx = createCtx(parent.id)
 
-      const result = await tool.execute({ job_id: job.id, timeout: 10000 }, ctx)
+      const result = await tool.execute({ job_ids: [job.id], mode: "all", timeout: 10000 }, ctx)
 
       // Job should complete within timeout
-      expect(result.metadata.timedOut).toBe(false)
-      expect(["completed", "error", "canceled"]).toContain(result.metadata.status)
+      expect(result.metadata.pending.length).toBe(0)
+      expect(result.metadata.completed.length).toBe(1)
+      expect(["completed", "error", "canceled"]).toContain(result.metadata.completed[0].status)
     })
   })
 
@@ -554,34 +664,36 @@ describe("JobWaitTool", () => {
       const now = Date.now()
       const jobID = Identifier.descending("job")
 
-      // Create a pending job that won't complete
-      const pendingJob = {
+      // Create a running job that won't complete (no definition to complete it)
+      const runningJob = {
         id: jobID,
         projectID: project.id,
-        type: "test",
-        title: "Pending job",
-        status: "pending" as const,
+        type: "test-slow",
+        title: "Running slow job",
+        status: "running" as const,
         parentSessionID: parent.id,
         time: {
           created: now,
           updated: now,
+          started: now,
         },
       }
-      await Storage.write(["job", project.id, jobID], pendingJob)
+      await Storage.write(["job", project.id, jobID], runningJob)
 
       const tool = await JobWaitTool.init()
       const ctx = createCtx(parent.id)
 
       const startTime = Date.now()
-      const result = await tool.execute({ job_id: jobID, timeout: 1000 }, ctx)
+      const result = await tool.execute({ job_ids: [jobID], mode: "all", timeout: 1000 }, ctx)
       const elapsed = Date.now() - startTime
 
       // Should timeout around 1 second
       expect(elapsed).toBeGreaterThanOrEqual(900)
       expect(elapsed).toBeLessThan(2000)
-      expect(result.output).toContain("Timeout reached")
-      expect(result.metadata.timedOut).toBe(true)
-      expect(result.metadata.status).toBe("pending")
+      expect(result.output).toContain("Pending (timeout reached):")
+      expect(result.metadata.pending.length).toBe(1)
+      // Job could be pending or running when timeout occurs
+      expect(["pending", "running"]).toContain(result.metadata.pending[0].status)
     })
   })
 
@@ -592,8 +704,8 @@ describe("JobWaitTool", () => {
       const tool = await JobWaitTool.init()
       const ctx = createCtx("session_different")
 
-      await expect(tool.execute({ job_id: job.id, timeout: 5000 }, ctx)).rejects.toThrow(
-        "Cannot access job from different session",
+      await expect(tool.execute({ job_ids: [job.id], mode: "all", timeout: 5000 }, ctx)).rejects.toThrow(
+        `Cannot access job ${job.id} from different session`,
       )
 
       // Clean up
@@ -601,12 +713,96 @@ describe("JobWaitTool", () => {
     })
   })
 
-  test("throws error for non-existent job", async () => {
+  test("handles non-existent job", async () => {
     await withInstance(async () => {
+      const parent = await Session.create({})
       const tool = await JobWaitTool.init()
-      const ctx = createCtx()
+      const ctx = createCtx(parent.id)
 
-      await expect(tool.execute({ job_id: "job_nonexistent", timeout: 5000 }, ctx)).rejects.toThrow()
+      const result = await tool.execute({ job_ids: ["job_nonexistent"], mode: "all", timeout: 5000 }, ctx)
+
+      expect(result.metadata.errors.length).toBe(1)
+      expect(result.output).toContain("Errors:")
+    })
+  })
+
+  test("mode 'all' waits for all jobs", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+
+      const job1 = await Job.create({
+        definition: "subagent",
+        sessionID: parent.id,
+        title: "wait all test 1",
+        params: {
+          agent: "general",
+          prompt: "Task 1",
+        },
+      })
+      const job2 = await Job.create({
+        definition: "subagent",
+        sessionID: parent.id,
+        title: "wait all test 2",
+        params: {
+          agent: "general",
+          prompt: "Task 2",
+        },
+      })
+
+      const tool = await JobWaitTool.init()
+      const ctx = createCtx(parent.id)
+
+      const result = await tool.execute({ job_ids: [job1.id, job2.id], mode: "all", timeout: 10000 }, ctx)
+
+      // Both jobs should be completed
+      expect(result.metadata.completed.length).toBe(2)
+      expect(result.metadata.pending.length).toBe(0)
+    })
+  })
+
+  test("mode 'any' returns when first job completes", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+      const project = Instance.project
+      const now = Date.now()
+
+      // Create a fast job
+      const fastJob = await Job.create({
+        definition: "subagent",
+        sessionID: parent.id,
+        title: "wait any fast",
+        params: {
+          agent: "general",
+          prompt: "Fast task",
+        },
+      })
+
+      // Create a slow pending job manually
+      const slowJobID = Identifier.descending("job")
+      const slowJob = {
+        id: slowJobID,
+        projectID: project.id,
+        type: "test",
+        title: "Slow job",
+        status: "pending" as const,
+        parentSessionID: parent.id,
+        time: {
+          created: now,
+          updated: now,
+        },
+      }
+      await Storage.write(["job", project.id, slowJobID], slowJob)
+
+      const tool = await JobWaitTool.init()
+      const ctx = createCtx(parent.id)
+
+      // Wait for fast job to complete first
+      await waitForTerminalStatus(fastJob.id)
+
+      const result = await tool.execute({ job_ids: [fastJob.id, slowJobID], mode: "any", timeout: 5000 }, ctx)
+
+      // Should return immediately since fast job is already completed
+      expect(result.metadata.completed.length).toBeGreaterThanOrEqual(1)
     })
   })
 })
@@ -642,7 +838,7 @@ describe("Abort signal handling", () => {
       const tool = await JobGetTool.init()
       const ctx = createAbortedCtx()
 
-      await expect(tool.execute({ job_id: job.id }, ctx)).rejects.toThrow("Operation aborted")
+      await expect(tool.execute({ job_ids: [job.id] }, ctx)).rejects.toThrow("Operation aborted")
     })
   })
 
@@ -653,7 +849,7 @@ describe("Abort signal handling", () => {
       const tool = await JobCancelTool.init()
       const ctx = createAbortedCtx()
 
-      await expect(tool.execute({ job_id: job.id }, ctx)).rejects.toThrow("Operation aborted")
+      await expect(tool.execute({ job_ids: [job.id] }, ctx)).rejects.toThrow("Operation aborted")
 
       // Clean up
       await waitForTerminalStatus(job.id)
@@ -667,7 +863,9 @@ describe("Abort signal handling", () => {
       const tool = await JobWaitTool.init()
       const ctx = createAbortedCtx()
 
-      await expect(tool.execute({ job_id: job.id, timeout: 5000 }, ctx)).rejects.toThrow("Operation aborted")
+      await expect(tool.execute({ job_ids: [job.id], mode: "all", timeout: 5000 }, ctx)).rejects.toThrow(
+        "Operation aborted",
+      )
 
       // Clean up
       await waitForTerminalStatus(job.id)
