@@ -32,9 +32,14 @@ export namespace JobBridge {
         }),
         async execute(params) {
           await context.notify(params.output)
+          // Include the notification content in metadata for inline display on callee side
+          const text = typeof params.output === "string" ? params.output : JSON.stringify(params.output)
           return {
             title: "Notification sent",
-            metadata: {},
+            metadata: {
+              notificationText: text,
+              notificationTime: Date.now(),
+            },
             output: "Notification sent successfully",
           }
         },

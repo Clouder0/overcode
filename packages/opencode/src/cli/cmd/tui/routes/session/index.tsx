@@ -977,38 +977,7 @@ export function Session() {
                   </Switch>
                 )}
               </For>
-              {/* Show notifications for the job THIS session is executing (for child/worker sessions) */}
-              <Show when={session()?.parentID}>
-                {(() => {
-                  const parentID = session()!.parentID!
-
-                  // Get jobs from PARENT session
-                  const parentJobs = createMemo(() => sync.data.job[parentID] ?? [])
-
-                  // Find the job where THIS session is the worker
-                  const myJob = createMemo(() =>
-                    parentJobs().find(
-                      (j) => (j.metadata as Record<string, unknown>)?.workerSessionID === route.sessionID,
-                    ),
-                  )
-
-                  // Get notifications for that job
-                  const notifications = createMemo(() => {
-                    const job = myJob()
-                    if (!job) return []
-                    return (sync.data.job_notifications[job.id] ?? []).map((n) => ({
-                      ...n,
-                      jobTitle: job.title,
-                    }))
-                  })
-
-                  return (
-                    <For each={notifications()}>
-                      {(notification) => <JobNotifyMessage notification={notification} />}
-                    </For>
-                  )
-                })()}
-              </Show>
+              {/* Notifications for child sessions are now displayed inline via job_notify tool renderer */}
             </scrollbox>
             <box flexShrink={0}>
               <Prompt
@@ -1856,6 +1825,44 @@ ToolRegistry.register<typeof TodoWriteTool>({
           </box>
         </Show>
       </>
+    )
+  },
+})
+
+// Job notification tool - shows notification card inline at tool call position (callee side)
+ToolRegistry.register({
+  name: "job_notify",
+  container: "block",
+  render(props: ToolProps<any>) {
+    const { theme } = useTheme()
+    const ctx = use()
+    const metadata = props.metadata as { notificationText?: string; notificationTime?: number } | undefined
+    const input = props.input as { output?: unknown } | undefined
+    const text = metadata?.notificationText ?? input?.output
+    const time = metadata?.notificationTime
+
+    return (
+      <box
+        border={["left"]}
+        borderColor={theme.warning}
+        customBorderChars={SplitBorder.customBorderChars}
+        paddingLeft={2}
+        paddingTop={1}
+        paddingBottom={1}
+        backgroundColor={theme.backgroundPanel}
+      >
+        <text fg={theme.warning}>
+          <b>⚡ Notification sent to caller</b>
+        </text>
+        <Show when={text}>
+          <text fg={theme.text} paddingTop={1}>
+            {typeof text === "string" ? text : JSON.stringify(text)}
+          </text>
+        </Show>
+        <Show when={time && ctx.showTimestamps()}>
+          <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(time!)}</text>
+        </Show>
+      </box>
     )
   },
 })
