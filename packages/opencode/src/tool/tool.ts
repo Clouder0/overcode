@@ -46,8 +46,9 @@ export namespace Tool {
         const toolInfo = init instanceof Function ? await init() : init
         const execute = toolInfo.execute
         toolInfo.execute = (args, ctx) => {
+          let parsed: any
           try {
-            toolInfo.parameters.parse(args)
+            parsed = toolInfo.parameters.parse(args)
           } catch (error) {
             if (error instanceof z.ZodError && toolInfo.formatValidationError) {
               throw new Error(toolInfo.formatValidationError(error), { cause: error })
@@ -57,7 +58,7 @@ export namespace Tool {
               { cause: error },
             )
           }
-          return execute(args, ctx)
+          return execute(parsed, ctx)
         }
         return toolInfo
       },

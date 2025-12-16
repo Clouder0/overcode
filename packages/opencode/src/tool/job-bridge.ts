@@ -1,0 +1,74 @@
+import z from "zod"
+import type { JobRegistry } from "@/job/registry"
+import { Tool } from "./tool"
+
+export namespace JobBridge {
+  export function createTools(
+    context: JobRegistry.JobContext<z.ZodType, z.ZodType, z.ZodType>,
+    outputSchema: z.ZodType = z.unknown(),
+  ): Record<string, Tool.Info> {
+    return {
+      job_emit: Tool.define("job_emit", {
+        description:
+          "Send output to the parent job (pollable). Use this for progress updates that don't require immediate attention.",
+        parameters: z.object({
+          output: outputSchema.describe("Output data to emit"),
+        }),
+        async execute(params) {
+          await context.emit(params.output)
+          return {
+            title: "Output emitted",
+            metadata: {},
+            output: "Output sent successfully",
+          }
+        },
+      }),
+
+      job_notify: Tool.define("job_notify", {
+        description:
+          "Notify the parent job immediately (push). Use this for questions or errors that need immediate attention.",
+        parameters: z.object({
+          output: outputSchema.describe("Output data to notify"),
+        }),
+        async execute(params) {
+          await context.notify(params.output)
+          return {
+            title: "Notification sent",
+            metadata: {},
+            output: "Notification sent successfully",
+          }
+        },
+      }),
+
+      job_complete: Tool.define("job_complete", {
+        description: "Mark the job as complete. Call this when you have finished the task successfully.",
+        parameters: z.object({
+          output: outputSchema.optional().describe("Optional final output data"),
+        }),
+        async execute(params) {
+          await context.complete(params.output)
+          return {
+            title: "Job completed",
+            metadata: {},
+            output: "Job marked as complete",
+          }
+        },
+      }),
+
+      job_fail: Tool.define("job_fail", {
+        description: "Mark the job as failed. Call this when you cannot complete the task due to an error.",
+        parameters: z.object({
+          error: z.string().describe("Error message explaining why the job failed"),
+        }),
+        async execute(params) {
+          await context.fail(params.error)
+          return {
+            title: "Job failed",
+            metadata: {},
+            output: `Job marked as failed: ${params.error}`,
+          }
+        },
+      }),
+    }
+  }
+}

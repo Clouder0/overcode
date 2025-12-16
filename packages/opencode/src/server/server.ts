@@ -29,6 +29,7 @@ import { Command } from "../command"
 import { ProviderAuth } from "../provider/auth"
 import { Global } from "../global"
 import { ProjectRoute } from "./project"
+import { JobRoute } from "./job"
 import { ToolRegistry } from "../tool/registry"
 import { zodToJsonSchema } from "zod-to-json-schema"
 import { SessionPrompt } from "../session/prompt"
@@ -69,6 +70,7 @@ export namespace Server {
         if (err instanceof NamedError) {
           let status: ContentfulStatusCode
           if (err instanceof Storage.NotFoundError) status = 404
+          else if (err instanceof Storage.InvalidKeyError) status = 400
           else if (err instanceof Provider.ModelNotFoundError) status = 400
           else status = 500
           return c.json(err.toObject(), { status })
@@ -120,10 +122,18 @@ export namespace Server {
                 },
               },
             },
+            ...errors(400),
           },
         }),
+        validator(
+          "query",
+          z.object({
+            directory: z.string().min(1),
+          }),
+        ),
         async (c) => {
-          log.info("global event connected")
+          const requestedDirectory = c.req.valid("query").directory
+          log.info("global event connected", { requestedDirectory })
           return streamSSE(c, async (stream) => {
             stream.writeSSE({
               data: JSON.stringify({
@@ -134,6 +144,8 @@ export namespace Server {
               }),
             })
             async function handler(event: any) {
+              if (!event?.directory) return
+              if (event.directory !== requestedDirectory) return
               await stream.writeSSE({
                 data: JSON.stringify(event),
               })
@@ -143,7 +155,7 @@ export namespace Server {
               stream.onAbort(() => {
                 GlobalBus.off("event", handler)
                 resolve()
-                log.info("global event disconnected")
+                log.info("global event disconnected", { requestedDirectory })
               })
             })
           })
@@ -204,6 +216,7 @@ export namespace Server {
       .use(validator("query", z.object({ directory: z.string().optional() })))
 
       .route("/project", ProjectRoute)
+      .route("/job", JobRoute)
 
       .get(
         "/pty",

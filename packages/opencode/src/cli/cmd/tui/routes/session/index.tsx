@@ -6,6 +6,7 @@ import {
   For,
   Match,
   on,
+  onCleanup,
   Show,
   Switch,
   useContext,
@@ -39,7 +40,6 @@ import type { ListTool } from "@/tool/ls"
 import type { EditTool } from "@/tool/edit"
 import type { PatchTool } from "@/tool/patch"
 import type { WebFetchTool } from "@/tool/webfetch"
-import type { TaskTool } from "@/tool/task"
 import { useKeyboard, useRenderer, useTerminalDimensions, type BoxProps, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -49,11 +49,13 @@ import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
+import { statusIcon, jobStatusColor, type JobInfo } from "../../lib/job"
 import { iife } from "@/util/iife"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { DialogChildSessionList } from "../../component/dialog-child-session-list"
 import { Sidebar } from "./sidebar"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
@@ -741,6 +743,33 @@ export function Session() {
       },
     },
     {
+      title: "Switch subagent session",
+      value: "session.child.list",
+      keybind: "session_child_list",
+      category: "Session",
+      onSelect: (dialog) => {
+        const current = session()
+        if (!current) return
+        const rootID = current.parentID ?? current.id
+        const directChildren = sync.data.session.filter((s) => s.parentID === rootID)
+        const workers = new Set(
+          (sync.data.job[rootID] ?? []).flatMap((j) => {
+            const meta = j.metadata
+            if (!meta || typeof meta !== "object") return []
+            const workerSessionID = (meta as { workerSessionID?: unknown }).workerSessionID
+            if (typeof workerSessionID !== "string" || workerSessionID.length === 0) return []
+            return [workerSessionID]
+          }),
+        )
+        if (directChildren.length === 0 && workers.size === 0) {
+          toast.show({ variant: "warning", message: "No subagent sessions found", duration: 2000 })
+          dialog.clear()
+          return
+        }
+        dialog.replace(() => <DialogChildSessionList sessionID={route.sessionID} />)
+      },
+    },
+    {
       title: "Next child session",
       value: "session.child.next",
       keybind: "session_child_cycle",
@@ -948,6 +977,38 @@ export function Session() {
                   </Switch>
                 )}
               </For>
+              {/* Show notifications for the job THIS session is executing (for child/worker sessions) */}
+              <Show when={session()?.parentID}>
+                {(() => {
+                  const parentID = session()!.parentID!
+
+                  // Get jobs from PARENT session
+                  const parentJobs = createMemo(() => sync.data.job[parentID] ?? [])
+
+                  // Find the job where THIS session is the worker
+                  const myJob = createMemo(() =>
+                    parentJobs().find(
+                      (j) => (j.metadata as Record<string, unknown>)?.workerSessionID === route.sessionID,
+                    ),
+                  )
+
+                  // Get notifications for that job
+                  const notifications = createMemo(() => {
+                    const job = myJob()
+                    if (!job) return []
+                    return (sync.data.job_notifications[job.id] ?? []).map((n) => ({
+                      ...n,
+                      jobTitle: job.title,
+                    }))
+                  })
+
+                  return (
+                    <For each={notifications()}>
+                      {(notification) => <JobNotifyMessage notification={notification} />}
+                    </For>
+                  )
+                })()}
+              </Show>
             </scrollbox>
             <box flexShrink={0}>
               <Prompt
@@ -1149,6 +1210,137 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   )
 }
 
+function JobNotifyMessage(props: {
+  notification: {
+    id: string
+    text: string
+    time: number
+    jobTitle?: string
+  }
+}) {
+  const { theme } = useTheme()
+  const ctx = use()
+
+  return (
+    <box
+      id={`notify-${props.notification.id}`}
+      border={["left"]}
+      borderColor={theme.warning}
+      customBorderChars={SplitBorder.customBorderChars}
+      paddingLeft={2}
+      paddingTop={1}
+      paddingBottom={1}
+      marginTop={1}
+      backgroundColor={theme.backgroundPanel}
+    >
+      <text fg={theme.warning}>
+        <b>⚡ Notification sent to caller</b>
+      </text>
+      <Show when={props.notification.jobTitle}>
+        <text fg={theme.textMuted}>Job: {props.notification.jobTitle}</text>
+      </Show>
+      <text fg={theme.text} paddingTop={1}>
+        {props.notification.text}
+      </text>
+      <Show when={ctx.showTimestamps()}>
+        <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(props.notification.time)}</text>
+      </Show>
+    </box>
+  )
+}
+
+/**
+ * Renders a single job card with live data from sync store.
+ */
+function JobCard(props: { job: JobInfo }) {
+  const sync = useSync()
+  const { theme } = useTheme()
+
+  const notifications = createMemo(() => sync.data.job_notifications[props.job.id] ?? [])
+
+  // Tick signal for updating duration of running jobs
+  const [tick, setTick] = createSignal(Date.now())
+
+  createEffect(() => {
+    // Only tick when job is running (not pending, completed, error, or canceled)
+    if (props.job.status !== "running") return
+    const interval = setInterval(() => setTick(Date.now()), 100)
+    onCleanup(() => clearInterval(interval))
+  })
+
+  const duration = createMemo(() => {
+    if (props.job.status === "pending") return "pending"
+    const start = props.job.time.started ?? props.job.time.created
+    const end = props.job.time.completed ?? tick()
+    return Locale.duration(end - start)
+  })
+
+  return (
+    <box
+      border={["left"]}
+      borderColor={jobStatusColor(props.job.status, theme)}
+      customBorderChars={SplitBorder.customBorderChars}
+      paddingLeft={2}
+      paddingTop={1}
+      paddingBottom={1}
+      marginTop={1}
+      backgroundColor={theme.backgroundPanel}
+    >
+      <text fg={theme.text}>
+        <span style={{ fg: jobStatusColor(props.job.status, theme), bold: true }}>{statusIcon(props.job.status)}</span>{" "}
+        <b>{props.job.title}</b>
+        <span style={{ fg: theme.textMuted }}> • {duration()}</span>
+      </text>
+
+      <Show when={notifications().length > 0}>
+        <box paddingTop={1}>
+          <For each={notifications()}>
+            {(n, i) => (
+              <text fg={theme.textMuted}>
+                {i() === notifications().length - 1 ? "└" : "├"} {n.text}
+              </text>
+            )}
+          </For>
+        </box>
+      </Show>
+
+      <Show when={props.job.status === "error" && props.job.error}>
+        <text fg={theme.error} paddingTop={1}>
+          Error: {props.job.error}
+        </text>
+      </Show>
+    </box>
+  )
+}
+
+/**
+ * Renders job cards for jobs created by a specific tool call.
+ * Uses job IDs from tool metadata to look up live data from sync store.
+ */
+function JobCardsForTool(props: { metadata: Record<string, unknown>; sessionID: string }) {
+  const sync = useSync()
+
+  // Extract job IDs from tool metadata
+  const jobIDs = createMemo(() => {
+    const jobs = props.metadata?.jobs as Array<{ id?: string }> | undefined
+    if (!jobs) return new Set<string>()
+    return new Set(jobs.filter((j) => j.id).map((j) => j.id!))
+  })
+
+  // Look up live data from sync store
+  const jobs = createMemo(() => {
+    if (jobIDs().size === 0) return []
+    const allJobs = sync.data.job[props.sessionID] ?? []
+    return allJobs.filter((job) => jobIDs().has(job.id)).sort((a, b) => a.time.created - b.time.created)
+  })
+
+  return (
+    <Show when={jobs().length > 0}>
+      <For each={jobs()}>{(job) => <JobCard job={job} />}</For>
+    </Show>
+  )
+}
+
 const PART_MAPPING = {
   text: TextPart,
   tool: ToolPart,
@@ -1215,6 +1407,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   const { showDetails } = use()
   const sync = useSync()
   const [margin, setMargin] = createSignal(0)
+
+  const metadata = createMemo(() => (props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {})))
+
   const component = createMemo(() => {
     // Hide tool if showDetails is false and tool completed successfully
     // But always show if there's an error or permission is required
@@ -1229,7 +1424,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
 
     const render = ToolRegistry.render(props.part.tool) ?? GenericTool
 
-    const metadata = props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {})
     const input = props.part.state.input ?? {}
     const container = ToolRegistry.container(props.part.tool)
     const permissions = sync.data.permission[props.message.sessionID] ?? []
@@ -1284,7 +1478,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
           component={render}
           input={input}
           tool={props.part.tool}
-          metadata={metadata}
+          metadata={metadata()}
           permission={permission?.metadata ?? {}}
           output={props.part.state.status === "completed" ? props.part.state.output : undefined}
         />
@@ -1316,7 +1510,18 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     )
   })
 
-  return <Show when={component()}>{component()}</Show>
+  // Only render job cards for job start tools (job_*_start pattern)
+  const isJobStartTool = props.part.tool.startsWith("job_") && props.part.tool.endsWith("_start")
+
+  return (
+    <>
+      <Show when={component()}>{component()}</Show>
+      {/* Render job cards only for the tool that created them */}
+      <Show when={isJobStartTool}>
+        <JobCardsForTool metadata={metadata()} sessionID={props.part.sessionID} />
+      </Show>
+    </>
+  )
 }
 
 type ToolProps<T extends Tool.Info> = {
@@ -1491,42 +1696,6 @@ ToolRegistry.register<typeof ListTool>({
         <ToolTitle icon="→" fallback="Listing directory..." when={props.input.path !== undefined}>
           List {dir()}
         </ToolTitle>
-      </>
-    )
-  },
-})
-
-ToolRegistry.register<typeof TaskTool>({
-  name: "task",
-  container: "block",
-  render(props) {
-    const { theme } = useTheme()
-    const keybind = useKeybind()
-
-    return (
-      <>
-        <ToolTitle icon="◉" fallback="Delegating..." when={props.input.subagent_type ?? props.input.description}>
-          {Locale.titlecase(props.input.subagent_type ?? "unknown")} Task "{props.input.description}"
-        </ToolTitle>
-        <Show when={props.metadata.summary?.length}>
-          <box>
-            <For each={props.metadata.summary ?? []}>
-              {(task, index) => {
-                const summary = props.metadata.summary ?? []
-                return (
-                  <text style={{ fg: task.state.status === "error" ? theme.error : theme.textMuted }}>
-                    {index() === summary.length - 1 ? "└" : "├"} {Locale.titlecase(task.tool)}{" "}
-                    {task.state.status === "completed" ? task.state.title : ""}
-                  </text>
-                )
-              }}
-            </For>
-          </box>
-        </Show>
-        <text fg={theme.text}>
-          {keybind.print("session_child_cycle")}, {keybind.print("session_child_cycle_reverse")}
-          <span style={{ fg: theme.textMuted }}> to navigate between subagent sessions</span>
-        </text>
       </>
     )
   },

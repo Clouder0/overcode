@@ -22,6 +22,7 @@ import MAX_STEPS from "../session/prompt/max-steps.txt"
 import { defer } from "../util/defer"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ToolRegistry } from "../tool/registry"
+import { Tool } from "../tool/tool"
 import { Wildcard } from "../util/wildcard"
 import { MCP } from "../mcp"
 import { LSP } from "../lsp"
@@ -37,11 +38,12 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
-import { TaskTool } from "@/tool/task"
 import { SessionStatus } from "./status"
+import { JobNotification } from "@/job/notification"
+import { Config } from "../config/config"
+import { Shell } from "@/shell/shell"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
-import { Shell } from "@/shell/shell"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -70,6 +72,34 @@ export namespace SessionPrompt {
       }
     },
   )
+
+  // Session-scoped extra tools (e.g., bridge tools for worker sessions)
+  const extraToolsState = Instance.state(
+    () => new Map<string, Tool.Info[]>(),
+    async (map) => map.clear(),
+  )
+
+  /**
+   * Set extra tools for a session. These will be merged with registry tools during prompts.
+   * Used by job system to inject bridge tools (job_emit, job_notify, etc.) into worker sessions.
+   */
+  export function setExtraTools(sessionID: string, tools: Tool.Info[]) {
+    extraToolsState().set(sessionID, tools)
+  }
+
+  /**
+   * Clear extra tools for a session.
+   */
+  export function clearExtraTools(sessionID: string) {
+    extraToolsState().delete(sessionID)
+  }
+
+  /**
+   * Get extra tools for a session.
+   */
+  export function getExtraTools(sessionID: string): Tool.Info[] {
+    return extraToolsState().get(sessionID) ?? []
+  }
 
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
@@ -151,6 +181,8 @@ export namespace SessionPrompt {
   })
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
+    const cfg = await Config.get()
+    const allowOutsideWorktree = cfg.experimental?.allowFileRefsOutsideWorktree === true
     const parts: PromptInput["parts"] = [
       {
         type: "text",
@@ -164,6 +196,14 @@ export namespace SessionPrompt {
         const name = match[1]
         if (seen.has(name)) return
         seen.add(name)
+
+        // Security: block ~/ and absolute paths unless explicitly allowed
+        const isOutsideWorktree = name.startsWith("~/") || path.isAbsolute(name)
+        if (isOutsideWorktree && !allowOutsideWorktree) {
+          log.warn("blocked file reference outside worktree", { name })
+          return
+        }
+
         const filepath = name.startsWith("~/")
           ? path.join(os.homedir(), name.slice(2))
           : path.resolve(Instance.worktree, name)
@@ -237,11 +277,45 @@ export namespace SessionPrompt {
 
     using _ = defer(() => cancel(sessionID))
 
+    // Initialize job notifications (idempotent)
+    JobNotification.init()
+
     let step = 0
     while (true) {
       SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
       if (abort.aborted) break
+
+      // Check for job notifications
+      if (JobNotification.hasPending(sessionID)) {
+        const notifications = JobNotification.drain(sessionID)
+        const formatted = JobNotification.format(notifications)
+
+        // Inject as synthetic user message
+        const notificationMessage: MessageV2.User = {
+          id: Identifier.ascending("message"),
+          sessionID,
+          time: { created: Date.now() },
+          role: "user",
+          agent: "build",
+          model: await lastModel(sessionID),
+        }
+        await Session.updateMessage(notificationMessage)
+
+        const notificationPart: MessageV2.TextPart = {
+          id: Identifier.ascending("part"),
+          messageID: notificationMessage.id,
+          sessionID,
+          type: "text",
+          text: formatted,
+          synthetic: true,
+        }
+        await Session.updatePart(notificationPart)
+
+        // Continue loop to process the notification
+        continue
+      }
+
       let msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
 
       let lastUser: MessageV2.User | undefined
@@ -284,118 +358,11 @@ export namespace SessionPrompt {
       const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID)
       const task = tasks.pop()
 
-      // pending subtask
-      // TODO: centralize "invoke tool" logic
+      // pending subtask - handled by job-based subagent system
+      // The new job system handles subagent tasks through SubagentJob definitions
+      // and generic job tools (job_list, job_get, job_cancel, job_wait)
       if (task?.type === "subtask") {
-        const taskTool = await TaskTool.init()
-        const assistantMessage = (await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "assistant",
-          parentID: lastUser.id,
-          sessionID,
-          mode: task.agent,
-          agent: task.agent,
-          path: {
-            cwd: Instance.directory,
-            root: Instance.worktree,
-          },
-          cost: 0,
-          tokens: {
-            input: 0,
-            output: 0,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-          modelID: model.id,
-          providerID: model.providerID,
-          time: {
-            created: Date.now(),
-          },
-        })) as MessageV2.Assistant
-        let part = (await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: assistantMessage.id,
-          sessionID: assistantMessage.sessionID,
-          type: "tool",
-          callID: ulid(),
-          tool: TaskTool.id,
-          state: {
-            status: "running",
-            input: {
-              prompt: task.prompt,
-              description: task.description,
-              subagent_type: task.agent,
-            },
-            time: {
-              start: Date.now(),
-            },
-          },
-        })) as MessageV2.ToolPart
-        let executionError: Error | undefined
-        const result = await taskTool
-          .execute(
-            {
-              prompt: task.prompt,
-              description: task.description,
-              subagent_type: task.agent,
-            },
-            {
-              agent: task.agent,
-              messageID: assistantMessage.id,
-              sessionID: sessionID,
-              abort,
-              async metadata(input) {
-                await Session.updatePart({
-                  ...part,
-                  type: "tool",
-                  state: {
-                    ...part.state,
-                    ...input,
-                  },
-                } satisfies MessageV2.ToolPart)
-              },
-            },
-          )
-          .catch((error) => {
-            executionError = error
-            log.error("subtask execution failed", { error, agent: task.agent, description: task.description })
-            return undefined
-          })
-        assistantMessage.finish = "tool-calls"
-        assistantMessage.time.completed = Date.now()
-        await Session.updateMessage(assistantMessage)
-        if (result && part.state.status === "running") {
-          await Session.updatePart({
-            ...part,
-            state: {
-              status: "completed",
-              input: part.state.input,
-              title: result.title,
-              metadata: result.metadata,
-              output: result.output,
-              attachments: result.attachments,
-              time: {
-                ...part.state.time,
-                end: Date.now(),
-              },
-            },
-          } satisfies MessageV2.ToolPart)
-        }
-        if (!result) {
-          await Session.updatePart({
-            ...part,
-            state: {
-              status: "error",
-              error: executionError ? `Tool execution failed: ${executionError.message}` : "Tool execution failed",
-              time: {
-                start: part.state.status === "running" ? part.state.time.start : Date.now(),
-                end: Date.now(),
-              },
-              metadata: part.metadata,
-              input: part.state.input,
-            },
-          } satisfies MessageV2.ToolPart)
-        }
+        // Skip subtask processing - will be handled via job system
         continue
       }
 
@@ -526,6 +493,34 @@ export namespace SessionPrompt {
     return Provider.defaultModel()
   }
 
+  async function resolveSystemPrompt(input: {
+    system?: string
+    agent: Agent.Info
+    model: Provider.Model
+    isLastStep?: boolean
+  }) {
+    let system = SystemPrompt.header(input.model.providerID)
+    system.push(
+      ...(() => {
+        if (input.system) return [input.system]
+        if (input.agent.prompt) return [input.agent.prompt]
+        return SystemPrompt.provider(input.model)
+      })(),
+    )
+    system.push(...(await SystemPrompt.environment()))
+    system.push(...(await SystemPrompt.custom()))
+    system.push(...SystemPrompt.jobs())
+
+    if (input.isLastStep) {
+      system.push(MAX_STEPS)
+    }
+
+    // max 2 system prompt messages for caching purposes
+    const [first, ...rest] = system
+    system = [first, rest.join("\n")]
+    return system
+  }
+
   async function resolveTools(input: {
     agent: Agent.Info
     model: Provider.Model
@@ -533,15 +528,22 @@ export namespace SessionPrompt {
     tools?: Record<string, boolean>
     processor: SessionProcessor.Info
   }) {
-    using _ = log.time("resolveTools")
+    const cfg = await Config.get()
     const tools: Record<string, AITool> = {}
     const enabledTools = pipe(
       input.agent.tools,
       mergeDeep(await ToolRegistry.enabled(input.agent)),
       mergeDeep(input.tools ?? {}),
     )
+
+    // Tools restricted to primary agents only (not available to subagents)
+    const primaryOnlyTools = new Set(cfg.experimental?.primary_tools ?? [])
+    const isPrimaryAgent = input.agent.mode === "primary" || input.agent.mode === "all"
+
     for (const item of await ToolRegistry.tools(input.model.providerID)) {
       if (Wildcard.all(item.id, enabledTools) === false) continue
+      // Block primary-only tools from subagents
+      if (primaryOnlyTools.has(item.id) && !isPrimaryAgent) continue
       const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
       tools[item.id] = tool({
         id: item.id as any,
@@ -603,8 +605,40 @@ export namespace SessionPrompt {
         },
       })
     }
+
+    // Add session-scoped extra tools (e.g., bridge tools for worker sessions)
+    for (const extraTool of getExtraTools(input.sessionID)) {
+      const initialized = await extraTool.init()
+      const schema = ProviderTransform.schema(input.model, z.toJSONSchema(initialized.parameters))
+      tools[extraTool.id] = tool({
+        id: extraTool.id as any,
+        description: initialized.description,
+        inputSchema: jsonSchema(schema as any),
+        async execute(args, options) {
+          const result = await initialized.execute(args, {
+            sessionID: input.sessionID,
+            abort: options.abortSignal!,
+            messageID: input.processor.message.id,
+            callID: options.toolCallId,
+            extra: { model: input.model },
+            agent: input.agent.name,
+            metadata: async () => {},
+          })
+          return result
+        },
+        toModelOutput(result) {
+          return {
+            type: "text",
+            value: result.output,
+          }
+        },
+      })
+    }
+
     for (const [key, item] of Object.entries(await MCP.tools())) {
       if (Wildcard.all(key, enabledTools) === false) continue
+      // Block primary-only tools from subagents
+      if (primaryOnlyTools.has(key) && !isPrimaryAgent) continue
       const execute = item.execute
       if (!execute) continue
 

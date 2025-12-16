@@ -14,6 +14,8 @@ import PROMPT_BEAST from "./prompt/beast.txt"
 import PROMPT_GEMINI from "./prompt/gemini.txt"
 import PROMPT_ANTHROPIC_SPOOF from "./prompt/anthropic_spoof.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
+import PROMPT_SUMMARIZE from "./prompt/summarize.txt"
+import PROMPT_TITLE from "./prompt/title.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
 import type { Provider } from "@/provider/provider"
@@ -116,5 +118,64 @@ export namespace SystemPrompt {
         .then((x) => "Instructions from: " + p + "\n" + x),
     )
     return Promise.all(found).then((result) => result.filter(Boolean))
+  }
+
+  export function compaction(providerID: string) {
+    switch (providerID) {
+      case "anthropic":
+        return [PROMPT_ANTHROPIC_SPOOF.trim(), PROMPT_COMPACTION]
+      default:
+        return [PROMPT_COMPACTION]
+    }
+  }
+
+  export function summarize(providerID: string) {
+    switch (providerID) {
+      case "anthropic":
+        return [PROMPT_ANTHROPIC_SPOOF.trim(), PROMPT_SUMMARIZE]
+      default:
+        return [PROMPT_SUMMARIZE]
+    }
+  }
+
+  export function title(providerID: string) {
+    switch (providerID) {
+      case "anthropic":
+        return [PROMPT_ANTHROPIC_SPOOF.trim(), PROMPT_TITLE]
+      default:
+        return [PROMPT_TITLE]
+    }
+  }
+
+  export function jobs(): string[] {
+    return [
+      `You have access to job tools for managing background tasks:
+
+**Starting jobs:**
+- job_subagent_start: Spawn one or more subagent jobs
+  - Input: { jobs: [{ title, agent, prompt }, ...] }
+  - All jobs start immediately in parallel
+  - Returns: { jobs: [{ id, title, status }, ...] }
+
+**Waiting for results:**
+- job_wait: Wait for jobs to complete and get results
+  - Input: { job_ids: ["id1", "id2", ...], mode: "all" | "any", timeout? }
+  - mode "all": Wait for every job to finish (default)
+  - mode "any": Wait for first job to finish
+  - Returns: { completed: [...], pending: [...], errors: [...] }
+
+**Typical workflow:**
+1. Start: job_subagent_start({ jobs: [{ title: "Task", agent: "explore", prompt: "..." }, ...] })
+2. Wait: job_wait({ job_ids: ["id1", "id2"], mode: "all" })
+
+**Other tools:**
+- job_list: Discover jobs by filter (type, status)
+- job_get: Get details for specific jobs by IDs
+- job_cancel: Cancel jobs by IDs
+- job_subagent_read: Poll output frames without waiting
+- job_subagent_send: Send input to interactive jobs
+
+**All batch operations:** Pass arrays, single item = [one_item]`,
+    ]
   }
 }

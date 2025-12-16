@@ -939,6 +939,10 @@ export type KeybindsConfig = {
    */
   history_next?: string
   /**
+   * List child/subagent sessions
+   */
+  session_child_list?: string
+  /**
    * Next child session
    */
   session_child_cycle?: string
