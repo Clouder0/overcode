@@ -55,6 +55,7 @@ import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { DialogChildSessionList } from "../../component/dialog-child-session-list"
 import { Sidebar } from "./sidebar"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
@@ -734,6 +735,33 @@ export function Session() {
           toast.show({ message: "Failed to export session", variant: "error" })
         }
         dialog.clear()
+      },
+    },
+    {
+      title: "Switch subagent session",
+      value: "session.child.list",
+      keybind: "session_child_list",
+      category: "Session",
+      onSelect: (dialog) => {
+        const current = session()
+        if (!current) return
+        const rootID = current.parentID ?? current.id
+        const directChildren = sync.data.session.filter((s) => s.parentID === rootID)
+        const workers = new Set(
+          (sync.data.job[rootID] ?? []).flatMap((j) => {
+            const meta = j.metadata
+            if (!meta || typeof meta !== "object") return []
+            const workerSessionID = (meta as { workerSessionID?: unknown }).workerSessionID
+            if (typeof workerSessionID !== "string" || workerSessionID.length === 0) return []
+            return [workerSessionID]
+          }),
+        )
+        if (directChildren.length === 0 && workers.size === 0) {
+          toast.show({ variant: "warning", message: "No subagent sessions found", duration: 2000 })
+          dialog.clear()
+          return
+        }
+        dialog.replace(() => <DialogChildSessionList sessionID={route.sessionID} />)
       },
     },
     {

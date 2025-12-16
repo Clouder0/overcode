@@ -169,12 +169,11 @@ export namespace Config {
     const hasGitIgnore = await Bun.file(gitignore).exists()
     if (!hasGitIgnore) await Bun.write(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
 
-    await BunProc.run(
-      ["add", "@opencode-ai/plugin@" + (Installation.isLocal() ? "latest" : Installation.VERSION), "--exact"],
-      {
-        cwd: dir,
-      },
-    ).catch(() => {})
+    // Use "latest" for local dev and preview/feature branches since those versions don't exist on npm
+    const pluginVersion = Installation.isLocal() || Installation.isPreview() ? "latest" : Installation.VERSION
+    await BunProc.run(["add", `@opencode-ai/plugin@${pluginVersion}`, "--exact"], {
+      cwd: dir,
+    }).catch(() => { })
   }
 
   const COMMAND_GLOB = new Bun.Glob("command/**/*.md")
@@ -469,6 +468,7 @@ export namespace Config {
       input_newline: z.string().optional().default("shift+return,ctrl+j").describe("Insert newline in input"),
       history_previous: z.string().optional().default("up").describe("Previous history item"),
       history_next: z.string().optional().default("down").describe("Next history item"),
+      session_child_list: z.string().optional().default("<leader>j").describe("List child/subagent sessions"),
       session_child_cycle: z.string().optional().default("<leader>right").describe("Next child session"),
       session_child_cycle_reverse: z.string().optional().default("<leader>left").describe("Previous child session"),
       terminal_suspend: z.string().optional().default("ctrl+z").describe("Suspend terminal"),

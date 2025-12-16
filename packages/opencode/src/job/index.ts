@@ -251,29 +251,32 @@ export namespace Job {
       .optional(),
     async (input): Promise<Info[]> => {
       const project = Instance.project
-      const items = await Storage.list(["job", project.id])
+      const keys = await Storage.list(["job", project.id])
 
-      const result: Info[] = []
-      const limit = input?.limit
+      // Parallel reads for performance
+      const jobs = await Promise.all(
+        keys.map((key) =>
+          Storage.read<Info>(key).catch((error) => {
+            if (!Storage.NotFoundError.isInstance(error)) {
+              log.warn("failed to read job", { key, error })
+            }
+            return undefined
+          }),
+        ),
+      )
 
-      for (const key of items) {
-        try {
-          const info = await Storage.read<Info>(key)
-          if (input?.type && info.type !== input.type) continue
-          if (input?.parentSessionID && info.parentSessionID !== input.parentSessionID) continue
-          if (input?.status && info.status !== input.status) continue
-          result.push(info)
-        } catch (error) {
-          if (!Storage.NotFoundError.isInstance(error)) {
-            log.warn("failed to read job", { key, error })
-          }
-        }
-      }
+      const result = jobs.filter((info): info is Info => {
+        if (!info) return false
+        if (input?.type && info.type !== input.type) return false
+        if (input?.parentSessionID && info.parentSessionID !== input.parentSessionID) return false
+        if (input?.status && info.status !== input.status) return false
+        return true
+      })
 
       result.sort((a, b) => b.time.created - a.time.created)
 
-      if (limit !== undefined) {
-        return result.slice(0, limit)
+      if (input?.limit !== undefined) {
+        return result.slice(0, input.limit)
       }
       return result
     },
@@ -1119,9 +1122,9 @@ export namespace Job {
    * @returns The number of jobs that were recovered
    */
   export async function recoverOrphanedJobs(): Promise<number> {
-    const runningJobs = await list({ status: "running" })
-    const pendingJobs = await list({ status: "pending" })
-    const allOrphaned = [...runningJobs, ...pendingJobs]
+    // Single list() call with in-memory filtering to avoid duplicate file reads
+    const allJobs = await list({})
+    const allOrphaned = allJobs.filter((j) => j.status === "running" || j.status === "pending")
 
     let recovered = 0
     for (const job of allOrphaned) {
