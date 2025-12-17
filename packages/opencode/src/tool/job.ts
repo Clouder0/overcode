@@ -227,11 +227,7 @@ export const JobWaitTool = Tool.define("job_wait", async () => {
       const completedCount = result.completed.length
       const pendingCount = result.pending.length
       const errorCount = result.errors.length
-
-      ctx.metadata({
-        title: `${completedCount} completed, ${pendingCount} pending`,
-        metadata: { completedCount, pendingCount, errorCount },
-      })
+      const notificationCount = result.notifications?.length ?? 0
 
       const lines: string[] = []
 
@@ -245,8 +241,22 @@ export const JobWaitTool = Tool.define("job_wait", async () => {
         lines.push("")
       }
 
+      // Show notifications first if present - they require immediate attention
+      if (result.notifications && result.notifications.length > 0) {
+        lines.push("Notifications (requires response):")
+        for (const notif of result.notifications) {
+          lines.push(`- ${notif.jobID}:`)
+          lines.push(`  ${typeof notif.data === "string" ? notif.data : JSON.stringify(notif.data, null, 2)}`)
+        }
+        lines.push("")
+        lines.push("Use job_subagent_send to respond to the notification, then call job_wait again.")
+        lines.push("")
+      }
+
       if (result.pending.length > 0) {
-        lines.push("Pending (timeout reached):")
+        // Different message if we have notifications vs timeout
+        const reason = notificationCount > 0 ? "notification received" : "timeout reached"
+        lines.push(`Pending (${reason}):`)
         for (const job of result.pending) {
           lines.push(`- ${job.id}: ${job.status}`)
         }
@@ -260,8 +270,19 @@ export const JobWaitTool = Tool.define("job_wait", async () => {
         }
       }
 
+      // Update title to indicate notification
+      const title =
+        notificationCount > 0
+          ? `${completedCount} completed, ${notificationCount} notification(s)`
+          : `${completedCount} completed, ${pendingCount} pending`
+
+      ctx.metadata({
+        title,
+        metadata: { completedCount, pendingCount, errorCount, notificationCount },
+      })
+
       return {
-        title: `${completedCount} completed, ${pendingCount} pending`,
+        title,
         metadata: result,
         output: lines.join("\n"),
       }

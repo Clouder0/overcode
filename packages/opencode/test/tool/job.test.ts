@@ -872,3 +872,327 @@ describe("Abort signal handling", () => {
     })
   })
 })
+
+describe("JobWaitTool notification handling", () => {
+  test("returns immediately when notification is received", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+      const project = Instance.project
+      const now = Date.now()
+      const jobID = Identifier.descending("job")
+
+      // Create a running job that won't complete on its own
+      const runningJob = {
+        id: jobID,
+        projectID: project.id,
+        type: "subagent",
+        title: "Notification test job",
+        status: "running" as const,
+        parentSessionID: parent.id,
+        params: { agent: "general", prompt: "test" },
+        time: {
+          created: now,
+          updated: now,
+          started: now,
+        },
+      }
+      await Storage.write(["job", project.id, jobID], runningJob)
+
+      const tool = await JobWaitTool.init()
+      const ctx = createCtx(parent.id)
+
+      // Start waiting in background
+      const waitPromise = tool.execute({ job_ids: [jobID], mode: "all", timeout: 30000 }, ctx)
+
+      // Give the wait a moment to set up subscriptions
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Import Bus and JobContext to publish a notification
+      const { Bus } = await import("../../src/bus")
+      const { JobContext } = await import("../../src/job/context")
+
+      // Publish a notification for the job
+      await Bus.publish(JobContext.Event.Notify, {
+        jobID,
+        sessionID: parent.id,
+        frame: {
+          id: "frame_test",
+          jobID,
+          direction: "out" as const,
+          notify: true,
+          data: { type: "question", text: "Should I continue?" },
+          time: { created: Date.now() },
+        },
+      })
+
+      // Wait should return immediately with the notification
+      const result = await waitPromise
+
+      expect(result.metadata.notifications).toBeDefined()
+      expect(result.metadata.notifications?.length).toBe(1)
+      expect(result.metadata.notifications?.[0].jobID).toBe(jobID)
+      expect(result.metadata.notifications?.[0].data).toEqual({ type: "question", text: "Should I continue?" })
+
+      // Job should be in pending since it didn't complete
+      expect(result.metadata.pending.length).toBe(1)
+      expect(result.metadata.pending[0].id).toBe(jobID)
+
+      // Output should mention notification
+      expect(result.output).toContain("Notifications (requires response):")
+      expect(result.output).toContain("Should I continue?")
+      expect(result.output).toContain("job_subagent_send")
+
+      // Clean up
+      await Storage.remove(["job", project.id, jobID]).catch(() => {})
+    })
+  })
+
+  test("notification does not affect already completed jobs", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+      const project = Instance.project
+      const now = Date.now()
+
+      // Create a completed job
+      const completedJobID = Identifier.descending("job")
+      const completedJob = {
+        id: completedJobID,
+        projectID: project.id,
+        type: "subagent",
+        title: "Completed job",
+        status: "completed" as const,
+        parentSessionID: parent.id,
+        params: { agent: "general", prompt: "test" },
+        time: {
+          created: now,
+          updated: now,
+          started: now,
+          completed: now,
+        },
+      }
+      await Storage.write(["job", project.id, completedJobID], completedJob)
+
+      // Create a running job
+      const runningJobID = Identifier.descending("job")
+      const runningJob = {
+        id: runningJobID,
+        projectID: project.id,
+        type: "subagent",
+        title: "Running job",
+        status: "running" as const,
+        parentSessionID: parent.id,
+        params: { agent: "general", prompt: "test" },
+        time: {
+          created: now,
+          updated: now,
+          started: now,
+        },
+      }
+      await Storage.write(["job", project.id, runningJobID], runningJob)
+
+      const tool = await JobWaitTool.init()
+      const ctx = createCtx(parent.id)
+
+      // Start waiting for both jobs
+      const waitPromise = tool.execute({ job_ids: [completedJobID, runningJobID], mode: "all", timeout: 30000 }, ctx)
+
+      // Give the wait a moment to set up subscriptions
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Import Bus and JobContext to publish a notification
+      const { Bus } = await import("../../src/bus")
+      const { JobContext } = await import("../../src/job/context")
+
+      // Publish a notification for the running job
+      await Bus.publish(JobContext.Event.Notify, {
+        jobID: runningJobID,
+        sessionID: parent.id,
+        frame: {
+          id: "frame_test",
+          jobID: runningJobID,
+          direction: "out" as const,
+          notify: true,
+          data: { type: "question", text: "Need help" },
+          time: { created: Date.now() },
+        },
+      })
+
+      const result = await waitPromise
+
+      // Completed job should be in completed
+      expect(result.metadata.completed.length).toBe(1)
+      expect(result.metadata.completed[0].id).toBe(completedJobID)
+
+      // Running job should be in pending due to notification
+      expect(result.metadata.pending.length).toBe(1)
+      expect(result.metadata.pending[0].id).toBe(runningJobID)
+
+      // Notification should be present
+      expect(result.metadata.notifications?.length).toBe(1)
+
+      // Clean up
+      await Storage.remove(["job", project.id, completedJobID]).catch(() => {})
+      await Storage.remove(["job", project.id, runningJobID]).catch(() => {})
+    })
+  })
+
+  test("title reflects notification count", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+      const project = Instance.project
+      const now = Date.now()
+      const jobID = Identifier.descending("job")
+
+      const runningJob = {
+        id: jobID,
+        projectID: project.id,
+        type: "subagent",
+        title: "Test job",
+        status: "running" as const,
+        parentSessionID: parent.id,
+        params: { agent: "general", prompt: "test" },
+        time: {
+          created: now,
+          updated: now,
+          started: now,
+        },
+      }
+      await Storage.write(["job", project.id, jobID], runningJob)
+
+      const tool = await JobWaitTool.init()
+      const ctx = createCtx(parent.id)
+
+      const waitPromise = tool.execute({ job_ids: [jobID], mode: "all", timeout: 30000 }, ctx)
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      const { Bus } = await import("../../src/bus")
+      const { JobContext } = await import("../../src/job/context")
+
+      await Bus.publish(JobContext.Event.Notify, {
+        jobID,
+        sessionID: parent.id,
+        frame: {
+          id: "frame_test",
+          jobID,
+          direction: "out" as const,
+          notify: true,
+          data: { type: "question", text: "Test question" },
+          time: { created: Date.now() },
+        },
+      })
+
+      const result = await waitPromise
+
+      // Title should indicate notification
+      expect(result.title).toContain("notification")
+      expect(result.title).toBe("0 completed, 1 notification(s)")
+
+      // Clean up
+      await Storage.remove(["job", project.id, jobID]).catch(() => {})
+    })
+  })
+
+  test("job that completes during wait goes to completed when notification arrives", async () => {
+    await withInstance(async () => {
+      const parent = await Session.create({})
+      const project = Instance.project
+      const now = Date.now()
+
+      // Create two running jobs
+      const job1ID = Identifier.descending("job")
+      const job1 = {
+        id: job1ID,
+        projectID: project.id,
+        type: "subagent",
+        title: "Job that will complete",
+        status: "running" as const,
+        parentSessionID: parent.id,
+        params: { agent: "general", prompt: "test" },
+        time: {
+          created: now,
+          updated: now,
+          started: now,
+        },
+      }
+      await Storage.write(["job", project.id, job1ID], job1)
+
+      const job2ID = Identifier.descending("job")
+      const job2 = {
+        id: job2ID,
+        projectID: project.id,
+        type: "subagent",
+        title: "Job that will notify",
+        status: "running" as const,
+        parentSessionID: parent.id,
+        params: { agent: "general", prompt: "test" },
+        time: {
+          created: now,
+          updated: now,
+          started: now,
+        },
+      }
+      await Storage.write(["job", project.id, job2ID], job2)
+
+      const tool = await JobWaitTool.init()
+      const ctx = createCtx(parent.id)
+
+      // Start waiting for both jobs
+      const waitPromise = tool.execute({ job_ids: [job1ID, job2ID], mode: "all", timeout: 30000 }, ctx)
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      const { Bus } = await import("../../src/bus")
+      const { JobContext } = await import("../../src/job/context")
+
+      // First, simulate job1 completing (publish Job.Updated event)
+      const completedJob1 = { ...job1, status: "completed" as const, time: { ...job1.time, completed: Date.now() } }
+      await Storage.write(["job", project.id, job1ID], completedJob1)
+
+      // Import Job to get the Event
+      const { Job: JobModule } = await import("../../src/job")
+      await Bus.publish(JobModule.Event.Updated, {
+        info: { ...completedJob1, metadata: undefined },
+      })
+
+      // Give it a moment to process the completion
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Now job2 sends a notification
+      await Bus.publish(JobContext.Event.Notify, {
+        jobID: job2ID,
+        sessionID: parent.id,
+        frame: {
+          id: "frame_test",
+          jobID: job2ID,
+          direction: "out" as const,
+          notify: true,
+          data: { type: "question", text: "Need help" },
+          time: { created: Date.now() },
+        },
+      })
+
+      const result = await waitPromise
+
+      // Job1 should be in completed (it completed before notification)
+      expect(result.metadata.completed.length).toBe(1)
+      expect(result.metadata.completed[0].id).toBe(job1ID)
+      expect(result.metadata.completed[0].status).toBe("completed")
+
+      // Job2 should be in pending (it sent notification)
+      expect(result.metadata.pending.length).toBe(1)
+      expect(result.metadata.pending[0].id).toBe(job2ID)
+
+      // Notification should be present
+      expect(result.metadata.notifications?.length).toBe(1)
+      expect(result.metadata.notifications?.[0].jobID).toBe(job2ID)
+
+      // Title should reflect 1 completed and 1 notification
+      expect(result.title).toBe("1 completed, 1 notification(s)")
+
+      // Clean up
+      await Storage.remove(["job", project.id, job1ID]).catch(() => {})
+      await Storage.remove(["job", project.id, job2ID]).catch(() => {})
+    })
+  })
+})

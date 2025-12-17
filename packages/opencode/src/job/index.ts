@@ -968,6 +968,16 @@ export namespace Job {
         error: z.string(),
       }),
     ),
+    // Notifications that caused early return from wait
+    // When a job calls notify(), wait returns immediately so the caller can respond
+    notifications: z
+      .array(
+        z.object({
+          jobID: z.string(),
+          data: z.unknown(),
+        }),
+      )
+      .optional(),
   })
 
   export type WaitResult = z.infer<typeof WaitResult>
@@ -1038,19 +1048,24 @@ export namespace Job {
       }
 
       let timeoutId: Timer | undefined
+      let resolved = false
 
       const cleanup = () => {
-        unsub()
+        unsubUpdated()
+        unsubNotify()
         if (timeoutId) clearTimeout(timeoutId)
       }
 
       const checkCompletion = async () => {
+        if (resolved) return
+
         const allTerminal = [...jobStates.values()].every((s) => isTerminal(s))
         const anyTerminal = [...jobStates.values()].some((s) => isTerminal(s))
 
         const shouldResolve = input.mode === "all" ? allTerminal : anyTerminal
 
         if (shouldResolve) {
+          resolved = true
           cleanup()
 
           // Build final results
@@ -1078,7 +1093,7 @@ export namespace Job {
         }
       }
 
-      const unsub = Bus.subscribe(Event.Updated, async (event) => {
+      const unsubUpdated = Bus.subscribe(Event.Updated, async (event) => {
         const info = event.properties.info
         if (jobStates.has(info.id)) {
           jobStates.set(info.id, info.status)
@@ -1086,8 +1101,50 @@ export namespace Job {
         }
       })
 
+      // Subscribe to notifications - if a watched job notifies, return immediately
+      // This prevents deadlock when subagent needs input while parent is waiting
+      const unsubNotify = Bus.subscribe(JobContext.Event.Notify, async (event) => {
+        if (resolved) return
+
+        const { jobID, frame } = event.properties
+        if (jobStates.has(jobID)) {
+          resolved = true
+          cleanup()
+
+          // Categorize watched jobs by their current status
+          for (const [id, status] of jobStates) {
+            if (isTerminal(status)) {
+              const { jobs } = await get({ jobIDs: [id] })
+              const frames = await JobStream.list({ jobID: id })
+              const lastOutput = frames.filter((f) => f.direction === "out").pop()
+              completed.push({
+                id,
+                status,
+                output: lastOutput
+                  ? typeof lastOutput.data === "string"
+                    ? lastOutput.data
+                    : JSON.stringify(lastOutput.data)
+                  : undefined,
+                error: jobs[0]?.error,
+              })
+            } else {
+              pending.push({ id, status })
+            }
+          }
+
+          resolve({
+            completed,
+            pending,
+            errors,
+            notifications: [{ jobID, data: frame.data }],
+          })
+        }
+      })
+
       // Timeout handler
       timeoutId = setTimeout(async () => {
+        if (resolved) return
+        resolved = true
         cleanup()
 
         for (const [jobID, status] of jobStates) {
