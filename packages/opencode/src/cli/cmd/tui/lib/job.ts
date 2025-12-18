@@ -50,3 +50,28 @@ export function jobStatusColor<T>(
     }[status] ?? theme.text
   )
 }
+
+export function getWorkerSessionID(meta: unknown): string | undefined {
+  if (!meta || typeof meta !== "object") return
+  const candidate = (meta as { workerSessionID?: unknown }).workerSessionID
+  if (typeof candidate === "string" && candidate.length > 0) return candidate
+}
+
+export function getWorkerAgent(meta: unknown): string | undefined {
+  if (!meta || typeof meta !== "object") return
+  const candidate = (meta as { agent?: unknown }).agent
+  if (typeof candidate === "string" && candidate.length > 0) return candidate
+}
+
+export function getJobTitleForSession(jobs: JobInfo[], sessionID: string): string | undefined {
+  const match = jobs
+    .filter((job) => getWorkerSessionID(job.metadata) === sessionID)
+    .toSorted((a, b) => b.time.updated - a.time.updated)
+    .at(0)
+
+  if (!match) return
+
+  const agent = getWorkerAgent(match.metadata)
+  if (agent) return `[${agent}] ${match.title}`
+  return match.title
+}

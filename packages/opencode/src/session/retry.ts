@@ -60,6 +60,24 @@ export namespace SessionRetry {
     }
 
     if (typeof error.data?.message === "string") {
+      if (error.name === "UnknownError") {
+        const msg = error.data.message.toLowerCase()
+        if (
+          msg.includes("socket") ||
+          msg.includes("econnreset") ||
+          msg.includes("econnrefused") ||
+          msg.includes("ehostunreach") ||
+          msg.includes("enotfound") ||
+          msg.includes("eai_again") ||
+          msg.includes("etimedout") ||
+          msg.includes("timed out") ||
+          msg.includes("und_err_socket") ||
+          msg.includes("fetch failed")
+        ) {
+          return "Network error"
+        }
+      }
+
       try {
         const json = JSON.parse(error.data.message)
         if (json.type === "error" && json.error?.type === "too_many_requests") {

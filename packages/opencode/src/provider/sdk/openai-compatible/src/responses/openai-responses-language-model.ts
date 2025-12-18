@@ -199,11 +199,13 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
       schema: openaiResponsesProviderOptionsSchema,
     })
 
+    const store = openaiOptions?.store ?? true
+
     const { input, warnings: inputWarnings } = await convertToOpenAIResponsesInput({
       prompt,
       systemMessageMode: modelConfig.systemMessageMode,
       fileIdPrefixes: this.config.fileIdPrefixes,
-      store: openaiOptions?.store ?? true,
+      store,
       hasLocalShellTool: hasOpenAITool("openai.local_shell"),
     })
 
@@ -214,6 +216,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
     let include: OpenAIResponsesIncludeOptions = openaiOptions?.include
 
     function addInclude(key: OpenAIResponsesIncludeValue) {
+      if (include?.includes(key)) return
       include = include != null ? [...include, key] : [key]
     }
 
@@ -251,6 +254,20 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
       addInclude("code_interpreter_call.outputs")
     }
 
+    if (store === false) {
+      if (modelConfig.isReasoningModel) {
+        addInclude("reasoning.encrypted_content")
+      }
+
+      if (openaiOptions?.previousResponseId != null) {
+        warnings.push({
+          type: "unsupported-setting",
+          setting: "previousResponseId",
+          details: "previousResponseId is not supported when store is false",
+        })
+      }
+    }
+
     const baseArgs = {
       model: this.modelId,
       input,
@@ -282,8 +299,8 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
       max_tool_calls: openaiOptions?.maxToolCalls,
       metadata: openaiOptions?.metadata,
       parallel_tool_calls: openaiOptions?.parallelToolCalls,
-      previous_response_id: openaiOptions?.previousResponseId,
-      store: openaiOptions?.store,
+      previous_response_id: store === false ? undefined : openaiOptions?.previousResponseId,
+      store,
       user: openaiOptions?.user,
       instructions: openaiOptions?.instructions,
       service_tier: openaiOptions?.serviceTier,
@@ -382,6 +399,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
 
     return {
       webSearchToolName,
+      store,
       args: {
         ...baseArgs,
         tools: openaiTools,
@@ -394,107 +412,168 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
   async doGenerate(
     options: Parameters<LanguageModelV2["doGenerate"]>[0],
   ): Promise<Awaited<ReturnType<LanguageModelV2["doGenerate"]>>> {
-    const { args: body, warnings, webSearchToolName } = await this.getArgs(options)
+    const initial = await this.getArgs(options)
+    let body = initial.args
+    let warnings = initial.warnings
+    const webSearchToolName = initial.webSearchToolName
+    const store = initial.store
     const url = this.config.url({
       path: "/responses",
       modelId: this.modelId,
     })
 
-    const {
-      responseHeaders,
-      value: response,
-      rawValue: rawResponse,
-    } = await postJsonToApi({
-      url,
-      headers: combineHeaders(this.config.headers(), options.headers),
-      body,
-      failedResponseHandler: openaiFailedResponseHandler,
-      successfulResponseHandler: createJsonResponseHandler(
-        z.object({
-          id: z.string(),
-          created_at: z.number(),
-          error: z
-            .object({
-              code: z.string(),
-              message: z.string(),
-            })
-            .nullish(),
-          model: z.string(),
-          output: z.array(
-            z.discriminatedUnion("type", [
-              z.object({
-                type: z.literal("message"),
-                role: z.literal("assistant"),
-                id: z.string(),
-                content: z.array(
-                  z.object({
-                    type: z.literal("output_text"),
-                    text: z.string(),
-                    logprobs: LOGPROBS_SCHEMA.nullish(),
-                    annotations: z.array(
-                      z.discriminatedUnion("type", [
-                        z.object({
-                          type: z.literal("url_citation"),
-                          start_index: z.number(),
-                          end_index: z.number(),
-                          url: z.string(),
-                          title: z.string(),
-                        }),
-                        z.object({
-                          type: z.literal("file_citation"),
-                          file_id: z.string(),
-                          filename: z.string().nullish(),
-                          index: z.number().nullish(),
-                          start_index: z.number().nullish(),
-                          end_index: z.number().nullish(),
-                          quote: z.string().nullish(),
-                        }),
-                        z.object({
-                          type: z.literal("container_file_citation"),
-                        }),
-                      ]),
-                    ),
-                  }),
-                ),
-              }),
-              webSearchCallItem,
-              fileSearchCallItem,
-              codeInterpreterCallItem,
-              imageGenerationCallItem,
-              localShellCallItem,
-              z.object({
-                type: z.literal("function_call"),
-                call_id: z.string(),
-                name: z.string(),
-                arguments: z.string(),
-                id: z.string(),
-              }),
-              z.object({
-                type: z.literal("computer_call"),
-                id: z.string(),
-                status: z.string().optional(),
-              }),
-              z.object({
-                type: z.literal("reasoning"),
-                id: z.string(),
-                encrypted_content: z.string().nullish(),
-                summary: z.array(
-                  z.object({
-                    type: z.literal("summary_text"),
-                    text: z.string(),
-                  }),
-                ),
-              }),
-            ]),
-          ),
-          service_tier: z.string().nullish(),
-          incomplete_details: z.object({ reason: z.string() }).nullish(),
-          usage: usageSchema,
-        }),
-      ),
-      abortSignal: options.abortSignal,
-      fetch: this.config.fetch,
-    })
+    const post = () =>
+      postJsonToApi({
+        url,
+        headers: combineHeaders(this.config.headers(), options.headers),
+        body,
+        failedResponseHandler: openaiFailedResponseHandler,
+        successfulResponseHandler: createJsonResponseHandler(
+          z.object({
+            id: z.string(),
+            created_at: z.number(),
+            error: z
+              .object({
+                code: z.string(),
+                message: z.string(),
+              })
+              .nullish(),
+            model: z.string(),
+            output: z.array(
+              z.discriminatedUnion("type", [
+                z.object({
+                  type: z.literal("message"),
+                  role: z.literal("assistant"),
+                  id: z.string(),
+                  content: z.array(
+                    z.object({
+                      type: z.literal("output_text"),
+                      text: z.string(),
+                      logprobs: LOGPROBS_SCHEMA.nullish(),
+                      annotations: z.array(
+                        z.discriminatedUnion("type", [
+                          z.object({
+                            type: z.literal("url_citation"),
+                            start_index: z.number(),
+                            end_index: z.number(),
+                            url: z.string(),
+                            title: z.string(),
+                          }),
+                          z.object({
+                            type: z.literal("file_citation"),
+                            file_id: z.string(),
+                            filename: z.string().nullish(),
+                            index: z.number().nullish(),
+                            start_index: z.number().nullish(),
+                            end_index: z.number().nullish(),
+                            quote: z.string().nullish(),
+                          }),
+                          z.object({
+                            type: z.literal("container_file_citation"),
+                          }),
+                        ]),
+                      ),
+                    }),
+                  ),
+                }),
+                webSearchCallItem,
+                fileSearchCallItem,
+                codeInterpreterCallItem,
+                imageGenerationCallItem,
+                localShellCallItem,
+                z.object({
+                  type: z.literal("function_call"),
+                  call_id: z.string(),
+                  name: z.string(),
+                  arguments: z.string(),
+                  id: z.string(),
+                }),
+                z.object({
+                  type: z.literal("computer_call"),
+                  id: z.string(),
+                  status: z.string().optional(),
+                }),
+                z.object({
+                  type: z.literal("reasoning"),
+                  id: z.string(),
+                  encrypted_content: z.string().nullish(),
+                  summary: z.array(
+                    z.object({
+                      type: z.literal("summary_text"),
+                      text: z.string(),
+                    }),
+                  ),
+                }),
+              ]),
+            ),
+            service_tier: z.string().nullish(),
+            incomplete_details: z.object({ reason: z.string() }).nullish(),
+            usage: usageSchema,
+          }),
+        ),
+        abortSignal: options.abortSignal,
+        fetch: this.config.fetch,
+      })
+
+    let result: Awaited<ReturnType<typeof post>>
+    let dropped = false
+
+    try {
+      result = await post()
+    } catch (e) {
+      if (!(store === false && promptHasReasoning(options.prompt) && shouldDropReasoningOnError(e))) {
+        throw e
+      }
+
+      const retry = await this.getArgs({
+        ...options,
+        prompt: stripReasoningFromPrompt(options.prompt),
+      })
+
+      dropped = true
+      body = retry.args
+      warnings = [
+        ...retry.warnings,
+        {
+          type: "other",
+          message: "Dropped previous reasoning context after OpenAI rejected it",
+        },
+      ]
+
+      result = await post()
+    }
+
+    let responseHeaders = result.responseHeaders
+    let response = result.value
+    let rawResponse = result.rawValue
+
+    if (
+      !dropped &&
+      response.error &&
+      store === false &&
+      promptHasReasoning(options.prompt) &&
+      shouldDropReasoningOnError(response.error.message)
+    ) {
+      const retry = await this.getArgs({
+        ...options,
+        prompt: stripReasoningFromPrompt(options.prompt),
+      })
+
+      dropped = true
+      body = retry.args
+      warnings = [
+        ...retry.warnings,
+        {
+          type: "other",
+          message: "Dropped previous reasoning context after OpenAI rejected it",
+        },
+      ]
+
+      result = await post()
+      responseHeaders = result.responseHeaders
+      response = result.value
+      rawResponse = result.rawValue
+    }
 
     if (response.error) {
       throw new APICallError({
@@ -772,23 +851,56 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
   async doStream(
     options: Parameters<LanguageModelV2["doStream"]>[0],
   ): Promise<Awaited<ReturnType<LanguageModelV2["doStream"]>>> {
-    const { args: body, warnings, webSearchToolName } = await this.getArgs(options)
+    const initial = await this.getArgs(options)
+    let warnings = initial.warnings
+    let body = initial.args
+    const webSearchToolName = initial.webSearchToolName
+    const store = initial.store
 
-    const { responseHeaders, value: response } = await postJsonToApi({
-      url: this.config.url({
-        path: "/responses",
-        modelId: this.modelId,
-      }),
-      headers: combineHeaders(this.config.headers(), options.headers),
-      body: {
-        ...body,
-        stream: true,
-      },
-      failedResponseHandler: openaiFailedResponseHandler,
-      successfulResponseHandler: createEventSourceResponseHandler(openaiResponsesChunkSchema),
-      abortSignal: options.abortSignal,
-      fetch: this.config.fetch,
-    })
+    const post = () =>
+      postJsonToApi({
+        url: this.config.url({
+          path: "/responses",
+          modelId: this.modelId,
+        }),
+        headers: combineHeaders(this.config.headers(), options.headers),
+        body: {
+          ...body,
+          stream: true,
+        },
+        failedResponseHandler: openaiFailedResponseHandler,
+        successfulResponseHandler: createEventSourceResponseHandler(openaiResponsesChunkSchema),
+        abortSignal: options.abortSignal,
+        fetch: this.config.fetch,
+      })
+
+    let result: Awaited<ReturnType<typeof post>>
+
+    try {
+      result = await post()
+    } catch (e) {
+      if (!(store === false && promptHasReasoning(options.prompt) && shouldDropReasoningOnError(e))) {
+        throw e
+      }
+
+      const retry = await this.getArgs({
+        ...options,
+        prompt: stripReasoningFromPrompt(options.prompt),
+      })
+
+      body = retry.args
+      warnings = [
+        ...retry.warnings,
+        {
+          type: "other",
+          message: "Dropped previous reasoning context after OpenAI rejected it",
+        },
+      ]
+
+      result = await post()
+    }
+
+    const { responseHeaders, value: response } = result
 
     const self = this
 
@@ -1295,6 +1407,83 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV2 {
       response: { headers: responseHeaders },
     }
   }
+}
+
+type Prompt = Parameters<LanguageModelV2["doGenerate"]>[0]["prompt"]
+
+function promptHasReasoning(prompt: Prompt) {
+  for (const message of prompt) {
+    if (message.role !== "assistant") continue
+
+    for (const part of message.content) {
+      if ((part as { type?: string }).type === "reasoning") return true
+    }
+  }
+
+  return false
+}
+
+function stripReasoningFromPrompt(prompt: Prompt): Prompt {
+  const result: Array<Prompt[number]> = []
+
+  for (const message of prompt) {
+    if (message.role !== "assistant") {
+      result.push(message)
+      continue
+    }
+
+    const content = message.content.filter((part) => (part as { type?: string }).type !== "reasoning")
+    if (content.length === 0) continue
+
+    result.push({
+      ...message,
+      content,
+    })
+  }
+
+  return result
+}
+
+function getErrorText(error: unknown) {
+  if (typeof error === "string") return error
+
+  if (typeof error === "object" && error !== null) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === "string") return message
+  }
+
+  return String(error)
+}
+
+function shouldDropReasoningOnError(error: unknown) {
+  const msg = getErrorText(error).toLowerCase()
+
+  if (msg.includes("items are not persisted") && msg.includes("store") && msg.includes("false")) {
+    return true
+  }
+
+  if (msg.includes("try again") && msg.includes("store") && msg.includes("true")) {
+    return true
+  }
+
+  if (msg.includes("remove this item from your input")) {
+    return true
+  }
+
+  if (msg.includes("item with id") && msg.includes("not found")) {
+    return true
+  }
+
+  const mentionsEncryptedReasoning =
+    msg.includes("encrypted_content") ||
+    (msg.includes("reasoning") && msg.includes("encrypt")) ||
+    msg.includes("decrypt")
+
+  if (mentionsEncryptedReasoning) {
+    return true
+  }
+
+  return false
 }
 
 const usageSchema = z.object({

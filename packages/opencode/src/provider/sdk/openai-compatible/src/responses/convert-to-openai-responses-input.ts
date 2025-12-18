@@ -4,7 +4,7 @@ import {
   type LanguageModelV2ToolCallPart,
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
-import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
+import { convertToBase64, generateId, parseProviderOptions } from "@ai-sdk/provider-utils"
 import { z } from "zod/v4"
 import type { OpenAIResponsesInput, OpenAIResponsesReasoning } from "./openai-responses-api-types"
 import { localShellInputSchema, localShellOutputSchema } from "./tool/local-shell"
@@ -109,6 +109,9 @@ export async function convertToOpenAIResponsesInput({
                   })
                 }
               }
+              default: {
+                throw new Error(`Unsupported user content part: ${JSON.stringify(part)}`)
+              }
             }
           }),
         })
@@ -118,6 +121,7 @@ export async function convertToOpenAIResponsesInput({
 
       case "assistant": {
         const reasoningMessages: Record<string, OpenAIResponsesReasoning> = {}
+        const reasoningIdMap: Record<string, string> = {}
         const toolCallParts: Record<string, LanguageModelV2ToolCallPart> = {}
 
         for (const part of content) {
@@ -126,7 +130,7 @@ export async function convertToOpenAIResponsesInput({
               input.push({
                 role: "assistant",
                 content: [{ type: "output_text", text: part.text }],
-                id: (part.providerOptions?.openai?.itemId as string) ?? undefined,
+                id: store ? ((part.providerOptions?.openai?.itemId as string) ?? undefined) : undefined,
               })
               break
             }
@@ -142,7 +146,7 @@ export async function convertToOpenAIResponsesInput({
                 input.push({
                   type: "local_shell_call",
                   call_id: part.toolCallId,
-                  id: (part.providerOptions?.openai?.itemId as string) ?? undefined,
+                  id: store ? ((part.providerOptions?.openai?.itemId as string) ?? generateId()) : generateId(),
                   action: {
                     type: "exec",
                     command: parsedInput.action.command,
@@ -161,7 +165,7 @@ export async function convertToOpenAIResponsesInput({
                 call_id: part.toolCallId,
                 name: part.toolName,
                 arguments: JSON.stringify(part.input),
-                id: (part.providerOptions?.openai?.itemId as string) ?? undefined,
+                id: store ? ((part.providerOptions?.openai?.itemId as string) ?? undefined) : undefined,
               })
               break
             }
@@ -191,7 +195,12 @@ export async function convertToOpenAIResponsesInput({
               const reasoningId = providerOptions?.itemId
 
               if (reasoningId != null) {
-                const reasoningMessage = reasoningMessages[reasoningId]
+                const existingId = reasoningIdMap[reasoningId]
+                const id = store ? reasoningId : (existingId ?? generateId())
+                if (!store && existingId == null) {
+                  reasoningIdMap[reasoningId] = id
+                }
+                const reasoningMessage = reasoningMessages[id]
 
                 if (store) {
                   if (reasoningMessage === undefined) {
@@ -199,9 +208,9 @@ export async function convertToOpenAIResponsesInput({
                     input.push({ type: "item_reference", id: reasoningId })
 
                     // store unused reasoning message to mark id as used
-                    reasoningMessages[reasoningId] = {
+                    reasoningMessages[id] = {
                       type: "reasoning",
-                      id: reasoningId,
+                      id,
                       summary: [],
                     }
                   }
@@ -224,13 +233,13 @@ export async function convertToOpenAIResponsesInput({
                   }
 
                   if (reasoningMessage === undefined) {
-                    reasoningMessages[reasoningId] = {
+                    reasoningMessages[id] = {
                       type: "reasoning",
-                      id: reasoningId,
+                      id,
                       encrypted_content: providerOptions?.reasoningEncryptedContent,
                       summary: summaryParts,
                     }
-                    input.push(reasoningMessages[reasoningId])
+                    input.push(reasoningMessages[id])
                   } else {
                     reasoningMessage.summary.push(...summaryParts)
                   }

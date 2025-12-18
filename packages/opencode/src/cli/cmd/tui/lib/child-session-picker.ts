@@ -1,5 +1,6 @@
 import type { DialogSelectOption } from "@tui/ui/dialog-select"
 import { Locale } from "@/util/locale"
+import { getWorkerSessionID, getWorkerAgent } from "./job"
 
 export type ChildSessionPickerSession = {
   id: string
@@ -51,18 +52,6 @@ function shortID(id: string): string {
   if (!id) return ""
   if (id.length <= 8) return id
   return id.slice(-8)
-}
-
-function getWorkerSessionID(meta: unknown): string | undefined {
-  if (!meta || typeof meta !== "object") return
-  const candidate = (meta as { workerSessionID?: unknown }).workerSessionID
-  if (typeof candidate === "string" && candidate.length > 0) return candidate
-}
-
-function getWorkerAgent(meta: unknown): string | undefined {
-  if (!meta || typeof meta !== "object") return
-  const candidate = (meta as { agent?: unknown }).agent
-  if (typeof candidate === "string" && candidate.length > 0) return candidate
 }
 
 function jobDuration(job: ChildSessionPickerJob, now: number): string {
