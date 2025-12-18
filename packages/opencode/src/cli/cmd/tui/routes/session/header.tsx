@@ -3,16 +3,16 @@ import { useRouteData } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { pipe, sumBy } from "remeda"
 import { useTheme } from "@tui/context/theme"
-import { SplitBorder, EmptyBorder } from "@tui/component/border"
-import type { AssistantMessage, Session } from "@opencode-ai/sdk/v2"
-import { useDirectory } from "../../context/directory"
+import { SplitBorder } from "@tui/component/border"
+import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { useKeybind } from "../../context/keybind"
+import { getJobTitleForSession } from "../../lib/job"
 
-const Title = (props: { session: Accessor<Session> }) => {
+const Title = (props: { title: Accessor<string> }) => {
   const { theme } = useTheme()
   return (
     <text fg={theme.text}>
-      <span style={{ bold: true }}>#</span> <span style={{ bold: true }}>{props.session().title}</span>
+      <span style={{ bold: true }}>#</span> <span style={{ bold: true }}>{props.title()}</span>
     </text>
   )
 }
@@ -62,6 +62,15 @@ export function Header() {
   const { theme } = useTheme()
   const keybind = useKeybind()
 
+  const displayTitle = createMemo(() => {
+    const current = session()
+    if (!current) return ""
+    if (!current.parentID) return current.title
+
+    const jobs = sync.data.job[current.parentID] ?? []
+    return getJobTitleForSession(jobs, current.id) ?? current.title
+  })
+
   return (
     <box flexShrink={0}>
       <box
@@ -78,7 +87,8 @@ export function Header() {
         <Switch>
           <Match when={session()?.parentID}>
             <box flexDirection="row" gap={2}>
-              <text fg={theme.text}>
+              <Title title={displayTitle} />
+              <text fg={theme.textMuted}>
                 <b>Subagent session</b>
               </text>
               <text fg={theme.text}>
@@ -96,7 +106,7 @@ export function Header() {
           </Match>
           <Match when={true}>
             <box flexDirection="row" justifyContent="space-between" gap={1}>
-              <Title session={session} />
+              <Title title={displayTitle} />
               <ContextInfo context={context} cost={cost} />
             </box>
             <Show when={shareEnabled()}>
