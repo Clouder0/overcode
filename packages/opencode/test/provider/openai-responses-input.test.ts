@@ -70,4 +70,55 @@ describe("convertToOpenAIResponsesInput", () => {
 
     expect(JSON.stringify(input)).toContain("rs_text")
   })
+
+  test("drops tool outputs that reference missing calls when store is false", async () => {
+    const prompt = [
+      {
+        role: "tool",
+        content: [
+          {
+            toolName: "bash",
+            toolCallId: "rs_missing",
+            output: { type: "text", value: "ok" },
+          },
+        ],
+      },
+    ] as unknown as LanguageModelV2Prompt
+
+    const { input, warnings } = await convertToOpenAIResponsesInput({
+      prompt,
+      systemMessageMode: "system",
+      store: false,
+      hasLocalShellTool: false,
+    })
+
+    expect(JSON.stringify(input)).not.toContain("rs_missing")
+    expect(warnings.length).toBeGreaterThan(0)
+  })
+
+  test("drops tool calls that use OpenAI item ids when store is false", async () => {
+    const prompt = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "rs_abcdef",
+            toolName: "web_search",
+            input: {},
+          },
+        ],
+      },
+    ] as unknown as LanguageModelV2Prompt
+
+    const { input, warnings } = await convertToOpenAIResponsesInput({
+      prompt,
+      systemMessageMode: "system",
+      store: false,
+      hasLocalShellTool: false,
+    })
+
+    expect(JSON.stringify(input)).not.toContain("rs_abcdef")
+    expect(warnings.length).toBeGreaterThan(0)
+  })
 })

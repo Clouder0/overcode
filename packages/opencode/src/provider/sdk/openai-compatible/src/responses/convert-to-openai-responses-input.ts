@@ -36,6 +36,8 @@ export async function convertToOpenAIResponsesInput({
 }> {
   const input: OpenAIResponsesInput = []
   const warnings: Array<LanguageModelV2CallWarning> = []
+  const callIds = new Set<string>()
+  const shellCallIds = new Set<string>()
 
   for (const { role, content } of prompt) {
     switch (role) {
@@ -137,6 +139,14 @@ export async function convertToOpenAIResponsesInput({
             case "tool-call": {
               toolCallParts[part.toolCallId] = part
 
+              if (store === false && part.toolCallId.startsWith("rs_")) {
+                warnings.push({
+                  type: "other",
+                  message: `Tool call ${part.toolName} uses OpenAI item id ${part.toolCallId}; skipping because store is false`,
+                })
+                break
+              }
+
               if (part.providerExecuted) {
                 break
               }
@@ -156,6 +166,7 @@ export async function convertToOpenAIResponsesInput({
                     env: parsedInput.action.env,
                   },
                 })
+                shellCallIds.add(part.toolCallId)
 
                 break
               }
@@ -167,6 +178,7 @@ export async function convertToOpenAIResponsesInput({
                 arguments: JSON.stringify(part.input),
                 id: store ? ((part.providerOptions?.openai?.itemId as string) ?? undefined) : undefined,
               })
+              callIds.add(part.toolCallId)
               break
             }
 
@@ -263,12 +275,28 @@ export async function convertToOpenAIResponsesInput({
           const output = part.output
 
           if (hasLocalShellTool && part.toolName === "local_shell" && output.type === "json") {
+            if (store === false && !shellCallIds.has(part.toolCallId)) {
+              warnings.push({
+                type: "other",
+                message: `Tool output for call_id ${part.toolCallId} is not sent to the API when store is false`,
+              })
+              continue
+            }
+
             input.push({
               type: "local_shell_call_output",
               call_id: part.toolCallId,
               output: localShellOutputSchema.parse(output.value).output,
             })
-            break
+            continue
+          }
+
+          if (store === false && !callIds.has(part.toolCallId)) {
+            warnings.push({
+              type: "other",
+              message: `Tool output for call_id ${part.toolCallId} is not sent to the API when store is false`,
+            })
+            continue
           }
 
           let contentValue: string
