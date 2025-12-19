@@ -68,6 +68,8 @@ describe("Job.recoverOrphanedJobs", () => {
         },
       })
 
+      await Storage.write(["job_active", projectID], [jobID])
+
       // Run recovery
       const recovered = await Job.recoverOrphanedJobs()
 
@@ -102,6 +104,8 @@ describe("Job.recoverOrphanedJobs", () => {
           updated: Date.now(),
         },
       })
+
+      await Storage.write(["job_active", projectID], [jobID])
 
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBeGreaterThanOrEqual(1)
@@ -172,6 +176,8 @@ describe("Job.recoverOrphanedJobs", () => {
         time: { created: now, updated: now, started: now },
       })
 
+      await Storage.write(["job_active", projectID], [subagentJobID, customJobID])
+
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBeGreaterThanOrEqual(2)
 
@@ -205,6 +211,8 @@ describe("Job.recoverOrphanedJobs", () => {
           started: Date.now(),
         },
       })
+
+      await Storage.write(["job_active", projectID], [jobID])
 
       await Job.recoverOrphanedJobs()
 

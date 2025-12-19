@@ -1386,6 +1386,7 @@ describe("Job.recoverOrphanedJobs()", () => {
         },
       }
       await Storage.write(["job", project.id, jobID], orphanedJob)
+      await Storage.write(["job_active", project.id], [jobID])
 
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBe(1)
@@ -1419,6 +1420,7 @@ describe("Job.recoverOrphanedJobs()", () => {
         },
       }
       await Storage.write(["job", project.id, jobID], orphanedJob)
+      await Storage.write(["job_active", project.id], [jobID])
 
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBe(1)
@@ -1500,6 +1502,7 @@ describe("Job.recoverOrphanedJobs()", () => {
       const now = Date.now()
 
       // Create 3 orphaned jobs
+      const jobIDs: string[] = []
       for (let i = 0; i < 3; i++) {
         const jobID = Identifier.descending("job")
         await Storage.write(["job", project.id, jobID], {
@@ -1510,7 +1513,10 @@ describe("Job.recoverOrphanedJobs()", () => {
           status: i % 2 === 0 ? "running" : "pending",
           time: { created: now, updated: now, started: now },
         })
+        jobIDs.push(jobID)
       }
+
+      await Storage.write(["job_active", project.id], jobIDs)
 
       const recovered = await Job.recoverOrphanedJobs()
       expect(recovered).toBe(3)
