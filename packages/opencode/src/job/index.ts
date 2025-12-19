@@ -154,7 +154,59 @@ export namespace Job {
     },
   )
 
+  function isActiveStatus(status: Status): boolean {
+    return status === "running" || status === "pending"
+  }
+
+  async function activeAdd(jobID: string, projectID: string): Promise<void> {
+    using _ = await Lock.write(`job-active:${projectID}`)
+    const key = ["job_active", projectID]
+    const existing = await Storage.read<unknown>(key).catch((error) => {
+      if (Storage.NotFoundError.isInstance(error)) return []
+      throw error
+    })
+
+    const ids = Array.isArray(existing) ? existing.filter((id): id is string => typeof id === "string") : []
+    if (ids.includes(jobID)) return
+    ids.push(jobID)
+    await Storage.write(key, ids)
+  }
+
+  async function activeRemove(jobID: string, projectID: string): Promise<void> {
+    using _ = await Lock.write(`job-active:${projectID}`)
+    const key = ["job_active", projectID]
+    const existing = await Storage.read<unknown>(key).catch((error) => {
+      if (Storage.NotFoundError.isInstance(error)) return []
+      throw error
+    })
+
+    if (!Array.isArray(existing) || existing.length === 0) return
+
+    const ids = existing.filter((id): id is string => typeof id === "string")
+    const next = ids.filter((id) => id !== jobID)
+    if (next.length === ids.length) return
+    await Storage.write(key, next)
+  }
+
+  async function activeList(projectID: string): Promise<string[] | undefined> {
+    const key = ["job_active", projectID]
+    const ids = await Storage.read<unknown>(key).catch((error) => {
+      if (Storage.NotFoundError.isInstance(error)) return undefined
+      throw error
+    })
+
+    if (ids === undefined) return undefined
+    if (!Array.isArray(ids)) return undefined
+    return ids.filter((id): id is string => typeof id === "string")
+  }
+
   async function write(info: Info) {
+    if (isActiveStatus(info.status)) {
+      await activeAdd(info.id, info.projectID).catch((e) =>
+        log.warn("failed to update job active index", { jobID: info.id, error: e }),
+      )
+    }
+
     await Storage.write(["job", info.projectID, info.id], info)
   }
 
@@ -174,11 +226,24 @@ export namespace Job {
 
   async function update(jobID: string, fn: (draft: Info) => void): Promise<Info> {
     const project = Instance.project
+    let before: Status | undefined
+    let after: Status | undefined
+
     try {
       const info = await Storage.update<Info>(["job", project.id, jobID], (draft) => {
+        before = (draft as Info).status
         fn(draft as Info)
+        after = (draft as Info).status
         ;(draft as Info).time.updated = Date.now()
       })
+
+      const beforeActive = before ? isActiveStatus(before) : false
+      const afterActive = after ? isActiveStatus(after) : isActiveStatus(info.status)
+      if (beforeActive !== afterActive) {
+        const sync = afterActive ? activeAdd(jobID, project.id) : activeRemove(jobID, project.id)
+        await sync.catch((e) => log.warn("failed to update job active index", { jobID, error: e }))
+      }
+
       await Bus.publish(Event.Updated, { info }).catch((e) =>
         log.warn("failed to publish job update event", { jobID, error: e }),
       )
@@ -355,6 +420,10 @@ export namespace Job {
 
     const project = Instance.project
     const jobs = state()
+
+    await activeRemove(jobID, project.id).catch((e) =>
+      log.warn("failed to update job active index", { jobID, error: e }),
+    )
 
     // Mark job as removed to prevent any further stream/status writes.
     const runtime = jobs.get(jobID) ?? { active: false }
@@ -1179,34 +1248,100 @@ export namespace Job {
    * @returns The number of jobs that were recovered
    */
   export async function recoverOrphanedJobs(): Promise<number> {
-    // Single list() call with in-memory filtering to avoid duplicate file reads
-    const allJobs = await list({})
-    const allOrphaned = allJobs.filter((j) => j.status === "running" || j.status === "pending")
+    const projectID = Instance.project.id
+    const ids = await activeList(projectID)
 
-    let recovered = 0
-    for (const job of allOrphaned) {
-      // Check if job is actually running in memory
-      const runtime = state().get(job.id)
-      if (!runtime?.active) {
-        try {
-          // This is an orphaned job - mark as error
-          const now = Date.now()
-          await update(job.id, (draft) => {
-            draft.status = "error"
-            draft.time.completed = now
-            draft.error = "Job interrupted by application restart"
-            draft.metadata = {
-              ...draft.metadata,
-              recoveredAt: now,
-            }
+    if (ids === undefined) {
+      const allJobs = await list({})
+      const orphaned = allJobs.filter((j) => j.status === "running" || j.status === "pending")
+
+      let recovered = 0
+      for (const job of orphaned) {
+        const runtime = state().get(job.id)
+        if (runtime?.active) continue
+
+        const now = Date.now()
+        const ok = await update(job.id, (draft) => {
+          draft.status = "error"
+          draft.time.completed = now
+          draft.error = "Job interrupted by application restart"
+          draft.metadata = {
+            ...draft.metadata,
+            recoveredAt: now,
+          }
+        })
+          .then(() => true)
+          .catch((error) => {
+            log.warn("failed to recover orphaned job", { jobID: job.id, error })
+            return false
           })
-          log.info("recovered orphaned job", { jobID: job.id, previousStatus: job.status })
-          recovered++
-        } catch (error) {
-          log.warn("failed to recover orphaned job", { jobID: job.id, error })
-        }
+
+        if (!ok) continue
+        log.info("recovered orphaned job", { jobID: job.id, previousStatus: job.status })
+        recovered++
       }
+
+      using _ = await Lock.write(`job-active:${projectID}`)
+      const existing = await Storage.read<unknown>(["job_active", projectID]).catch((error) => {
+        if (Storage.NotFoundError.isInstance(error)) return undefined
+        throw error
+      })
+      if (existing === undefined) {
+        await Storage.write(["job_active", projectID], [])
+      }
+
+      return recovered
     }
+
+    if (ids.length === 0) return 0
+
+    const unique = Array.from(new Set(ids))
+    let recovered = 0
+
+    for (const jobID of unique) {
+      const runtime = state().get(jobID)
+      if (runtime?.active) continue
+
+      const info = await Storage.read<Info>(["job", projectID, jobID]).catch((error) => {
+        if (Storage.NotFoundError.isInstance(error)) return undefined
+        throw error
+      })
+
+      if (!info) {
+        await activeRemove(jobID, projectID).catch((e) =>
+          log.warn("failed to update job active index", { jobID, error: e }),
+        )
+        continue
+      }
+
+      if (!isActiveStatus(info.status)) {
+        await activeRemove(jobID, projectID).catch((e) =>
+          log.warn("failed to update job active index", { jobID, error: e }),
+        )
+        continue
+      }
+
+      const now = Date.now()
+      const ok = await update(jobID, (draft) => {
+        draft.status = "error"
+        draft.time.completed = now
+        draft.error = "Job interrupted by application restart"
+        draft.metadata = {
+          ...draft.metadata,
+          recoveredAt: now,
+        }
+      })
+        .then(() => true)
+        .catch((error) => {
+          log.warn("failed to recover orphaned job", { jobID, error })
+          return false
+        })
+
+      if (!ok) continue
+      log.info("recovered orphaned job", { jobID, previousStatus: info.status })
+      recovered++
+    }
+
     return recovered
   }
 }
