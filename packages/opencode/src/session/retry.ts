@@ -83,7 +83,7 @@ export namespace SessionRetry {
         if (json.type === "error" && json.error?.type === "too_many_requests") {
           return "Too Many Requests"
         }
-        if (json.code === "Some resource has been exhausted") {
+        if (json.code.includes("exhausted") || json.code.includes("unavailable")) {
           return "Provider is overloaded"
         }
         if (json.type === "error" && json.error?.code?.includes("rate_limit")) {
@@ -91,7 +91,8 @@ export namespace SessionRetry {
         }
         if (
           json.error?.message?.includes("no_kv_space") ||
-          (json.type === "error" && json.error?.type === "server_error")
+          (json.type === "error" && json.error?.type === "server_error") ||
+          !!json.error
         ) {
           return "Provider Server Error"
         }

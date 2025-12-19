@@ -1,4 +1,4 @@
-import { Component, createMemo, For, Match, Show, Switch } from "solid-js"
+import { Component, createMemo, For, Match, Show, Switch, type JSX } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import {
   AssistantMessage,
@@ -11,6 +11,7 @@ import {
 } from "@opencode-ai/sdk/v2"
 import { useData } from "../context"
 import { useDiffComponent } from "../context/diff"
+import { useCodeComponent } from "../context/code"
 import { BasicTool } from "./basic-tool"
 import { GenericTool } from "./basic-tool"
 import { Card } from "./card"
@@ -19,6 +20,45 @@ import { Checkbox } from "./checkbox"
 import { DiffChanges } from "./diff-changes"
 import { Markdown } from "./markdown"
 import { getDirectory as _getDirectory, getFilename } from "@opencode-ai/util/path"
+import { checksum } from "@opencode-ai/util/encode"
+
+interface Diagnostic {
+  range: {
+    start: { line: number; character: number }
+    end: { line: number; character: number }
+  }
+  message: string
+  severity?: number
+}
+
+function getDiagnostics(
+  diagnosticsByFile: Record<string, Diagnostic[]> | undefined,
+  filePath: string | undefined,
+): Diagnostic[] {
+  if (!diagnosticsByFile || !filePath) return []
+  const diagnostics = diagnosticsByFile[filePath] ?? []
+  return diagnostics.filter((d) => d.severity === 1).slice(0, 3)
+}
+
+function DiagnosticsDisplay(props: { diagnostics: Diagnostic[] }): JSX.Element {
+  return (
+    <Show when={props.diagnostics.length > 0}>
+      <div data-component="diagnostics">
+        <For each={props.diagnostics}>
+          {(diagnostic) => (
+            <div data-slot="diagnostic">
+              <span data-slot="diagnostic-label">Error</span>
+              <span data-slot="diagnostic-location">
+                [{diagnostic.range.start.line + 1}:{diagnostic.range.start.character + 1}]
+              </span>
+              <span data-slot="diagnostic-message">{diagnostic.message}</span>
+            </div>
+          )}
+        </For>
+      </div>
+    </Show>
+  )
+}
 
 export interface MessageProps {
   message: MessageType
@@ -29,6 +69,7 @@ export interface MessagePartProps {
   part: PartType
   message: MessageType
   hideDetails?: boolean
+  defaultOpen?: boolean
 }
 
 export type PartComponent = Component<MessagePartProps>
@@ -168,7 +209,13 @@ export function Part(props: MessagePartProps) {
   const component = createMemo(() => PART_MAPPING[props.part.type])
   return (
     <Show when={component()}>
-      <Dynamic component={component()} part={props.part} message={props.message} hideDetails={props.hideDetails} />
+      <Dynamic
+        component={component()}
+        part={props.part}
+        message={props.message}
+        hideDetails={props.hideDetails}
+        defaultOpen={props.defaultOpen}
+      />
     </Show>
   )
 }
@@ -179,6 +226,7 @@ export interface ToolProps {
   tool: string
   output?: string
   hideDetails?: boolean
+  defaultOpen?: boolean
 }
 
 export type ToolComponent = Component<ToolProps>
@@ -246,6 +294,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
             metadata={metadata}
             output={part.state.status === "completed" ? part.state.output : undefined}
             hideDetails={props.hideDetails}
+            defaultOpen={props.defaultOpen}
           />
         </Match>
       </Switch>
@@ -286,6 +335,7 @@ ToolRegistry.register({
   render(props) {
     return (
       <BasicTool
+        {...props}
         icon="glasses"
         trigger={{
           title: "Read",
@@ -300,7 +350,11 @@ ToolRegistry.register({
   name: "list",
   render(props) {
     return (
-      <BasicTool icon="bullet-list" trigger={{ title: "List", subtitle: getDirectory(props.input.path || "/") }}>
+      <BasicTool
+        {...props}
+        icon="bullet-list"
+        trigger={{ title: "List", subtitle: getDirectory(props.input.path || "/") }}
+      >
         <Show when={props.output}>
           {(output) => (
             <div data-component="tool-output" data-scrollable>
@@ -318,6 +372,7 @@ ToolRegistry.register({
   render(props) {
     return (
       <BasicTool
+        {...props}
         icon="magnifying-glass-menu"
         trigger={{
           title: "Glob",
@@ -345,6 +400,7 @@ ToolRegistry.register({
     if (props.input.include) args.push("include=" + props.input.include)
     return (
       <BasicTool
+        {...props}
         icon="magnifying-glass-menu"
         trigger={{
           title: "Grep",
@@ -369,6 +425,7 @@ ToolRegistry.register({
   render(props) {
     return (
       <BasicTool
+        {...props}
         icon="window-cursor"
         trigger={{
           title: "Webfetch",
@@ -398,6 +455,7 @@ ToolRegistry.register({
   render(props) {
     return (
       <BasicTool
+        {...props}
         icon="task"
         trigger={{
           title: `${props.input.subagent_type || props.tool} Agent`,
@@ -422,6 +480,7 @@ ToolRegistry.register({
   render(props) {
     return (
       <BasicTool
+        {...props}
         icon="console"
         trigger={{
           title: "Shell",
@@ -442,8 +501,10 @@ ToolRegistry.register({
   name: "edit",
   render(props) {
     const diffComponent = useDiffComponent()
+    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath))
     return (
       <BasicTool
+        {...props}
         defaultOpen
         icon="code-lines"
         trigger={
@@ -480,6 +541,7 @@ ToolRegistry.register({
             />
           </div>
         </Show>
+        <DiagnosticsDisplay diagnostics={diagnostics()} />
       </BasicTool>
     )
   },
@@ -488,9 +550,12 @@ ToolRegistry.register({
 ToolRegistry.register({
   name: "write",
   render(props) {
-    console.log(props)
+    const codeComponent = useCodeComponent()
+    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath))
     return (
       <BasicTool
+        {...props}
+        defaultOpen
         icon="code-lines"
         trigger={
           <div data-component="write-trigger">
@@ -507,19 +572,20 @@ ToolRegistry.register({
           </div>
         }
       >
-        {/* <Show when={props.input.content}> */}
-        {/*   <div data-component="write-content"> */}
-        {/*     <Code */}
-        {/*       file={{ */}
-        {/*         name: props.input.filePath, */}
-        {/*         contents: props.input.content, */}
-        {/*         cacheKey: checksum(props.input.content), */}
-        {/*       }} */}
-        {/*       overflow="scroll" */}
-        {/*       class="pb-40" */}
-        {/*     /> */}
-        {/*   </div> */}
-        {/* </Show> */}
+        <Show when={props.input.content}>
+          <div data-component="write-content">
+            <Dynamic
+              component={codeComponent}
+              file={{
+                name: props.input.filePath,
+                contents: props.input.content,
+                cacheKey: checksum(props.input.content),
+              }}
+              overflow="scroll"
+            />
+          </div>
+        </Show>
+        <DiagnosticsDisplay diagnostics={diagnostics()} />
       </BasicTool>
     )
   },
@@ -530,6 +596,7 @@ ToolRegistry.register({
   render(props) {
     return (
       <BasicTool
+        {...props}
         defaultOpen
         icon="checklist"
         trigger={{

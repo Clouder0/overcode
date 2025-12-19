@@ -151,8 +151,22 @@ export namespace Server {
               })
             }
             GlobalBus.on("event", handler)
+
+            // Send heartbeat every 30s to prevent WKWebView timeout (60s default)
+            const heartbeat = setInterval(() => {
+              stream.writeSSE({
+                data: JSON.stringify({
+                  payload: {
+                    type: "server.heartbeat",
+                    properties: {},
+                  },
+                }),
+              })
+            }, 30000)
+
             await new Promise<void>((resolve) => {
               stream.onAbort(() => {
+                clearInterval(heartbeat)
                 GlobalBus.off("event", handler)
                 resolve()
                 log.info("global event disconnected", { requestedDirectory })
@@ -191,7 +205,7 @@ export namespace Server {
         },
       )
       .use(async (c, next) => {
-        const directory = c.req.query("directory") ?? c.req.header("x-opencode-directory") ?? process.cwd()
+        const directory = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
         return Instance.provide({
           directory,
           init: InstanceBootstrap,
@@ -778,9 +792,6 @@ export namespace Server {
         async (c) => {
           const sessionID = c.req.valid("param").sessionID
           await Session.remove(sessionID)
-          await Bus.publish(TuiEvent.CommandExecute, {
-            command: "session.list",
-          })
           return c.json(true)
         },
       )
@@ -2483,8 +2494,20 @@ export namespace Server {
                 stream.close()
               }
             })
+
+            // Send heartbeat every 30s to prevent WKWebView timeout (60s default)
+            const heartbeat = setInterval(() => {
+              stream.writeSSE({
+                data: JSON.stringify({
+                  type: "server.heartbeat",
+                  properties: {},
+                }),
+              })
+            }, 30000)
+
             await new Promise<void>((resolve) => {
               stream.onAbort(() => {
+                clearInterval(heartbeat)
                 unsub()
                 resolve()
                 log.info("event disconnected")

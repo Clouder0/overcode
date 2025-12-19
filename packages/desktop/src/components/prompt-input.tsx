@@ -1,7 +1,6 @@
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { createEffect, on, Component, Show, For, onMount, onCleanup, Switch, Match, createMemo } from "solid-js"
 import { createStore, produce } from "solid-js/store"
-import { makePersisted } from "@solid-primitives/storage"
 import { createFocusSignal } from "@solid-primitives/active-element"
 import { useLocal } from "@/context/local"
 import { ContentPart, DEFAULT_PROMPT, isPromptEqual, Prompt, usePrompt, ImageAttachmentPart } from "@/context/prompt"
@@ -21,6 +20,8 @@ import { DialogSelectModel } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaid } from "@/components/dialog-select-model-unpaid"
 import { useProviders } from "@/hooks/use-providers"
 import { useCommand, formatKeybind } from "@/context/command"
+import { persisted } from "@/utils/persist"
+import { Identifier } from "@/utils/id"
 
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"]
@@ -99,6 +100,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     placeholder: number
     dragging: boolean
     imageAttachments: ImageAttachmentPart[]
+    mode: "normal" | "shell"
+    applyingHistory: boolean
   }>({
     popover: null,
     historyIndex: -1,
@@ -106,18 +109,18 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     placeholder: Math.floor(Math.random() * PLACEHOLDERS.length),
     dragging: false,
     imageAttachments: [],
+    mode: "normal",
+    applyingHistory: false,
   })
 
   const MAX_HISTORY = 100
-  const [history, setHistory] = makePersisted(
+  const [history, setHistory] = persisted(
+    "prompt-history.v1",
     createStore<{
       entries: Prompt[]
     }>({
       entries: [],
     }),
-    {
-      name: "prompt-history.v1",
-    },
   )
 
   const clonePromptParts = (prompt: Prompt): Prompt =>
@@ -135,10 +138,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const applyHistoryPrompt = (p: Prompt, position: "start" | "end") => {
     const length = position === "start" ? 0 : promptLength(p)
+    setStore("applyingHistory", true)
     prompt.set(p, length)
     requestAnimationFrame(() => {
       editorRef.focus()
       setCursorPosition(editorRef, length)
+      setStore("applyingHistory", false)
     })
   }
 
@@ -380,31 +385,47 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const parseFromDOM = (): Prompt => {
     const newParts: Prompt = []
     let position = 0
-    editorRef.childNodes.forEach((node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (node.textContent) {
-          const content = node.textContent
-          newParts.push({ type: "text", content, start: position, end: position + content.length })
-          position += content.length
-        }
-      } else if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset.type) {
-        switch ((node as HTMLElement).dataset.type) {
-          case "file":
-            const content = node.textContent!
-            newParts.push({
-              type: "file",
-              path: (node as HTMLElement).dataset.path!,
-              content,
-              start: position,
-              end: position + content.length,
-            })
-            position += content.length
-            break
-          default:
-            break
-        }
-      }
+
+    const pushText = (content: string) => {
+      if (!content) return
+      newParts.push({ type: "text", content, start: position, end: position + content.length })
+      position += content.length
+    }
+
+    const rangeText = (range: Range) => {
+      const fragment = range.cloneContents()
+      const container = document.createElement("div")
+      container.append(fragment)
+      return container.innerText
+    }
+
+    const files = Array.from(editorRef.querySelectorAll<HTMLElement>("[data-type=file]"))
+    let last: HTMLElement | undefined
+
+    files.forEach((file) => {
+      const before = document.createRange()
+      before.selectNodeContents(editorRef)
+      if (last) before.setStartAfter(last)
+      before.setEndBefore(file)
+      pushText(rangeText(before))
+
+      const content = file.textContent ?? ""
+      newParts.push({
+        type: "file",
+        path: file.dataset.path!,
+        content,
+        start: position,
+        end: position + content.length,
+      })
+      position += content.length
+      last = file
     })
+
+    const after = document.createRange()
+    after.selectNodeContents(editorRef)
+    if (last) after.setStartAfter(last)
+    pushText(rangeText(after))
+
     if (newParts.length === 0) newParts.push(...DEFAULT_PROMPT)
     return newParts
   }
@@ -413,21 +434,42 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     const rawParts = parseFromDOM()
     const cursorPosition = getCursorPosition(editorRef)
     const rawText = rawParts.map((p) => ("content" in p ? p.content : "")).join("")
+    const trimmed = rawText.replace(/\u200B/g, "").trim()
+    const hasNonText = rawParts.some((part) => part.type !== "text")
+    const shouldReset = trimmed.length === 0 && !hasNonText
 
-    const atMatch = rawText.substring(0, cursorPosition).match(/@(\S*)$/)
-    const slashMatch = rawText.match(/^\/(\S*)$/)
+    if (shouldReset) {
+      setStore("popover", null)
+      if (store.historyIndex >= 0 && !store.applyingHistory) {
+        setStore("historyIndex", -1)
+        setStore("savedPrompt", null)
+      }
+      if (prompt.dirty()) {
+        prompt.set(DEFAULT_PROMPT, 0)
+      }
+      return
+    }
 
-    if (atMatch) {
-      onInput(atMatch[1])
-      setStore("popover", "file")
-    } else if (slashMatch) {
-      slashOnInput(slashMatch[1])
-      setStore("popover", "slash")
+    const shellMode = store.mode === "shell"
+
+    if (!shellMode) {
+      const atMatch = rawText.substring(0, cursorPosition).match(/@(\S*)$/)
+      const slashMatch = rawText.match(/^\/(\S*)$/)
+
+      if (atMatch) {
+        onInput(atMatch[1])
+        setStore("popover", "file")
+      } else if (slashMatch) {
+        slashOnInput(slashMatch[1])
+        setStore("popover", "slash")
+      } else {
+        setStore("popover", null)
+      }
     } else {
       setStore("popover", null)
     }
 
-    if (store.historyIndex >= 0) {
+    if (store.historyIndex >= 0 && !store.applyingHistory) {
       setStore("historyIndex", -1)
       setStore("savedPrompt", null)
     }
@@ -565,6 +607,29 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }
 
   const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "!" && store.mode === "normal") {
+      const cursorPosition = getCursorPosition(editorRef)
+      if (cursorPosition === 0) {
+        setStore("mode", "shell")
+        setStore("popover", null)
+        event.preventDefault()
+        return
+      }
+    }
+    if (store.mode === "shell") {
+      const { collapsed, cursorPosition, textLength } = getCaretState()
+      if (event.key === "Escape") {
+        setStore("mode", "normal")
+        event.preventDefault()
+        return
+      }
+      if (event.key === "Backspace" && collapsed && cursorPosition === 0 && textLength === 0) {
+        setStore("mode", "normal")
+        event.preventDefault()
+        return
+      }
+    }
+
     if (store.popover && (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "Enter")) {
       if (store.popover === "file") {
         onKeyDown(event)
@@ -577,13 +642,19 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       if (event.altKey || event.ctrlKey || event.metaKey) return
-      const { collapsed, cursorPosition, textLength } = getCaretState()
+      const { collapsed } = getCaretState()
       if (!collapsed) return
+
+      const cursorPosition = getCursorPosition(editorRef)
+      const textLength = promptLength(prompt.current())
+      const textContent = editorRef.textContent ?? ""
+      const isEmpty = textContent.trim() === "" || textLength <= 1
+      const hasNewlines = textContent.includes("\n")
       const inHistory = store.historyIndex >= 0
-      const atAbsoluteStart = cursorPosition === 0
-      const atAbsoluteEnd = cursorPosition === textLength
-      const allowUp = (inHistory && atAbsoluteEnd) || atAbsoluteStart
-      const allowDown = (inHistory && atAbsoluteStart) || atAbsoluteEnd
+      const atStart = cursorPosition <= (isEmpty ? 1 : 0)
+      const atEnd = cursorPosition >= (isEmpty ? textLength - 1 : textLength)
+      const allowUp = isEmpty || atStart || (!hasNewlines && !inHistory) || (inHistory && atEnd)
+      const allowDown = isEmpty || atEnd || (!hasNewlines && !inHistory) || (inHistory && atStart)
 
       if (event.key === "ArrowUp") {
         if (!allowUp) return
@@ -645,6 +716,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         ? `?start=${attachment.selection.startLine}&end=${attachment.selection.endLine}`
         : ""
       return {
+        id: Identifier.ascending("part"),
         type: "file" as const,
         mime: "text/plain",
         url: `file://${absolute}${query}`,
@@ -662,16 +734,35 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     })
 
     const imageAttachmentParts = store.imageAttachments.map((attachment) => ({
+      id: Identifier.ascending("part"),
       type: "file" as const,
       mime: attachment.mime,
       url: attachment.dataUrl,
       filename: attachment.filename,
     }))
 
+    const isShellMode = store.mode === "shell"
     tabs().setActive(undefined)
     editorRef.innerHTML = ""
     prompt.set([{ type: "text", content: "", start: 0, end: 0 }], 0)
     setStore("imageAttachments", [])
+    setStore("mode", "normal")
+
+    const model = {
+      modelID: local.model.current()!.id,
+      providerID: local.model.current()!.provider.id,
+    }
+    const agent = local.agent.current()!.name
+
+    if (isShellMode) {
+      sdk.client.session.shell({
+        sessionID: existing.id,
+        agent,
+        model,
+        command: text,
+      })
+      return
+    }
 
     if (text.startsWith("/")) {
       const [cmdName, ...args] = text.split(" ")
@@ -682,28 +773,40 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           sessionID: existing.id,
           command: commandName,
           arguments: args.join(" "),
-          agent: local.agent.current()!.name,
-          model: `${local.model.current()!.provider.id}/${local.model.current()!.id}`,
+          agent,
+          model: `${model.providerID}/${model.modelID}`,
         })
         return
       }
     }
 
+    const messageID = Identifier.ascending("message")
+    const textPart = {
+      id: Identifier.ascending("part"),
+      type: "text" as const,
+      text,
+    }
+    const requestParts = [textPart, ...fileAttachmentParts, ...imageAttachmentParts]
+    const optimisticParts = requestParts.map((part) => ({
+      ...part,
+      sessionID: existing.id,
+      messageID,
+    }))
+
+    sync.session.addOptimisticMessage({
+      sessionID: existing.id,
+      messageID,
+      parts: optimisticParts,
+      agent,
+      model,
+    })
+
     sdk.client.session.prompt({
       sessionID: existing.id,
-      agent: local.agent.current()!.name,
-      model: {
-        modelID: local.model.current()!.id,
-        providerID: local.model.current()!.provider.id,
-      },
-      parts: [
-        {
-          type: "text",
-          text,
-        },
-        ...fileAttachmentParts,
-        ...imageAttachmentParts,
-      ],
+      agent,
+      model,
+      messageID,
+      parts: requestParts,
     })
   }
 
@@ -833,6 +936,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         </Show>
         <div class="relative max-h-[240px] overflow-y-auto">
           <div
+            data-component="prompt-input"
             ref={(el) => {
               editorRef = el
               props.ref?.(el)
@@ -843,34 +947,50 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             classList={{
               "w-full px-5 py-3 text-14-regular text-text-strong focus:outline-none whitespace-pre-wrap": true,
               "[&>[data-type=file]]:text-icon-info-active": true,
+              "font-mono!": store.mode === "shell",
             }}
           />
           <Show when={!prompt.dirty() && store.imageAttachments.length === 0}>
             <div class="absolute top-0 left-0 px-5 py-3 text-14-regular text-text-weak pointer-events-none">
-              Ask anything... "{PLACEHOLDERS[store.placeholder]}"
+              {store.mode === "shell"
+                ? "Enter shell command..."
+                : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`}
             </div>
           </Show>
         </div>
         <div class="relative p-3 flex items-center justify-between">
           <div class="flex items-center justify-start gap-1">
-            <Select
-              options={local.agent.list().map((agent) => agent.name)}
-              current={local.agent.current().name}
-              onSelect={local.agent.set}
-              class="capitalize"
-              variant="ghost"
-            />
-            <Button
-              as="div"
-              variant="ghost"
-              onClick={() =>
-                dialog.show(() => (providers.paid().length > 0 ? <DialogSelectModel /> : <DialogSelectModelUnpaid />))
-              }
-            >
-              {local.model.current()?.name ?? "Select model"}
-              <span class="ml-0.5 text-text-weak text-12-regular">{local.model.current()?.provider.name}</span>
-              <Icon name="chevron-down" size="small" />
-            </Button>
+            <Switch>
+              <Match when={store.mode === "shell"}>
+                <div class="flex items-center gap-2 px-2 h-6">
+                  <Icon name="console" size="small" class="text-icon-primary" />
+                  <span class="text-12-regular text-text-primary">Shell</span>
+                  <span class="text-12-regular text-text-weak">esc to exit</span>
+                </div>
+              </Match>
+              <Match when={store.mode === "normal"}>
+                <Select
+                  options={local.agent.list().map((agent) => agent.name)}
+                  current={local.agent.current().name}
+                  onSelect={local.agent.set}
+                  class="capitalize"
+                  variant="ghost"
+                />
+                <Button
+                  as="div"
+                  variant="ghost"
+                  onClick={() =>
+                    dialog.show(() =>
+                      providers.paid().length > 0 ? <DialogSelectModel /> : <DialogSelectModelUnpaid />,
+                    )
+                  }
+                >
+                  {local.model.current()?.name ?? "Select model"}
+                  <span class="ml-0.5 text-text-weak text-12-regular">{local.model.current()?.provider.name}</span>
+                  <Icon name="chevron-down" size="small" />
+                </Button>
+              </Match>
+            </Switch>
           </div>
           <div class="flex items-center gap-1 absolute right-2 bottom-2">
             <input
@@ -884,15 +1004,17 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                 e.currentTarget.value = ""
               }}
             />
-            <Tooltip placement="top" value="Attach image">
-              <IconButton
-                type="button"
-                icon="photo"
-                variant="ghost"
-                class="h-10 w-8"
-                onClick={() => fileInputRef.click()}
-              />
-            </Tooltip>
+            <Show when={store.mode === "normal"}>
+              <Tooltip placement="top" value="Attach image">
+                <IconButton
+                  type="button"
+                  icon="photo"
+                  variant="ghost"
+                  class="h-10 w-8"
+                  onClick={() => fileInputRef.click()}
+                />
+              </Tooltip>
+            </Show>
             <Tooltip
               placement="top"
               inactive={!prompt.dirty() && !working()}
