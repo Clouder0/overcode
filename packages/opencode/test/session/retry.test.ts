@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
+import { NamedError } from "@opencode-ai/util/error"
 
 function apiError(headers?: Record<string, string>): MessageV2.APIError {
   return new MessageV2.APIError({
@@ -57,5 +58,17 @@ describe("session.retry.delay", () => {
 
     const longError = apiError({ "retry-after-ms": "700000" })
     expect(SessionRetry.delay(1, longError)).toBe(700000)
+  })
+})
+
+describe("session.retry.retryable", () => {
+  test("retries common socket close errors", () => {
+    const err = new NamedError.Unknown({ message: "SocketError: socket closed" }).toObject()
+    expect(SessionRetry.retryable(err)).toBe("Network error")
+  })
+
+  test("does not retry unrelated unknown errors", () => {
+    const err = new NamedError.Unknown({ message: "TypeError: undefined is not a function" }).toObject()
+    expect(SessionRetry.retryable(err)).toBeUndefined()
   })
 })

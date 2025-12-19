@@ -13,6 +13,7 @@ import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
+import { Storage } from "@/storage/storage"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -42,7 +43,28 @@ export namespace SessionProcessor {
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
+        const cleanup = async (preserve: Set<string>) => {
+          snapshot = undefined
+          for (const key of Object.keys(toolcalls)) {
+            delete toolcalls[key]
+          }
+
+          const parts = await MessageV2.parts(input.assistantMessage.id)
+          for (const part of parts) {
+            if (preserve.has(part.id)) continue
+            await Storage.remove(["part", input.assistantMessage.id, part.id])
+            await Bus.publish(MessageV2.Event.PartRemoved, {
+              sessionID: input.assistantMessage.sessionID,
+              messageID: input.assistantMessage.id,
+              partID: part.id,
+            })
+          }
+        }
+
         while (true) {
+          const preserve = new Set((await MessageV2.parts(input.assistantMessage.id)).map((p) => p.id))
+          let retrySafe = true
+
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
@@ -96,7 +118,7 @@ export namespace SessionProcessor {
                   }
                   break
 
-                case "tool-input-start":
+                case "tool-input-start": {
                   const part = await Session.updatePart({
                     id: toolcalls[value.id]?.id ?? Identifier.ascending("part"),
                     messageID: input.assistantMessage.id,
@@ -112,6 +134,7 @@ export namespace SessionProcessor {
                   })
                   toolcalls[value.id] = part as MessageV2.ToolPart
                   break
+                }
 
                 case "tool-input-delta":
                   break
@@ -120,6 +143,9 @@ export namespace SessionProcessor {
                   break
 
                 case "tool-call": {
+                  if (streamInput.tools[value.toolName]) {
+                    retrySafe = false
+                  }
                   const match = toolcalls[value.toolCallId]
                   if (match) {
                     const part = await Session.updatePart({
@@ -241,7 +267,7 @@ export namespace SessionProcessor {
                   })
                   break
 
-                case "finish-step":
+                case "finish-step": {
                   const usage = Session.getUsage({
                     model: input.model,
                     usage: value.usage,
@@ -280,6 +306,7 @@ export namespace SessionProcessor {
                     messageID: input.assistantMessage.parentID,
                   })
                   break
+                }
 
                 case "text-start":
                   currentText = {
@@ -347,7 +374,7 @@ export namespace SessionProcessor {
             })
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
             const retry = SessionRetry.retryable(error)
-            if (retry !== undefined) {
+            if (retry !== undefined && retrySafe) {
               attempt++
               const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
               SessionStatus.set(input.sessionID, {
@@ -356,6 +383,7 @@ export namespace SessionProcessor {
                 message: retry,
                 next: Date.now() + delay,
               })
+              await cleanup(preserve).catch(() => {})
               await SessionRetry.sleep(delay, input.abort).catch(() => {})
               continue
             }
