@@ -339,8 +339,8 @@ export namespace SessionPrompt {
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
       if (
         lastAssistant?.finish &&
-        !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
-        lastUser.id < lastAssistant.id
+        lastUser.id < lastAssistant.id &&
+        (lastAssistant.summary || !["tool-calls", "unknown"].includes(lastAssistant.finish))
       ) {
         log.info("exiting loop", { sessionID })
         break
@@ -542,7 +542,7 @@ export namespace SessionPrompt {
     const isPrimaryAgent = input.agent.mode === "primary" || input.agent.mode === "all"
 
     for (const item of await ToolRegistry.tools(input.model.providerID)) {
-      if (Wildcard.all(item.id, enabledTools) === false) continue
+      if (item.id !== "invalid" && Wildcard.all(item.id, enabledTools) === false) continue
       // Block primary-only tools from subagents
       if (primaryOnlyTools.has(item.id) && !isPrimaryAgent) continue
       const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))

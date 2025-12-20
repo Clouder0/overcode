@@ -1,4 +1,4 @@
-import type { APICallError, ModelMessage } from "ai"
+import type { APICallError, ModelMessage, ToolCallPart, ToolResultPart } from "ai"
 import { unique } from "remeda"
 import type { JSONSchema } from "zod/v4/core"
 import type { Provider } from "./provider"
@@ -117,6 +117,83 @@ export namespace ProviderTransform {
     return msgs
   }
 
+  function isToolCallPart(part: unknown): part is ToolCallPart {
+    if (!part || typeof part !== "object") return false
+    const obj = part as Record<string, unknown>
+    if (obj["type"] !== "tool-call") return false
+    if (typeof obj["toolCallId"] !== "string") return false
+    if (typeof obj["toolName"] !== "string") return false
+    return true
+  }
+
+  function isToolResultPart(part: unknown): part is ToolResultPart {
+    if (!part || typeof part !== "object") return false
+    const obj = part as Record<string, unknown>
+    if (obj["type"] !== "tool-result") return false
+    if (typeof obj["toolCallId"] !== "string") return false
+    if (typeof obj["toolName"] !== "string") return false
+    return true
+  }
+
+  function ensureToolResults(msgs: ModelMessage[]): ModelMessage[] {
+    const out: ModelMessage[] = []
+    const output: ToolResultPart["output"] = {
+      type: "error-text",
+      value:
+        "Tool result missing. The previous tool call did not complete (session may have been interrupted). Please retry.",
+    }
+
+    for (let i = 0; i < msgs.length; i++) {
+      const msg = msgs[i]
+      out.push(msg)
+
+      if (msg.role !== "assistant") continue
+      if (!Array.isArray(msg.content)) continue
+
+      const calls = msg.content.filter((part): part is ToolCallPart => {
+        if (!isToolCallPart(part)) return false
+        return part.providerExecuted !== true
+      })
+      if (calls.length === 0) continue
+
+      const next = msgs[i + 1]
+      if (next && next.role === "tool" && Array.isArray(next.content)) {
+        const existing = new Set(
+          next.content.filter((part): part is ToolResultPart => isToolResultPart(part)).map((part) => part.toolCallId),
+        )
+        const missing = calls.filter((call) => !existing.has(call.toolCallId))
+        if (missing.length === 0) continue
+
+        out.push({
+          ...next,
+          content: [
+            ...next.content,
+            ...missing.map((call) => ({
+              type: "tool-result" as const,
+              toolCallId: call.toolCallId,
+              toolName: call.toolName,
+              output,
+            })),
+          ],
+        })
+        i++
+        continue
+      }
+
+      out.push({
+        role: "tool",
+        content: calls.map((call) => ({
+          type: "tool-result" as const,
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          output,
+        })),
+      } as ModelMessage)
+    }
+
+    return out
+  }
+
   function applyCaching(msgs: ModelMessage[], providerID: string): ModelMessage[] {
     const system = msgs.filter((msg) => msg.role === "system").slice(0, 2)
     const final = msgs.filter((msg) => msg.role !== "system").slice(-2)
@@ -206,6 +283,7 @@ export namespace ProviderTransform {
       model.api.id.includes("claude") ||
       model.api.npm === "@ai-sdk/anthropic"
     ) {
+      msgs = ensureToolResults(msgs)
       msgs = applyCaching(msgs, model.providerID)
     }
 

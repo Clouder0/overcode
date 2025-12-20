@@ -435,3 +435,101 @@ describe("ProviderTransform.message - empty image handling", () => {
     })
   })
 })
+
+describe("ProviderTransform.message - anthropic tool-call pairing", () => {
+  const mockModel = {
+    id: "anthropic/claude-opus-4-5",
+    providerID: "anthropic",
+    api: {
+      id: "claude-opus-4-5-20251101",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    },
+    name: "Claude Opus 4.5",
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: {
+      input: 0,
+      output: 0,
+      cache: { read: 0, write: 0 },
+    },
+    limit: {
+      context: 200000,
+      output: 8192,
+    },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "2025-11-01",
+  } as any
+
+  test("inserts a tool message when missing", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "toolu_a",
+            toolName: "write",
+            input: { filePath: "/tmp/a", content: "x" },
+          },
+        ],
+      },
+      { role: "user", content: "Next." },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel) as any[]
+
+    expect(result[0].role).toBe("assistant")
+    expect(result[1].role).toBe("tool")
+    expect(result[2].role).toBe("user")
+
+    const toolContent = result[1].content
+    expect(Array.isArray(toolContent)).toBe(true)
+    expect(toolContent[0].type).toBe("tool-result")
+    expect(toolContent[0].toolCallId).toBe("toolu_a")
+    expect(toolContent[0].toolName).toBe("write")
+    expect(toolContent[0].output.type).toBe("error-text")
+  })
+
+  test("patches missing tool results in existing tool message", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "toolu_a", toolName: "write", input: { a: 1 } },
+          { type: "tool-call", toolCallId: "toolu_b", toolName: "bash", input: { command: "echo hi" } },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "toolu_a",
+            toolName: "write",
+            output: { type: "text", value: "ok" },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel) as any[]
+
+    expect(result).toHaveLength(2)
+    expect(result[1].role).toBe("tool")
+
+    const ids = (result[1].content as any[]).filter((p) => p.type === "tool-result").map((p) => p.toolCallId)
+
+    expect(ids).toContain("toolu_a")
+    expect(ids).toContain("toolu_b")
+  })
+})

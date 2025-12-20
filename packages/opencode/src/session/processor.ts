@@ -67,6 +67,7 @@ export namespace SessionProcessor {
 
           try {
             let currentText: MessageV2.TextPart | undefined
+            const storeReasoning = streamInput.agent.name !== "compaction"
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             const stream = await LLM.stream(streamInput)
 
@@ -78,6 +79,7 @@ export namespace SessionProcessor {
                   break
 
                 case "reasoning-start":
+                  if (!storeReasoning) break
                   if (value.id in reasoningMap) {
                     continue
                   }
@@ -95,6 +97,7 @@ export namespace SessionProcessor {
                   break
 
                 case "reasoning-delta":
+                  if (!storeReasoning) break
                   if (value.id in reasoningMap) {
                     const part = reasoningMap[value.id]
                     part.text += value.text
@@ -104,6 +107,7 @@ export namespace SessionProcessor {
                   break
 
                 case "reasoning-end":
+                  if (!storeReasoning) break
                   if (value.id in reasoningMap) {
                     const part = reasoningMap[value.id]
                     part.text = part.text.trimEnd()
@@ -347,6 +351,12 @@ export namespace SessionProcessor {
                       { text: currentText.text },
                     )
                     currentText.text = textOutput.text
+                    if (streamInput.agent.name === "compaction") {
+                      currentText.text = currentText.text
+                        .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+                        .replace(/<analysis>[\s\S]*?<\/analysis>\s*/g, "")
+                        .trim()
+                    }
                     currentText.time = {
                       start: Date.now(),
                       end: Date.now(),

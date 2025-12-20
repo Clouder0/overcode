@@ -5,7 +5,9 @@ import { Identifier } from "../id/id"
 import { Instance } from "../project/instance"
 import { Provider } from "../provider/provider"
 import { MessageV2 } from "./message-v2"
+import { jsonSchema, stepCountIs, tool } from "ai"
 import z from "zod"
+import { InvalidTool } from "@/tool/invalid"
 import { SessionPrompt } from "./prompt"
 import { Flag } from "../flag/flag"
 import { Token } from "../util/token"
@@ -132,13 +134,39 @@ export namespace SessionCompaction {
       { sessionID: input.sessionID },
       { context: [] },
     )
+    const invalid = await InvalidTool.init()
+
     const result = await processor.process({
       user: userMessage,
       agent,
       abort: input.abort,
       sessionID: input.sessionID,
-      tools: {},
+      tools: {
+        invalid: tool({
+          id: "invalid" as any,
+          description: invalid.description,
+          inputSchema: jsonSchema(z.toJSONSchema(invalid.parameters) as any),
+          async execute(args, options) {
+            return invalid.execute(args as any, {
+              sessionID: input.sessionID,
+              abort: options.abortSignal!,
+              messageID: msg.id,
+              callID: options.toolCallId,
+              extra: { model },
+              agent: agent.name,
+              metadata: () => {},
+            })
+          },
+          toModelOutput(result) {
+            return {
+              type: "text",
+              value: result.output,
+            }
+          },
+        }),
+      },
       system: [],
+      stopWhen: stepCountIs(3),
       messages: [
         ...MessageV2.toModelMessage(input.messages),
         {

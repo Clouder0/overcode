@@ -1,6 +1,14 @@
 import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
-import { streamText, wrapLanguageModel, type ModelMessage, type StreamTextResult, type Tool, type ToolSet } from "ai"
+import {
+  streamText,
+  wrapLanguageModel,
+  type ModelMessage,
+  type StopCondition,
+  type StreamTextResult,
+  type Tool,
+  type ToolSet,
+} from "ai"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
@@ -28,6 +36,7 @@ export namespace LLM {
     small?: boolean
     tools: Record<string, Tool>
     retries?: number
+    stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[]
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
@@ -160,6 +169,7 @@ export namespace LLM {
         ...input.model.headers,
       },
       maxRetries: input.retries ?? 0,
+      stopWhen: input.stopWhen,
       messages: [
         ...system.map(
           (x): ModelMessage => ({
