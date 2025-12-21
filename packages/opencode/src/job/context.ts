@@ -202,6 +202,7 @@ export namespace JobContext {
     }
 
     function deliverSignal(signal: "abort"): void {
+      terminal = true
       if (signalCallback) {
         signalCallback(signal)
       }

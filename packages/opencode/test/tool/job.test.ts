@@ -305,7 +305,7 @@ describe("JobListTool", () => {
       await waitForTerminalStatus(job.id)
 
       // Create a non-subagent job
-      await createNonSubagentJob("other", parent.id)
+      const other = await createNonSubagentJob("other", parent.id)
 
       const tool = await JobListTool.init()
       const ctx = createCtx(parent.id)
@@ -318,6 +318,9 @@ describe("JobListTool", () => {
       // Filter for other type
       const otherResult = await tool.execute({ limit: 50, type: "other" }, ctx)
       expect(otherResult.metadata.count).toBe(1)
+
+      // Clean up
+      await Storage.remove(["job", other.projectID, other.id]).catch(() => {})
     })
   })
 
@@ -691,9 +694,13 @@ describe("JobWaitTool", () => {
       expect(elapsed).toBeGreaterThanOrEqual(900)
       expect(elapsed).toBeLessThan(2000)
       expect(result.output).toContain("Pending (timeout reached):")
+      expect(result.output).toContain("job_subagent_send")
       expect(result.metadata.pending.length).toBe(1)
       // Job could be pending or running when timeout occurs
       expect(["pending", "running"]).toContain(result.metadata.pending[0].status)
+
+      // Clean up
+      await Storage.remove(["job", project.id, jobID]).catch(() => {})
     })
   })
 
@@ -905,7 +912,7 @@ describe("JobWaitTool notification handling", () => {
       const waitPromise = tool.execute({ job_ids: [jobID], mode: "all", timeout: 30000 }, ctx)
 
       // Give the wait a moment to set up subscriptions
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await new Promise((resolve) => setTimeout(resolve, 150))
 
       // Import Bus and JobContext to publish a notification
       const { Bus } = await import("../../src/bus")
@@ -997,7 +1004,7 @@ describe("JobWaitTool notification handling", () => {
       const waitPromise = tool.execute({ job_ids: [completedJobID, runningJobID], mode: "all", timeout: 30000 }, ctx)
 
       // Give the wait a moment to set up subscriptions
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await new Promise((resolve) => setTimeout(resolve, 150))
 
       // Import Bus and JobContext to publish a notification
       const { Bus } = await import("../../src/bus")
@@ -1064,7 +1071,7 @@ describe("JobWaitTool notification handling", () => {
 
       const waitPromise = tool.execute({ job_ids: [jobID], mode: "all", timeout: 30000 }, ctx)
 
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await new Promise((resolve) => setTimeout(resolve, 150))
 
       const { Bus } = await import("../../src/bus")
       const { JobContext } = await import("../../src/job/context")
@@ -1140,7 +1147,7 @@ describe("JobWaitTool notification handling", () => {
       // Start waiting for both jobs
       const waitPromise = tool.execute({ job_ids: [job1ID, job2ID], mode: "all", timeout: 30000 }, ctx)
 
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await new Promise((resolve) => setTimeout(resolve, 150))
 
       const { Bus } = await import("../../src/bus")
       const { JobContext } = await import("../../src/job/context")
@@ -1156,7 +1163,7 @@ describe("JobWaitTool notification handling", () => {
       })
 
       // Give it a moment to process the completion
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      await new Promise((resolve) => setTimeout(resolve, 150))
 
       // Now job2 sends a notification
       await Bus.publish(JobContext.Event.Notify, {

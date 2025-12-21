@@ -78,7 +78,9 @@ export namespace SystemPrompt {
     for (const localRuleFile of LOCAL_RULE_FILES) {
       const matches = await Filesystem.findUp(localRuleFile, Instance.directory, Instance.worktree)
       if (matches.length > 0) {
-        matches.forEach((path) => paths.add(path))
+        matches.forEach((p) => {
+          paths.add(p)
+        })
         break
       }
     }
@@ -107,7 +109,9 @@ export namespace SystemPrompt {
         } else {
           matches = await Filesystem.globUp(instruction, Instance.directory, Instance.worktree).catch(() => [])
         }
-        matches.forEach((path) => paths.add(path))
+        matches.forEach((p) => {
+          paths.add(p)
+        })
       }
     }
 
@@ -167,6 +171,16 @@ export namespace SystemPrompt {
 **Typical workflow:**
 1. Start: job_subagent_start({ jobs: [{ title: "Task", agent: "explore", prompt: "..." }, ...] })
 2. Wait: job_wait({ job_ids: ["id1", "id2"], mode: "all" })
+
+**Communication model:**
+- Caller -> job: job_subagent_send (optional, for follow-ups)
+- job_emit: progress / intermediate results (pollable; read via job_subagent_read/job_wait)
+- job_notify: questions / urgent issues (push; appears as [Job Notification]; respond via job_subagent_send)
+- job_complete({ output: ... }): final one-shot result (no push; read via job_wait/job_subagent_read)
+- job_fail({ error: "..." }): terminal failure (no push; read via job_wait/job_get)
+
+**Exceptional cases:**
+- If job_wait times out and you expected a one-shot return, send job_subagent_send reminding the job to call job_complete/job_fail (or cancel with job_cancel).
 
 **Other tools:**
 - job_list: Discover jobs by filter (type, status)

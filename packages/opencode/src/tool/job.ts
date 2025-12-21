@@ -261,6 +261,13 @@ export const JobWaitTool = Tool.define("job_wait", async () => {
           lines.push(`- ${job.id}: ${job.status}`)
         }
         lines.push("")
+
+        if (params.mode === "all" && notificationCount === 0) {
+          lines.push(
+            "If you expected a one-shot final result, send a follow-up to the job (for subagent jobs: job_subagent_send) asking it to call job_complete/job_fail, or cancel it with job_cancel.",
+          )
+          lines.push("")
+        }
       }
 
       if (result.errors.length > 0) {

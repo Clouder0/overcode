@@ -10,7 +10,7 @@ export namespace JobBridge {
     return {
       job_emit: Tool.define("job_emit", {
         description:
-          "Send output to the parent job (pollable). Use this for progress updates that don't require immediate attention.",
+          "Send output to the caller (pollable frame, no push). Use this for progress or non-urgent intermediate results; the caller reads via job_*_read or job_wait.",
         parameters: z.object({
           output: outputSchema.describe("Output data to emit"),
         }),
@@ -26,7 +26,7 @@ export namespace JobBridge {
 
       job_notify: Tool.define("job_notify", {
         description:
-          "Notify the parent job immediately (push). Use this for questions or errors that need immediate attention.",
+          "Notify the caller immediately (push). Use this for questions or urgent issues; it will be injected into the caller session as a job notification. Do not use it for a one-shot final result—use job_complete.",
         parameters: z.object({
           output: outputSchema.describe("Output data to notify"),
         }),
@@ -46,7 +46,8 @@ export namespace JobBridge {
       }),
 
       job_complete: Tool.define("job_complete", {
-        description: "Mark the job as complete. Call this when you have finished the task successfully.",
+        description:
+          "Mark the job as complete and optionally return a final result (no push). The caller captures the output via job_wait or job_*_read.",
         parameters: z.object({
           output: outputSchema.optional().describe("Optional final output data"),
         }),
@@ -61,7 +62,8 @@ export namespace JobBridge {
       }),
 
       job_fail: Tool.define("job_fail", {
-        description: "Mark the job as failed. Call this when you cannot complete the task due to an error.",
+        description:
+          "Mark the job as failed (no push). The caller captures the error via job_wait/job_get. Use job_notify first if you need immediate attention.",
         parameters: z.object({
           error: z.string().describe("Error message explaining why the job failed"),
         }),

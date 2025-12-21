@@ -369,36 +369,35 @@ export namespace Job {
           const jobs = state()
           const runtime = jobs.get(jobID)
 
-          // If there is an active run, signal abort and let the per-run executor
-          // handle status transitions and logging.
-          if (runtime?.active && runtime.abort) {
-            runtime.abort.abort()
-          } else {
-            let workerSessionID: string | undefined
-
-            await update(jobID, (draft) => {
-              workerSessionID = draft.metadata?.workerSessionID as string | undefined
-              if (draft.status === "pending" || draft.status === "running") {
-                draft.status = "canceled"
-                draft.time.completed = draft.time.completed ?? Date.now()
-              }
-            })
-
-            // Best-effort cancellation if there is no runtime entry but we still
-            // have a worker session.
-            if (!runtime && workerSessionID) {
-              SessionPrompt.cancel(workerSessionID)
+          const info = await getJobInternal(jobID)
+          if (isTerminal(info.status)) {
+            if (runtime?.active && runtime.abort) {
+              runtime.abort.abort()
             }
+            results.push({ id: jobID, success: true, status: info.status })
+            continue
           }
 
-          // Get current status after cancel attempt
-          const { jobs: jobResults } = await get({ jobIDs: [jobID] })
-          const job = jobResults[0]
-          results.push({
-            id: jobID,
-            success: true,
-            status: job?.found ? job.status! : "canceled",
+          let workerSessionID: string | undefined
+          const after = await update(jobID, (draft) => {
+            workerSessionID = draft.metadata?.workerSessionID as string | undefined
+            if (draft.status === "pending" || draft.status === "running") {
+              draft.status = "canceled"
+              draft.time.completed = draft.time.completed ?? Date.now()
+            }
           })
+
+          if (runtime?.active && runtime.abort) {
+            runtime.abort.abort()
+          }
+
+          // Best-effort cancellation if there is no runtime entry but we still
+          // have a worker session.
+          if (!runtime && workerSessionID) {
+            SessionPrompt.cancel(workerSessionID)
+          }
+
+          results.push({ id: jobID, success: true, status: after.status })
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown error"
           results.push({
@@ -517,6 +516,7 @@ export namespace Job {
         if (state().get(input.jobID)?.removed) return
         const now = Date.now()
         await update(input.jobID, (draft) => {
+          if (draft.status === "canceled") return
           draft.status = status
           draft.time.completed = now
           if (status === "error" && error) {
@@ -1175,10 +1175,14 @@ export namespace Job {
       const unsubNotify = Bus.subscribe(JobContext.Event.Notify, async (event) => {
         if (resolved) return
 
+        const sessionID = event.properties.sessionID
         const { jobID, frame } = event.properties
         if (jobStates.has(jobID)) {
           resolved = true
           cleanup()
+
+          const { JobNotification } = await import("./notification")
+          JobNotification.ack(sessionID, { jobID, frameID: frame.id })
 
           // Categorize watched jobs by their current status
           for (const [id, status] of jobStates) {
