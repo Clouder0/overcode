@@ -547,6 +547,16 @@ export type EventSessionCompacted = {
   }
 }
 
+export type EventCommandExecuted = {
+  type: "command.executed"
+  properties: {
+    name: string
+    sessionID: string
+    arguments: string
+    messageID: string
+  }
+}
+
 export type JobStreamFrame = {
   id: string
   jobID: string
@@ -573,16 +583,6 @@ export type EventJobNotify = {
     jobID: string
     sessionID: string
     frame: JobStreamFrame
-  }
-}
-
-export type EventCommandExecuted = {
-  type: "command.executed"
-  properties: {
-    name: string
-    sessionID: string
-    arguments: string
-    messageID: string
   }
 }
 
@@ -824,9 +824,9 @@ export type Event =
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
+  | EventCommandExecuted
   | EventJobOutput
   | EventJobNotify
-  | EventCommandExecuted
   | EventJobCreated
   | EventJobUpdated
   | EventJobDeleted
@@ -3191,7 +3191,7 @@ export type PartDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3235,7 +3235,7 @@ export type PartUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */

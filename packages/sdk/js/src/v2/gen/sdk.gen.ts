@@ -28,6 +28,7 @@ import type {
   FindSymbolsResponses,
   FindTextResponses,
   FormatterStatusResponses,
+  GlobalDisposeResponses,
   GlobalEventErrors,
   GlobalEventResponses,
   GlobalHealthResponses,
