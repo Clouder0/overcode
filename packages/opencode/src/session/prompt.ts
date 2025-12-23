@@ -488,9 +488,21 @@ export namespace SessionPrompt {
   })
 
   async function lastModel(sessionID: string) {
-    for await (const item of MessageV2.stream(sessionID)) {
-      if (item.info.role === "user" && item.info.model) return item.info.model
+    const visited = new Set<string>()
+    let current = sessionID
+
+    while (!visited.has(current)) {
+      visited.add(current)
+
+      for await (const item of MessageV2.stream(current)) {
+        if (item.info.role === "user" && item.info.model) return item.info.model
+      }
+
+      const session = await Session.get(current).catch(() => undefined)
+      if (!session?.parentID) break
+      current = session.parentID
     }
+
     return Provider.defaultModel()
   }
 
@@ -754,7 +766,7 @@ export namespace SessionPrompt {
                 ]
               }
               break
-            case "file:":
+            case "file:": {
               log.info("file", { mime: part.mime })
               // have to normalize, symbol search returns absolute paths
               // Decode the pathname since URL constructor doesn't automatically decode it
@@ -933,6 +945,7 @@ export namespace SessionPrompt {
                   source: part.source,
                 },
               ]
+            }
           }
         }
 
