@@ -553,10 +553,11 @@ export namespace SessionPrompt {
     const primaryOnlyTools = new Set(cfg.experimental?.primary_tools ?? [])
     const isPrimaryAgent = input.agent.mode === "primary" || input.agent.mode === "all"
 
-    for (const item of await ToolRegistry.tools(input.model.providerID)) {
+    for (const item of await ToolRegistry.tools(input.model.providerID, input.agent)) {
       if (item.id !== "invalid" && Wildcard.all(item.id, enabledTools) === false) continue
       // Block primary-only tools from subagents
       if (primaryOnlyTools.has(item.id) && !isPrimaryAgent) continue
+
       const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
       tools[item.id] = tool({
         id: item.id as any,
@@ -1314,7 +1315,7 @@ export namespace SessionPrompt {
       const results = await Promise.all(
         shell.map(async ([, cmd]) => {
           try {
-            return await $`${{ raw: cmd }}`.nothrow().text()
+            return await $`${{ raw: cmd }}`.quiet().nothrow().text()
           } catch (error) {
             return `Error executing command: ${error instanceof Error ? error.message : String(error)}`
           }

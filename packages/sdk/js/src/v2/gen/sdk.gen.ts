@@ -30,6 +30,7 @@ import type {
   FormatterStatusResponses,
   GlobalEventErrors,
   GlobalEventResponses,
+  GlobalHealthResponses,
   InstanceDisposeResponses,
   JobFrameLatestResponses,
   JobFramesResponses,
@@ -192,6 +193,18 @@ class HeyApiRegistry<T> {
 }
 
 export class Global extends HeyApiClient {
+  /**
+   * Get health
+   *
+   * Get health information about the OpenCode server.
+   */
+  public health<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GlobalHealthResponses, unknown, ThrowOnError>({
+      url: "/global/health",
+      ...options,
+    })
+  }
+
   /**
    * Get global events
    *
@@ -1257,6 +1270,7 @@ export class Session extends HeyApiClient {
       directory?: string
       providerID?: string
       modelID?: string
+      auto?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1269,6 +1283,7 @@ export class Session extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "body", key: "providerID" },
             { in: "body", key: "modelID" },
+            { in: "body", key: "auto" },
           ],
         },
       ],
