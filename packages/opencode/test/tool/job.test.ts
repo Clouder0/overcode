@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import path from "node:path"
 import { Instance } from "../../src/project/instance"
 
@@ -7,7 +7,7 @@ const promptState: Record<string, "pending" | "canceled"> = {}
 const sessionTools: Record<string, Record<string, any>> = {}
 
 // Mock SessionPrompt for deterministic behavior
-mock.module("@/session/prompt", () => ({
+mock.module("@/session/prompt?tool-job", () => ({
   SessionPrompt: {
     async resolvePromptParts(template: string) {
       return [{ type: "text", text: template }]
@@ -104,7 +104,7 @@ mock.module("@/session/prompt", () => ({
 }))
 
 // Mock Agent to provide controlled test agents
-mock.module("@/agent/agent", () => ({
+mock.module("@/agent/agent?tool-job", () => ({
   Agent: {
     async get(name: string) {
       if (name === "invalid-agent" || name === "nonexistent") {
@@ -147,6 +147,8 @@ mock.module("@/agent/agent", () => ({
     },
   },
 }))
+
+afterAll(() => mock.restore())
 
 // Import modules after mocks are set up
 const { Job } = await import("../../src/job")

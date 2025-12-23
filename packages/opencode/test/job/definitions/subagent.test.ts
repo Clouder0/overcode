@@ -1,9 +1,9 @@
-import { describe, expect, mock, test } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import path from "node:path"
 import { Instance } from "../../../src/project/instance"
 
 // Mock SessionPrompt for deterministic behavior
-mock.module("@/session/prompt", () => ({
+mock.module("@/session/prompt?subagent-definition", () => ({
   SessionPrompt: {
     async resolvePromptParts(template: string) {
       return [{ type: "text", text: template }]
@@ -24,7 +24,7 @@ mock.module("@/session/prompt", () => ({
 }))
 
 // Mock Agent for tests
-mock.module("@/agent/agent", () => ({
+mock.module("@/agent/agent?subagent-definition", () => ({
   Agent: {
     async get(name: string) {
       if (name === "unknown") return undefined
@@ -52,13 +52,15 @@ mock.module("@/agent/agent", () => ({
 }))
 
 // Mock Session for tests
-mock.module("@/session", () => ({
+mock.module("@/session?subagent-definition", () => ({
   Session: {
     async create() {
       return { id: `session_${Date.now()}` }
     },
   },
 }))
+
+afterAll(() => mock.restore())
 
 const projectRoot = path.join(__dirname, "../../..")
 

@@ -11,7 +11,6 @@ import { fn } from "@opencode-ai/util/fn"
 import { BusEvent } from "@/bus/bus-event"
 import { iife } from "@/util/iife"
 import { GlobalBus } from "@/bus/global"
-import { Instance } from "./instance"
 
 export namespace Project {
   const log = Log.create({ service: "project" })
@@ -120,7 +119,6 @@ export namespace Project {
     }
     await Storage.write<Info>(["project", id], result)
     GlobalBus.emit("event", {
-      directory: worktree,
       payload: {
         type: Event.Updated.type,
         properties: result,
@@ -212,7 +210,6 @@ export namespace Project {
         draft.time.updated = Date.now()
       })
       GlobalBus.emit("event", {
-        directory: Instance.directory,
         payload: {
           type: Event.Updated.type,
           properties: result,

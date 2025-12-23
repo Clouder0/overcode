@@ -9,14 +9,14 @@
  * This file tests the schema validation and error handling aspects that can be
  * tested without the full import chain.
  */
-import { describe, expect, test, mock } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import path from "node:path"
 import z from "zod"
 import { Instance } from "../../src/project/instance"
 import { Storage } from "../../src/storage/storage"
 
 // Mock SessionPrompt to break the circular dependency chain
-mock.module("@/session/prompt", () => ({
+mock.module("@/session/prompt?job-lifecycle", () => ({
   SessionPrompt: {
     async resolvePromptParts() {
       return []
@@ -29,13 +29,15 @@ mock.module("@/session/prompt", () => ({
 }))
 
 // Mock Agent to avoid additional dependencies
-mock.module("@/agent/agent", () => ({
+mock.module("@/agent/agent?job-lifecycle", () => ({
   Agent: {
     async get() {
       return null
     },
   },
 }))
+
+afterAll(() => mock.restore())
 
 const projectRoot = path.join(__dirname, "../..")
 

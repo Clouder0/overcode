@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import path from "node:path"
 import { Instance } from "../../src/project/instance"
 
@@ -41,7 +41,7 @@ function toolCtx(sessionID: string, agent: string, callID: string) {
   }
 }
 
-mock.module("@/session/prompt", () => ({
+mock.module("@/session/prompt?job-delegation", () => ({
   SessionPrompt: {
     async resolvePromptParts(template: string) {
       return [{ type: "text", text: template }]
@@ -167,7 +167,7 @@ mock.module("@/session/prompt", () => ({
   },
 }))
 
-mock.module("@/agent/agent", () => ({
+mock.module("@/agent/agent?job-delegation", () => ({
   Agent: {
     async get(name: string) {
       if (name === "build") {
@@ -225,6 +225,8 @@ mock.module("@/agent/agent", () => ({
     },
   },
 }))
+
+afterAll(() => mock.restore())
 
 const { Job } = await import("../../src/job")
 const { JobRegistry } = await import("../../src/job/registry")
@@ -309,7 +311,10 @@ describe("Job delegation integration", () => {
       await waitTool.execute({ job_ids: [jobID], mode: "all", timeout: 5000 }, ctx)
 
       const workerSessionID = await getWorkerSessionID(jobID)
-      const prompt = sessionPrompts[workerSessionID]?.[0] ?? ""
+      const promptLog = (globalThis as any).__OPENCODE_TEST_SESSION_PROMPTS__ as
+        | Record<string, string[] | undefined>
+        | undefined
+      const prompt = promptLog?.[workerSessionID]?.[0] ?? ""
 
       expect(prompt).toContain("[Job Context]")
       expect(prompt).toContain("normal chat messages are NOT visible")

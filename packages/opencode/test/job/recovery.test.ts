@@ -7,12 +7,12 @@
  *
  * NOTE: These tests require mocking SessionPrompt to avoid circular import issues.
  */
-import { describe, expect, test, mock } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import path from "node:path"
 import { Instance } from "../../src/project/instance"
 
 // Mock modules before dynamic imports
-mock.module("@/session/prompt", () => ({
+mock.module("@/session/prompt?job-recovery", () => ({
   SessionPrompt: {
     cancel() {},
     async prompt() {
@@ -24,7 +24,7 @@ mock.module("@/session/prompt", () => ({
   },
 }))
 
-mock.module("@/agent/agent", () => ({
+mock.module("@/agent/agent?job-recovery", () => ({
   Agent: {
     async get() {
       return { name: "test", mode: "subagent" }
@@ -34,6 +34,8 @@ mock.module("@/agent/agent", () => ({
     },
   },
 }))
+
+afterAll(() => mock.restore())
 
 // Dynamic imports after mocks are set up
 const { Job } = await import("../../src/job")

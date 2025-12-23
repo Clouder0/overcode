@@ -1,4 +1,4 @@
-import { describe, expect, test, mock } from "bun:test"
+import { afterAll, describe, expect, mock, test } from "bun:test"
 import path from "path"
 import { Instance } from "../src/project/instance"
 import type { Job as JobNamespace } from "../src/job"
@@ -8,7 +8,7 @@ import type { Job as JobNamespace } from "../src/job"
 const promptState: Record<string, "pending" | "canceled" | undefined> = {}
 const sessionTools: Record<string, Record<string, any>> = {}
 
-mock.module("@/session/prompt", () => ({
+mock.module("@/session/prompt?job-runtime", () => ({
   SessionPrompt: {
     async resolvePromptParts(template: string) {
       return [
@@ -146,7 +146,7 @@ mock.module("@/session/prompt", () => ({
   },
 }))
 
-mock.module("@/agent/agent", () => ({
+mock.module("@/agent/agent?job-runtime", () => ({
   Agent: {
     async get(name: string) {
       return {
@@ -186,6 +186,8 @@ mock.module("@/agent/agent", () => ({
     },
   },
 }))
+
+afterAll(() => mock.restore())
 
 const { Job } = await import("../src/job")
 const { JobStream } = await import("../src/job/stream")
