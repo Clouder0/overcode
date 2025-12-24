@@ -304,13 +304,16 @@ export namespace SessionPrompt {
         const incoming = SessionMessage.pending(sessionID)
         for (const msg of incoming) {
           // Create user message for the incoming message
+          // Get the agent to check for configured model - subagents should use their own model setting
+          const agentName = await lastAgent(sessionID)
+          const agentInfo = await Agent.get(agentName)
           const incomingMessage: MessageV2.User = {
             id: Identifier.ascending("message"),
             sessionID,
             time: { created: Date.now() },
             role: "user",
-            agent: await lastAgent(sessionID),
-            model: await lastModel(sessionID),
+            agent: agentName,
+            model: agentInfo?.model ?? (await lastModel(sessionID)),
           }
           await Session.updateMessage(incomingMessage)
 
@@ -956,6 +959,14 @@ Raw text found: "${parsed.remainingText.slice(0, 100)}${parsed.remainingText.len
     const session = await Session.get(input.sessionID).catch(() => undefined)
     const agentName = session?.agentName ?? input.agent ?? (await Agent.defaultAgent())
     const agent = await Agent.get(agentName)
+
+    // For subagent sessions, prioritize the agent's configured model over input.model
+    // This ensures subagents always use their designated model regardless of what the TUI sends
+    const isSubagentSession = session?.sessionType === "subagent"
+    const model = isSubagentSession
+      ? (agent.model ?? input.model ?? (await lastModel(input.sessionID)))
+      : (input.model ?? agent.model ?? (await lastModel(input.sessionID)))
+
     const info: MessageV2.Info = {
       id: input.messageID ?? Identifier.ascending("message"),
       role: "user",
@@ -965,7 +976,7 @@ Raw text found: "${parsed.remainingText.slice(0, 100)}${parsed.remainingText.len
       },
       tools: input.tools,
       agent: agent.name,
-      model: input.model ?? agent.model ?? (await lastModel(input.sessionID)),
+      model,
       system: input.system,
     }
 
@@ -1293,8 +1304,15 @@ Raw text found: "${parsed.remainingText.slice(0, 100)}${parsed.remainingText.len
     if (session.revert) {
       SessionRevert.cleanup(session)
     }
-    const agent = await Agent.get(input.agent)
-    const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
+
+    // For subagent sessions, use the session's agent and prioritize its model
+    const agentName = session.agentName ?? input.agent
+    const agent = await Agent.get(agentName)
+    const isSubagentSession = session.sessionType === "subagent"
+    const model = isSubagentSession
+      ? (agent.model ?? input.model ?? (await lastModel(input.sessionID)))
+      : (input.model ?? agent.model ?? (await lastModel(input.sessionID)))
+
     const userMsg: MessageV2.User = {
       id: Identifier.ascending("message"),
       sessionID: input.sessionID,
@@ -1302,7 +1320,7 @@ Raw text found: "${parsed.remainingText.slice(0, 100)}${parsed.remainingText.len
         created: Date.now(),
       },
       role: "user",
-      agent: input.agent,
+      agent: agentName,
       model: {
         providerID: model.providerID,
         modelID: model.modelID,
