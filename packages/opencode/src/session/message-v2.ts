@@ -80,6 +80,7 @@ export namespace MessageV2 {
   export const ReasoningPart = PartBase.extend({
     type: z.literal("reasoning"),
     text: z.string(),
+    ignored: z.boolean().optional(),
     metadata: z.record(z.string(), z.any()).optional(),
     time: z.object({
       start: z.number(),
@@ -562,7 +563,7 @@ export namespace MessageV2 {
                 callProviderMetadata: part.metadata,
               })
           }
-          if (part.type === "reasoning") {
+          if (part.type === "reasoning" && !part.ignored) {
             assistantMessage.parts.push({
               type: "reasoning",
               text: part.text,
@@ -666,7 +667,7 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
-      case APICallError.isInstance(e):
+      case APICallError.isInstance(e): {
         const message = iife(() => {
           let msg = e.message
           if (msg === "") {
@@ -707,6 +708,7 @@ export namespace MessageV2 {
           },
           { cause: e },
         ).toObject()
+      }
       case e instanceof Error:
         return new NamedError.Unknown({ message: e.toString() }, { cause: e }).toObject()
       default:

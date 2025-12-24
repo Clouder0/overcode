@@ -39,7 +39,7 @@ export const anthropicHelper = {
         const data = chunk.split("\n")[1]
         if (!data.startsWith("data: ")) return
 
-        let json
+        let json: any
         try {
           json = JSON.parse(data.slice(6))
         } catch (e) {
@@ -310,6 +310,57 @@ export function toAnthropicRequest(body: CommonRequest) {
     }
   }
 
+  const TOOL_RESULT_PLACEHOLDER =
+    "Tool result missing. The previous tool call did not complete (session may have been interrupted). Please retry."
+
+  // Anthropic requires tool_result blocks in the next message after tool_use.
+  for (let i = 0; i < msgsOut.length; i++) {
+    const msg = msgsOut[i]
+    if (!msg || msg.role !== "assistant") continue
+    if (!Array.isArray(msg.content)) continue
+
+    const uses = msg.content
+      .filter((p: any) => p && p.type === "tool_use" && typeof p.id === "string")
+      .map((p: any) => p.id)
+
+    if (uses.length === 0) continue
+
+    const next = msgsOut[i + 1]
+
+    if (next && next.role === "user" && Array.isArray(next.content)) {
+      const existing = new Set(
+        next.content
+          .filter((p: any) => p && p.type === "tool_result" && typeof p.tool_use_id === "string")
+          .map((p: any) => p.tool_use_id),
+      )
+
+      const missing = uses.filter((id: string) => !existing.has(id))
+      if (missing.length === 0) continue
+
+      next.content = [
+        ...missing.map((id: string) => ({
+          type: "tool_result",
+          tool_use_id: id,
+          content: TOOL_RESULT_PLACEHOLDER,
+        })),
+        ...next.content,
+      ]
+      continue
+    }
+
+    msgsOut.splice(i + 1, 0, {
+      role: "user",
+      content: uses.map((id: string) => ({
+        type: "tool_result",
+        tool_use_id: id,
+        content: TOOL_RESULT_PLACEHOLDER,
+      })),
+    })
+
+    // Skip the synthetic tool_result message we just inserted.
+    i++
+  }
+
   const tools = Array.isArray(body.tools)
     ? body.tools
         .filter((t: any) => t && typeof t === "object" && (t as any).type === "function")
@@ -506,7 +557,7 @@ export function fromAnthropicChunk(chunk: string): CommonChunk | string {
   const dataLine = lines.find((l) => l.startsWith("data: "))
   if (!dataLine) return chunk
 
-  let json
+  let json: any
   try {
     json = JSON.parse(dataLine.slice(6))
   } catch {

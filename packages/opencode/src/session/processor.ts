@@ -43,6 +43,52 @@ export namespace SessionProcessor {
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
+
+        let ignoredOpenAIReasoning = false
+
+        const ignoreOpenAIReasoning = async () => {
+          if (ignoredOpenAIReasoning) return
+          ignoredOpenAIReasoning = true
+
+          const msgs = await Session.messages({ sessionID: input.sessionID })
+
+          for (const msg of msgs) {
+            for (const part of msg.parts) {
+              if (part.type !== "reasoning") continue
+              if (part.messageID === input.assistantMessage.id) continue
+              if (part.ignored) continue
+              if (!part.metadata) continue
+              const openai = (part.metadata as { openai?: unknown }).openai
+              if (!openai || typeof openai !== "object") continue
+
+              part.ignored = true
+              await Session.updatePart(part)
+            }
+          }
+        }
+
+        const mergeMetadata = (a?: Record<string, unknown>, b?: Record<string, unknown>) => {
+          if (!a) return b
+          if (!b) return a
+
+          const result = {
+            ...a,
+            ...b,
+          } as Record<string, unknown>
+
+          const ao = (a as { openai?: unknown }).openai
+          const bo = (b as { openai?: unknown }).openai
+
+          if (ao && typeof ao === "object" && bo && typeof bo === "object") {
+            result.openai = {
+              ...(ao as Record<string, unknown>),
+              ...(bo as Record<string, unknown>),
+            }
+          }
+
+          return result
+        }
+
         const cleanup = async (preserve: Set<string>) => {
           snapshot = undefined
           for (const key of Object.keys(toolcalls)) {
@@ -74,6 +120,22 @@ export namespace SessionProcessor {
             for await (const value of stream.fullStream) {
               input.abort.throwIfAborted()
               switch (value.type) {
+                case "stream-start" as any: {
+                  const warnings = (value as { warnings?: unknown }).warnings
+                  if (!Array.isArray(warnings)) break
+
+                  const dropped = warnings.some((w) => {
+                    const msg = (w as { message?: unknown }).message
+                    if (typeof msg !== "string") return false
+                    return msg.includes("Dropped previous reasoning context after OpenAI rejected it")
+                  })
+
+                  if (dropped) {
+                    await ignoreOpenAIReasoning()
+                  }
+                  break
+                }
+
                 case "start":
                   SessionStatus.set(input.sessionID, { type: "busy" })
                   break
@@ -101,7 +163,7 @@ export namespace SessionProcessor {
                   if (value.id in reasoningMap) {
                     const part = reasoningMap[value.id]
                     part.text += value.text
-                    if (value.providerMetadata) part.metadata = value.providerMetadata
+                    if (value.providerMetadata) part.metadata = mergeMetadata(part.metadata, value.providerMetadata)
                     if (part.text) await Session.updatePart({ part, delta: value.text })
                   }
                   break
@@ -116,7 +178,7 @@ export namespace SessionProcessor {
                       ...part.time,
                       end: Date.now(),
                     }
-                    if (value.providerMetadata) part.metadata = value.providerMetadata
+                    if (value.providerMetadata) part.metadata = mergeMetadata(part.metadata, value.providerMetadata)
                     await Session.updatePart(part)
                     delete reasoningMap[value.id]
                   }
