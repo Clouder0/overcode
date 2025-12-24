@@ -1,2 +1,6 @@
 [install]
 exact = true
+
+[test]
+preload = ["./packages/opencode/test/preload.ts"]
+root = "./packages/opencode"
