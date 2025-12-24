@@ -9,9 +9,8 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
-import { JobListTool, JobGetTool, JobCancelTool, JobWaitTool } from "./job"
-import { JobGenerator } from "./job-generator"
 import { LspTool } from "./lsp"
+import { SubagentSpawnTool } from "./subagent-spawn"
 import type { Agent } from "../agent/agent"
 import { Tool } from "./tool"
 import { Instance } from "../project/instance"
@@ -87,7 +86,6 @@ export namespace ToolRegistry {
 
   async function all(): Promise<Tool.Info[]> {
     const custom = await state().then((x) => x.custom)
-    const jobTools = JobGenerator.generateAll()
 
     return [
       InvalidTool,
@@ -98,11 +96,7 @@ export namespace ToolRegistry {
       ListTool,
       EditTool,
       WriteTool,
-      JobListTool,
-      JobGetTool,
-      JobCancelTool,
-      JobWaitTool,
-      ...jobTools,
+      SubagentSpawnTool,
       WebFetchTool,
       TodoWriteTool,
       TodoReadTool,

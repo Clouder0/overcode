@@ -40,11 +40,14 @@ import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
 import { SessionStatus } from "./status"
-import { JobNotification } from "@/job/notification"
 import { Config } from "../config/config"
 import { Shell } from "@/shell/shell"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
+import { SessionMessage } from "./message-routing"
+import { MessageWait } from "./message-wait"
+import { MessageParser } from "./message-parser"
+import { Storage } from "@/storage/storage"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -73,6 +76,18 @@ export namespace SessionPrompt {
       }
     },
   )
+
+  // Register wake function with SessionMessage to handle dormant session wakeup
+  // This avoids circular dependency (message-routing -> prompt)
+  SessionMessage.setWakeSessionFn((sessionID) => {
+    const status = SessionStatus.get(sessionID)
+    if (status.type === "idle") {
+      log.info("waking dormant session", { sessionID })
+      loop(sessionID).catch((error) => {
+        log.error("failed to wake session", { sessionID, error: error?.message })
+      })
+    }
+  })
 
   // Session-scoped extra tools (e.g., bridge tools for worker sessions)
   const extraToolsState = Instance.state(
@@ -278,42 +293,55 @@ export namespace SessionPrompt {
 
     using _ = defer(() => cancel(sessionID))
 
-    // Initialize job notifications (idempotent)
-    JobNotification.init()
-
     let step = 0
     while (true) {
       SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
       if (abort.aborted) break
 
-      // Check for job notifications
-      if (JobNotification.hasPending(sessionID)) {
-        const notifications = JobNotification.drain(sessionID)
-        const formatted = JobNotification.format(notifications)
+      // Check for incoming messages from other sessions
+      if (SessionMessage.hasPending(sessionID)) {
+        const incoming = SessionMessage.pending(sessionID)
+        for (const msg of incoming) {
+          // Create user message for the incoming message
+          const incomingMessage: MessageV2.User = {
+            id: Identifier.ascending("message"),
+            sessionID,
+            time: { created: Date.now() },
+            role: "user",
+            agent: await lastAgent(sessionID),
+            model: await lastModel(sessionID),
+          }
+          await Session.updateMessage(incomingMessage)
 
-        // Inject as synthetic user message
-        const notificationMessage: MessageV2.User = {
-          id: Identifier.ascending("message"),
-          sessionID,
-          time: { created: Date.now() },
-          role: "user",
-          agent: "build",
-          model: await lastModel(sessionID),
+          // Format and add as text part
+          const formatted = MessageParser.formatIncoming(msg.from, msg.text, msg.messageType === "timeout")
+          const incomingPart: MessageV2.TextPart = {
+            id: Identifier.ascending("part"),
+            messageID: incomingMessage.id,
+            sessionID,
+            type: "text",
+            text: formatted,
+            synthetic: true,
+          }
+          await Session.updatePart(incomingPart)
+
+          // Also create MessagePart for UI display
+          const msgPart: MessageV2.MessagePart = {
+            id: Identifier.ascending("part"),
+            messageID: incomingMessage.id,
+            sessionID,
+            type: "message",
+            direction: "incoming",
+            peer: msg.from,
+            peerType: msg.from === "human" ? "human" : "agent",
+            text: msg.text,
+            timeoutOccurred: msg.messageType === "timeout",
+            time: { created: msg.time },
+          }
+          await Session.updatePart(msgPart)
         }
-        await Session.updateMessage(notificationMessage)
-
-        const notificationPart: MessageV2.TextPart = {
-          id: Identifier.ascending("part"),
-          messageID: notificationMessage.id,
-          sessionID,
-          type: "text",
-          text: formatted,
-          synthetic: true,
-        }
-        await Session.updatePart(notificationPart)
-
-        // Continue loop to process the notification
+        // Continue loop to process the incoming messages
         continue
       }
 
@@ -452,12 +480,17 @@ export namespace SessionPrompt {
 
       await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
 
+      const currentSession = await Session.get(sessionID)
       const result = await processor.process({
         user: lastUser,
         agent,
         abort,
         sessionID,
-        system: [...(await SystemPrompt.environment()), ...(await SystemPrompt.custom())],
+        system: [
+          ...(await SystemPrompt.environment()),
+          ...(await SystemPrompt.custom()),
+          ...SystemPrompt.messageProtocol(currentSession.sessionType, currentSession.callerID),
+        ],
         messages: [
           ...MessageV2.toModelMessage(sessionMessages),
           ...(isLastStep
@@ -472,9 +505,182 @@ export namespace SessionPrompt {
         tools,
         model,
       })
+
+      // Parse message protocol from LLM output
+      const textParts = await MessageV2.parts(processor.message.id).then((parts) =>
+        parts.filter((p): p is MessageV2.TextPart => p.type === "text"),
+      )
+      const fullText = textParts.map((p) => p.text).join("\n")
+      const parsed = MessageParser.parse(fullText)
+
+      // STRICT STRUCTURAL OUTPUT: All output must be in structural tags
+      if (parsed.malformed) {
+        SessionMessage.deliver({
+          from: "system",
+          to: sessionID,
+          text: `Invalid output format. All output must be in structural tags - no raw text allowed.
+
+Valid formats:
+- <message to="TARGET" timeout="TIMEOUT">content</message>
+- <wait sources="SOURCE1,SOURCE2" timeout="TIMEOUT" mode="all|any"/>
+
+Use provider-level reasoning/thinking for internal thought process.
+Raw text found: "${parsed.remainingText.slice(0, 100)}${parsed.remainingText.length > 100 ? "..." : ""}"`,
+        })
+        continue
+      }
+
+      // Remove text parts since content is in structural tags (strict output)
+      for (const part of textParts) {
+        await Storage.remove(["part", processor.message.id, part.id])
+        Bus.publish(MessageV2.Event.PartRemoved, {
+          sessionID,
+          messageID: processor.message.id,
+          partID: part.id,
+        })
+      }
+
+      // Create MessagePart for each <message> and deliver
+      for (const msg of parsed.messages) {
+        const targetID = await SessionMessage.resolveTarget(msg.to, sessionID)
+        await SessionMessage.deliver({
+          from: sessionID,
+          to: targetID,
+          text: msg.content,
+        })
+
+        // Create outgoing MessagePart so the UI can show what was sent
+        const outgoingPart: MessageV2.MessagePart = {
+          id: Identifier.ascending("part"),
+          messageID: processor.message.id,
+          sessionID,
+          type: "message",
+          direction: "outgoing",
+          peer: targetID,
+          peerType: targetID === "human" ? "human" : "agent",
+          text: msg.content,
+          timeout: msg.timeout,
+          time: { created: Date.now() },
+        }
+        await Session.updatePart(outgoingPart)
+      }
+
+      // Handle waiting: explicit <wait> tag or single message timeout
+      // Protocol rule: At most one <wait> tag, must be last element
+      if (parsed.wait) {
+        const session = await Session.get(sessionID)
+        const sources = parsed.wait.sources[0] === "children" ? session.childrenIDs : parsed.wait.sources
+
+        if (sources.length > 0) {
+          const waitPart: MessageV2.WaitPart = {
+            id: Identifier.ascending("part"),
+            messageID: processor.message.id,
+            sessionID,
+            type: "wait",
+            sources,
+            timeout: parsed.wait.timeout,
+            mode: parsed.wait.mode,
+            status: "waiting",
+            respondedSources: [],
+            time: { created: Date.now() },
+          }
+          await Session.updatePart(waitPart)
+
+          SessionStatus.set(sessionID, {
+            type: "waiting",
+            sources,
+            timeout: parsed.wait.timeout,
+            mode: parsed.wait.mode,
+          })
+
+          const waitResult = await MessageWait.wait({
+            sessionID,
+            sources,
+            timeout: parsed.wait.timeout,
+            mode: parsed.wait.mode,
+          })
+
+          await Session.updatePart({
+            ...waitPart,
+            status: waitResult.allReceived ? "resolved" : "timedOut",
+            respondedSources: waitResult.responses.filter((r) => !r.timedOut).map((r) => r.from),
+            time: { ...waitPart.time, resolved: Date.now() },
+          })
+
+          SessionStatus.set(sessionID, { type: "busy" })
+
+          for (const response of waitResult.responses) {
+            if (response.timedOut) {
+              SessionMessage.deliver({
+                from: response.from,
+                to: sessionID,
+                text: response.text,
+                messageType: "timeout",
+              })
+            }
+          }
+        }
+      } else {
+        // No explicit <wait> - check for single message timeout
+        // Timeout semantics:
+        //   timeout=-1: Final response - ends turn, waits indefinitely for incoming messages
+        //   timeout=0:  Continue/progress - ends turn, auto-continue injected
+        //   timeout>0:  Timed wait - register timeout alert, send timeout message if action still pending
+        const waitingMessage = parsed.messages.find((m) => m.timeout > 0)
+        if (waitingMessage) {
+          const targetID = await SessionMessage.resolveTarget(waitingMessage.to, sessionID)
+          if (targetID !== "human") {
+            SessionStatus.set(sessionID, {
+              type: "waiting",
+              sources: [targetID],
+              timeout: waitingMessage.timeout,
+              mode: "all",
+            })
+
+            const waitResult = await MessageWait.wait({
+              sessionID,
+              sources: [targetID],
+              timeout: waitingMessage.timeout,
+              mode: "all",
+            })
+
+            SessionStatus.set(sessionID, { type: "busy" })
+
+            for (const response of waitResult.responses) {
+              if (response.timedOut) {
+                SessionMessage.deliver({
+                  from: response.from,
+                  to: sessionID,
+                  text: response.text,
+                  messageType: "timeout",
+                })
+              }
+            }
+          }
+        }
+      }
+
+      // Auto-continue: if all messages have timeout=0 and no explicit <wait>,
+      // system injects "Continue" so the agent keeps working
+      const shouldAutoContinue =
+        parsed.messages.length > 0 && !parsed.wait && parsed.messages.every((m) => m.timeout === 0)
+
+      if (shouldAutoContinue) {
+        SessionMessage.deliver({
+          from: "system",
+          to: sessionID,
+          text: "Continue",
+        })
+        continue
+      }
+
       if (result === "stop") break
       continue
     }
+
+    // Note: Subagent messages to caller are delivered via the message protocol (line 534)
+    // No separate completion handler needed - avoids duplicate delivery
+
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
@@ -506,6 +712,32 @@ export namespace SessionPrompt {
     return Provider.defaultModel()
   }
 
+  async function lastAgent(sessionID: string): Promise<string> {
+    // For subagent sessions, use the stored agent name
+    const session = await Session.get(sessionID).catch(() => undefined)
+    if (session?.agentName) {
+      return session.agentName
+    }
+
+    // Fall back to finding agent from message history
+    const visited = new Set<string>()
+    let current = sessionID
+
+    while (!visited.has(current)) {
+      visited.add(current)
+
+      for await (const item of MessageV2.stream(current)) {
+        if (item.info.role === "user" && item.info.agent) return item.info.agent
+      }
+
+      const sess = await Session.get(current).catch(() => undefined)
+      if (!sess?.parentID) break
+      current = sess.parentID
+    }
+
+    return "default"
+  }
+
   async function resolveSystemPrompt(input: {
     system?: string
     agent: Agent.Info
@@ -522,7 +754,6 @@ export namespace SessionPrompt {
     )
     system.push(...(await SystemPrompt.environment()))
     system.push(...(await SystemPrompt.custom()))
-    system.push(...SystemPrompt.jobs())
 
     if (input.isLastStep) {
       system.push(MAX_STEPS)
@@ -720,7 +951,11 @@ export namespace SessionPrompt {
   }
 
   async function createUserMessage(input: PromptInput) {
-    const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
+    // For subagent sessions, always use the session's stored agent type
+    // This ensures human messages to subagents use the correct agent (e.g., "explore")
+    const session = await Session.get(input.sessionID).catch(() => undefined)
+    const agentName = session?.agentName ?? input.agent ?? (await Agent.defaultAgent())
+    const agent = await Agent.get(agentName)
     const info: MessageV2.Info = {
       id: input.messageID ?? Identifier.ascending("message"),
       role: "user",

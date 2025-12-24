@@ -16,7 +16,6 @@ import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
-import { Job } from "@/job"
 
 import type { Provider } from "@/provider/provider"
 
@@ -42,6 +41,10 @@ export namespace Session {
       projectID: z.string(),
       directory: z.string(),
       parentID: Identifier.schema("session").optional(),
+      sessionType: z.enum(["primary", "subagent"]).default("primary"),
+      agentName: z.string().optional(), // Agent type for subagent sessions (e.g., "explore", "librarian")
+      callerID: Identifier.schema("session").optional(),
+      childrenIDs: z.array(Identifier.schema("session")).default([]),
       summary: z
         .object({
           additions: z.number(),
@@ -175,13 +178,25 @@ export namespace Session {
     })
   })
 
-  export async function createNext(input: { id?: string; title?: string; parentID?: string; directory: string }) {
+  export async function createNext(input: {
+    id?: string
+    title?: string
+    parentID?: string
+    directory: string
+    sessionType?: "primary" | "subagent"
+    agentName?: string
+    callerID?: string
+  }) {
     const result: Info = {
       id: Identifier.descending("session", input.id),
       version: Installation.VERSION,
       projectID: Instance.project.id,
       directory: input.directory,
       parentID: input.parentID,
+      sessionType: input.sessionType ?? "primary",
+      agentName: input.agentName,
+      callerID: input.callerID,
+      childrenIDs: [],
       title: input.title ?? createDefaultTitle(!!input.parentID),
       time: {
         created: Date.now(),
@@ -294,6 +309,28 @@ export namespace Session {
     return result
   })
 
+  export const addChild = fn(
+    z.object({
+      parentID: Identifier.schema("session"),
+      childID: Identifier.schema("session"),
+    }),
+    async (input) => {
+      // Update parent's childrenIDs array
+      await update(input.parentID, (draft) => {
+        if (!draft.childrenIDs) draft.childrenIDs = []
+        if (!draft.childrenIDs.includes(input.childID)) {
+          draft.childrenIDs.push(input.childID)
+        }
+      })
+      // Also ensure the child's parentID is set
+      await update(input.childID, (draft) => {
+        if (!draft.parentID) {
+          draft.parentID = input.parentID
+        }
+      })
+    },
+  )
+
   export const remove = fn(Identifier.schema("session"), async (sessionID) => {
     const project = Instance.project
     try {
@@ -301,12 +338,6 @@ export namespace Session {
       for (const child of await children(sessionID)) {
         await remove(child.id)
       }
-      // Cancel and remove all jobs for this session (best-effort)
-      const jobs = await Job.list({ parentSessionID: sessionID })
-      await Promise.all(jobs.map((job) => Job.remove(job.id).catch(() => {})))
-      // Clean up any pending job notifications for this session
-      const { JobNotification } = await import("@/job/notification")
-      JobNotification.drain(sessionID)
       await unshare(sessionID).catch(() => {})
       for (const msg of await Storage.list(["message", sessionID])) {
         for (const part of await Storage.list(["part", msg.at(-1)!])) {

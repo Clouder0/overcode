@@ -72,24 +72,21 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
   const filtered = createMemo(() => {
     const needle = store.filter.toLowerCase()
-    const result = pipe(
+    return pipe(
       props.options,
       filter((x) => x.disabled !== true),
       (x) =>
         !needle || props.skipFilter ? x : fuzzysort.go(needle, x, { keys: ["title", "category"] }).map((x) => x.obj),
     )
-    return result
   })
 
-  const grouped = createMemo(() => {
-    const result = pipe(
+  const grouped = createMemo(() =>
+    pipe(
       filtered(),
       groupBy((x) => x.category ?? ""),
-      // mapValues((x) => x.sort((a, b) => a.title.localeCompare(b.title))),
       entries(),
-    )
-    return result
-  })
+    ),
+  )
 
   const flat = createMemo(() => {
     return pipe(

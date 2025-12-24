@@ -118,6 +118,10 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  // For subagent sessions, get the locked agent name from the session
+  const session = createMemo(() => (props.sessionID ? sync.session.get(props.sessionID) : undefined))
+  const lockedAgentName = createMemo(() => (session() as any)?.agentName as string | undefined)
+  const displayAgentName = createMemo(() => lockedAgentName() ?? local.agent.current().name)
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -535,8 +539,12 @@ export function Prompt(props: PromptProps) {
     const sessionID = props.sessionID
       ? props.sessionID
       : await (async () => {
-          const sessionID = await sdk.client.session.create({}).then((x) => x.data!.id)
-          return sessionID
+          const response = await sdk.client.session.create({})
+          const newSession = response.data!
+          // Add session to store immediately so UI doesn't show loading state
+          // The session.created event via SSE may arrive later
+          sync.session.add(newSession)
+          return newSession.id
         })()
     const messageID = Identifier.ascending("message")
     let inputText = store.prompt.input
@@ -623,14 +631,12 @@ export function Prompt(props: PromptProps) {
     setStore("extmarkToPartIndex", new Map())
     props.onSubmit?.()
 
-    // temporary hack to make sure the message is sent
+    // Navigate to the new session immediately
     if (!props.sessionID)
-      setTimeout(() => {
-        route.navigate({
-          type: "session",
-          sessionID,
-        })
-      }, 50)
+      route.navigate({
+        type: "session",
+        sessionID,
+      })
     input.clear()
   }
   const exit = useExit()
@@ -715,11 +721,11 @@ export function Prompt(props: PromptProps) {
   const highlight = createMemo(() => {
     if (keybind.leader) return theme.border
     if (store.mode === "shell") return theme.primary
-    return local.agent.color(local.agent.current().name)
+    return local.agent.color(displayAgentName())
   })
 
   const spinnerDef = createMemo(() => {
-    const color = local.agent.color(local.agent.current().name)
+    const color = local.agent.color(displayAgentName())
     return {
       frames: createFrames({
         color,
@@ -951,7 +957,10 @@ export function Prompt(props: PromptProps) {
             <Show when={tall()}>
               <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
                 <text fg={highlight()}>
-                  {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
+                  {store.mode === "shell" ? "Shell" : Locale.titlecase(displayAgentName())}{" "}
+                  <Show when={lockedAgentName()}>
+                    <span style={{ fg: theme.textMuted }}>🔒</span>
+                  </Show>
                 </text>
                 <Show when={store.mode === "normal"}>
                   <box flexDirection="row" gap={1}>
@@ -993,6 +1002,24 @@ export function Prompt(props: PromptProps) {
         </box>
         <box flexDirection="row" justifyContent="space-between">
           <Switch>
+            <Match when={(status() as any).type === "waiting"}>
+              <box flexDirection="row" gap={1} flexGrow={1} justifyContent="space-between">
+                <box flexShrink={0} flexDirection="row" gap={1}>
+                  {/* @ts-ignore // SpinnerOptions doesn't support marginLeft */}
+                  <spinner marginLeft={1} color={theme.accent} frames={["◜", "◠", "◝", "◞", "◡", "◟"]} interval={80} />
+                  <text fg={theme.accent}>
+                    Waiting for {(status() as any).sources?.length ?? 0} subagent
+                    {(status() as any).sources?.length === 1 ? "" : "s"}...
+                  </text>
+                </box>
+                <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
+                  esc{" "}
+                  <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
+                    {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                  </span>
+                </text>
+              </box>
+            </Match>
             <Match when={status().type !== "idle"}>
               <box
                 flexDirection="row"
@@ -1072,7 +1099,10 @@ export function Prompt(props: PromptProps) {
             <Match when={!tall()}>
               <box flexDirection="row" gap={1}>
                 <text fg={highlight()}>
-                  {store.mode === "shell" ? "Shell" : Locale.titlecase(local.agent.current().name)}{" "}
+                  {store.mode === "shell" ? "Shell" : Locale.titlecase(displayAgentName())}{" "}
+                  <Show when={lockedAgentName()}>
+                    <span style={{ fg: theme.textMuted }}>🔒</span>
+                  </Show>
                 </text>
                 <Show when={store.mode === "normal"}>
                   <box flexDirection="row" gap={1}>
@@ -1088,7 +1118,7 @@ export function Prompt(props: PromptProps) {
           <box gap={2} flexDirection="row" marginLeft="auto">
             <Switch>
               <Match when={store.mode === "normal"}>
-                <Show when={wide()}>
+                <Show when={wide() && !lockedAgentName()}>
                   <text fg={theme.text}>
                     {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>switch agent</span>
                   </text>

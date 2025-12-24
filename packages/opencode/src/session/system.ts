@@ -151,45 +151,116 @@ export namespace SystemPrompt {
     }
   }
 
-  export function jobs(): string[] {
+  export function messageProtocol(sessionType: "primary" | "subagent", callerID?: string): string[] {
+    if (sessionType === "primary") {
+      return [
+        `## Communication Protocol
+
+All responses must use structured message tags:
+
+<message to="TARGET" timeout="TIMEOUT">
+Your content here
+</message>
+
+### Targets
+- to="human": Send to human user
+- to="ses_xxx": Send to specific session ID
+- to="caller": Send to parent session (subagents only)
+
+### Timeout Values
+- timeout="-1": Final response (no wait for reply, normal conversation)
+- timeout="0": Send and continue immediately (progress updates, parallel dispatch)
+- timeout="N": Wait N milliseconds for response, then continue
+
+### Single-Target Communication
+For sending to ONE target and waiting for response, use message timeout:
+
+<message to="ses_explore_001" timeout="60000">
+Find the authentication implementation
+</message>
+
+The system waits 60 seconds for response from ses_explore_001.
+
+### Multi-Target Parallel Fan-Out
+For sending to MULTIPLE targets and collecting responses, use <wait>:
+
+<message to="ses_explore_001" timeout="0">Find auth code</message>
+<message to="ses_explore_002" timeout="0">Find database code</message>
+<wait sources="ses_explore_001,ses_explore_002" timeout="120000" mode="all"/>
+
+Wait attributes:
+- sources: comma-separated session IDs, or "children" for all spawned subagents
+- timeout: total milliseconds to wait
+- mode: "all" (wait for all) or "any" (wait for first response)
+
+### CRITICAL: Single Wait Rule
+- At most ONE <wait> tag per turn
+- <wait> MUST be the LAST element - no messages after <wait>
+- Violation triggers a malformed response error
+
+### Spawning Subagents
+Use subagent_spawn to delegate work:
+- subagent_spawn({ agents: [{ agent: "explore", message: "Find auth" }] })
+- Returns: { spawned: [{ session_id: "ses_xxx", agent: "explore" }] }
+
+Responses arrive as: [From ses_xxx]: content...
+
+Available agents: explore (codebase search), librarian (docs/examples)`,
+      ]
+    }
     return [
-      `You have access to job tools for managing background tasks:
+      `## Subagent Context
 
-**Starting jobs:**
-- job_subagent_start: Spawn one or more subagent jobs
-  - Input: { jobs: [{ title, agent, prompt }, ...] }
-  - All jobs start immediately in parallel
-  - Returns: { jobs: [{ id, title, status }, ...] }
+You are a subagent session.
+Session ID: ${callerID ? "subagent" : "unknown"}
+Caller: ${callerID ?? "unknown"}
 
-**Waiting for results:**
-- job_wait: Wait for jobs to complete and get results
-  - Input: { job_ids: ["id1", "id2", ...], mode: "all" | "any", timeout? }
-  - mode "all": Wait for every job to finish (default)
-  - mode "any": Wait for first job to finish
-  - Returns: { completed: [...], pending: [...], errors: [...] }
+## Communication Protocol
 
-**Typical workflow:**
-1. Start: job_subagent_start({ jobs: [{ title: "Task", agent: "explore", prompt: "..." }, ...] })
-2. Wait: job_wait({ job_ids: ["id1", "id2"], mode: "all" })
+All responses must use structured message tags:
 
-**Communication model:**
-- Caller -> job: job_subagent_send (optional, for follow-ups)
-- job_emit: progress / intermediate results (pollable; read via job_subagent_read/job_wait)
-- job_notify: questions / urgent issues (push; appears as [Job Notification]; respond via job_subagent_send)
-- job_complete({ output: ... }): final one-shot result (no push; read via job_wait/job_subagent_read)
-- job_fail({ error: "..." }): terminal failure (no push; read via job_wait/job_get)
+<message to="TARGET" timeout="TIMEOUT">
+Your content here
+</message>
 
-**Exceptional cases:**
-- If job_wait times out and you expected a one-shot return, send job_subagent_send reminding the job to call job_complete/job_fail (or cancel with job_cancel).
+### Targets
+- to="caller": Send to parent session (default for subagents)
+- to="human": Send directly to human (bypass caller)
+- to="ses_xxx": Send to specific session ID
 
-**Other tools:**
-- job_list: Discover jobs by filter (type, status)
-- job_get: Get details for specific jobs by IDs
-- job_cancel: Cancel jobs by IDs
-- job_subagent_read: Poll output frames without waiting
-- job_subagent_send: Send input to interactive jobs
+### Timeout Values
+- timeout="-1": Final response (no wait for reply)
+- timeout="0": Progress update, continue working immediately
+- timeout="N": Question, wait N milliseconds for answer
 
-**All batch operations:** Pass arrays, single item = [one_item]`,
+### Patterns
+
+Progress update (continue working):
+<message to="caller" timeout="0">
+Found 50 files, analyzing...
+</message>
+
+Question with timeout:
+<message to="caller" timeout="30000">
+Should I include test files?
+</message>
+
+Final response:
+<message to="caller" timeout="-1">
+Analysis complete: Found authentication in src/auth/...
+</message>
+
+Direct to human (bypass caller):
+<message to="human" timeout="-1">
+This requires confirmation. Proceed? [y/n]
+</message>
+
+### CRITICAL: Single Wait Rule
+- At most ONE <wait> tag per turn
+- <wait> MUST be the LAST element - no messages after <wait>
+- Violation triggers a malformed response error
+
+Focus on the task assigned and provide clear, actionable results.`,
     ]
   }
 }

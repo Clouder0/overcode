@@ -29,7 +29,6 @@ import { Command } from "../command"
 import { ProviderAuth } from "../provider/auth"
 import { Global } from "../global"
 import { ProjectRoute } from "./project"
-import { JobRoute } from "./job"
 import { ToolRegistry } from "../tool/registry"
 import { zodToJsonSchema } from "zod-to-json-schema"
 import { SessionPrompt } from "../session/prompt"
@@ -252,7 +251,6 @@ export namespace Server {
       .use(validator("query", z.object({ directory: z.string().optional() })))
 
       .route("/project", ProjectRoute)
-      .route("/job", JobRoute)
 
       .get(
         "/pty",
@@ -1588,6 +1586,14 @@ export namespace Server {
         async (c) => {
           using _ = log.time("providers")
           const providers = await Provider.list().then((x) => mapValues(x, (item) => item))
+          // DEBUG: Log all providers and their models
+          for (const [id, provider] of Object.entries(providers)) {
+            log.info("provider", {
+              id,
+              modelCount: Object.keys(provider.models).length,
+              models: Object.keys(provider.models),
+            })
+          }
           return c.json({
             providers: Object.values(providers),
             default: mapValues(providers, (item) => Provider.sort(Object.values(item.models))[0].id),

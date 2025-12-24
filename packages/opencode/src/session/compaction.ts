@@ -56,6 +56,9 @@ export namespace SessionCompaction {
     const toPrune = []
     let turns = 0
 
+    // NOTE: Only tool outputs are pruned. MessageParts (agent-to-agent communication)
+    // are intentionally preserved as they provide critical context for understanding
+    // the conversation flow and subagent coordination.
     loop: for (let msgIndex = msgs.length - 1; msgIndex >= 0; msgIndex--) {
       const msg = msgs[msgIndex]
       if (msg.info.role === "user") turns++

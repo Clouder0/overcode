@@ -623,7 +623,8 @@ export namespace Provider {
             id: model.id ?? existingModel?.api.id ?? modelID,
             npm:
               model.provider?.npm ?? provider.npm ?? existingModel?.api.npm ?? modelsDev[providerID]?.npm ?? providerID,
-            url: provider?.api ?? existingModel?.api.url ?? modelsDev[providerID]?.api,
+            url:
+              provider?.api ?? existingModel?.api.url ?? modelsDev[providerID]?.api ?? provider.options?.baseURL ?? "",
           },
           status: model.status ?? existingModel?.status ?? "active",
           name,
@@ -755,11 +756,17 @@ export namespace Provider {
 
     // load config
     for (const [providerID, provider] of configProviders) {
+      log.info("config provider", { providerID, hasOptions: !!provider.options, hasModels: !!provider.models })
       const partial: Partial<Info> = { source: "config" }
       if (provider.env) partial.env = provider.env
       if (provider.name) partial.name = provider.name
       if (provider.options) partial.options = provider.options
       mergeProvider(providerID, partial)
+      log.info("after mergeProvider", {
+        providerID,
+        inProviders: !!providers[providerID],
+        modelCount: providers[providerID] ? Object.keys(providers[providerID].models).length : 0,
+      })
     }
 
     for (const [providerID, provider] of Object.entries(providers)) {

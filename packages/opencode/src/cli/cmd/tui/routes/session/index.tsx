@@ -7,6 +7,7 @@ import {
   Match,
   on,
   onCleanup,
+  onMount,
   Show,
   Switch,
   useContext,
@@ -51,7 +52,7 @@ import { useDialog } from "../../ui/dialog"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
-import { statusIcon, jobStatusColor, type JobInfo } from "../../lib/job"
+
 import { iife } from "@/util/iife"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogPrompt } from "@tui/ui/dialog-prompt"
@@ -864,16 +865,7 @@ export function Session() {
         if (!current) return
         const rootID = current.parentID ?? current.id
         const directChildren = sync.data.session.filter((s) => s.parentID === rootID)
-        const workers = new Set(
-          (sync.data.job[rootID] ?? []).flatMap((j) => {
-            const meta = j.metadata
-            if (!meta || typeof meta !== "object") return []
-            const workerSessionID = (meta as { workerSessionID?: unknown }).workerSessionID
-            if (typeof workerSessionID !== "string" || workerSessionID.length === 0) return []
-            return [workerSessionID]
-          }),
-        )
-        if (directChildren.length === 0 && workers.size === 0) {
+        if (directChildren.length === 0) {
           toast.show({ variant: "warning", message: "No subagent sessions found", duration: 2000 })
           dialog.clear()
           return
@@ -886,7 +878,6 @@ export function Session() {
       value: "session.child.next",
       keybind: "session_child_cycle",
       category: "Session",
-      disabled: true,
       onSelect: (dialog) => {
         moveChild(1)
         dialog.clear()
@@ -897,7 +888,6 @@ export function Session() {
       value: "session.child.previous",
       keybind: "session_child_cycle_reverse",
       category: "Session",
-      disabled: true,
       onSelect: (dialog) => {
         moveChild(-1)
         dialog.clear()
@@ -908,7 +898,7 @@ export function Session() {
       value: "session.parent",
       keybind: "session_parent",
       category: "Session",
-      disabled: true,
+      disabled: !session()?.parentID,
       onSelect: (dialog) => {
         const parentID = session()?.parentID
         if (parentID) {
@@ -993,7 +983,17 @@ export function Session() {
     >
       <box flexDirection="row">
         <box flexGrow={1} paddingBottom={1} paddingTop={1} paddingLeft={2} paddingRight={2} gap={1}>
-          <Show when={session()}>
+          <Show
+            when={session()}
+            fallback={
+              <box flexGrow={1} justifyContent="center" alignItems="center">
+                <box flexDirection="row" gap={1}>
+                  <spinner color={theme.accent} frames={["◜", "◠", "◝", "◞", "◡", "◟"]} interval={80} />
+                  <text fg={theme.textMuted}>Loading session...</text>
+                </box>
+              </box>
+            }
+          >
             <Show when={!sidebarVisible() || sidebarOverlay()}>
               <Header />
             </Show>
@@ -1110,7 +1110,6 @@ export function Session() {
                   </Switch>
                 )}
               </For>
-              {/* Notifications for child sessions are now displayed inline via job_notify tool renderer */}
             </scrollbox>
             <box flexShrink={0}>
               <Prompt
@@ -1178,6 +1177,9 @@ function UserMessage(props: {
   const local = useLocal()
   const text = createMemo(() => props.parts.flatMap((x) => (x.type === "text" && !x.synthetic ? [x] : []))[0])
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
+  const messages = createMemo(() =>
+    props.parts.flatMap((x) => ((x as any).type === "message" ? [x as unknown as MessagePartData] : [])),
+  )
   const sync = useSync()
   const { theme, syntax } = useTheme()
   const [hover, setHover] = createSignal(false)
@@ -1265,6 +1267,10 @@ function UserMessage(props: {
           </box>
         </box>
       </Show>
+      {/* Render protocol messages (incoming from other sessions) */}
+      <For each={messages()}>
+        {(part) => <MessagePartComponent last={false} part={part} message={props.message as any} />}
+      </For>
       <Show when={compaction()}>
         <box
           marginTop={1}
@@ -1284,6 +1290,9 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const sync = useSync()
   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
 
+  // Access parts reactively from the store to ensure new parts are picked up
+  const reactiveParts = createMemo(() => sync.data.part[props.message.id] ?? props.parts)
+
   const final = createMemo(() => {
     return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
   })
@@ -1298,13 +1307,13 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
 
   return (
     <>
-      <For each={props.parts}>
+      <For each={reactiveParts()}>
         {(part, index) => {
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
           return (
             <Show when={component()}>
               <Dynamic
-                last={index() === props.parts.length - 1}
+                last={index() === reactiveParts().length - 1}
                 component={component()}
                 part={part as any}
                 message={props.message}
@@ -1345,141 +1354,204 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   )
 }
 
-function JobNotifyMessage(props: {
-  notification: {
-    id: string
-    text: string
-    time: number
-    jobTitle?: string
-  }
-}) {
-  const { theme } = useTheme()
-  const ctx = use()
-
-  return (
-    <box
-      id={`notify-${props.notification.id}`}
-      border={["left"]}
-      borderColor={theme.warning}
-      customBorderChars={SplitBorder.customBorderChars}
-      paddingLeft={2}
-      paddingTop={1}
-      paddingBottom={1}
-      marginTop={1}
-      backgroundColor={theme.backgroundPanel}
-    >
-      <text fg={theme.warning}>
-        <b>⚡ Notification sent to caller</b>
-      </text>
-      <Show when={props.notification.jobTitle}>
-        <text fg={theme.textMuted}>Job: {props.notification.jobTitle}</text>
-      </Show>
-      <text fg={theme.text} paddingTop={1}>
-        {props.notification.text}
-      </text>
-      <Show when={ctx.showTimestamps()}>
-        <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(props.notification.time)}</text>
-      </Show>
-    </box>
-  )
-}
-
-/**
- * Renders a single job card with live data from sync store.
- */
-function JobCard(props: { job: JobInfo }) {
-  const sync = useSync()
-  const { theme } = useTheme()
-
-  const notifications = createMemo(() => sync.data.job_notifications[props.job.id] ?? [])
-
-  // Tick signal for updating duration of running jobs
-  const [tick, setTick] = createSignal(Date.now())
-
-  createEffect(() => {
-    // Only tick when job is running (not pending, completed, error, or canceled)
-    if (props.job.status !== "running") return
-    const interval = setInterval(() => setTick(Date.now()), 100)
-    onCleanup(() => clearInterval(interval))
-  })
-
-  const duration = createMemo(() => {
-    if (props.job.status === "pending") return "pending"
-    const start = props.job.time.started ?? props.job.time.created
-    const end = props.job.time.completed ?? tick()
-    return Locale.duration(end - start)
-  })
-
-  return (
-    <box
-      border={["left"]}
-      borderColor={jobStatusColor(props.job.status, theme)}
-      customBorderChars={SplitBorder.customBorderChars}
-      paddingLeft={2}
-      paddingTop={1}
-      paddingBottom={1}
-      marginTop={1}
-      backgroundColor={theme.backgroundPanel}
-    >
-      <text fg={theme.text}>
-        <span style={{ fg: jobStatusColor(props.job.status, theme), bold: true }}>{statusIcon(props.job.status)}</span>{" "}
-        <b>{props.job.title}</b>
-        <span style={{ fg: theme.textMuted }}> • {duration()}</span>
-      </text>
-
-      <Show when={notifications().length > 0}>
-        <box paddingTop={1}>
-          <For each={notifications()}>
-            {(n, i) => (
-              <text fg={theme.textMuted}>
-                {i() === notifications().length - 1 ? "└" : "├"} {n.text}
-              </text>
-            )}
-          </For>
-        </box>
-      </Show>
-
-      <Show when={props.job.status === "error" && props.job.error}>
-        <text fg={theme.error} paddingTop={1}>
-          Error: {props.job.error}
-        </text>
-      </Show>
-    </box>
-  )
-}
-
-/**
- * Renders job cards for jobs created by a specific tool call.
- * Uses job IDs from tool metadata to look up live data from sync store.
- */
-function JobCardsForTool(props: { metadata: Record<string, unknown>; sessionID: string }) {
-  const sync = useSync()
-
-  // Extract job IDs from tool metadata
-  const jobIDs = createMemo(() => {
-    const jobs = props.metadata?.jobs as Array<{ id?: string }> | undefined
-    if (!jobs) return new Set<string>()
-    return new Set(jobs.filter((j) => j.id).map((j) => j.id!))
-  })
-
-  // Look up live data from sync store
-  const jobs = createMemo(() => {
-    if (jobIDs().size === 0) return []
-    const allJobs = sync.data.job[props.sessionID] ?? []
-    return allJobs.filter((job) => jobIDs().has(job.id)).sort((a, b) => a.time.created - b.time.created)
-  })
-
-  return (
-    <Show when={jobs().length > 0}>
-      <For each={jobs()}>{(job) => <JobCard job={job} />}</For>
-    </Show>
-  )
-}
-
 const PART_MAPPING = {
   text: TextPart,
   tool: ToolPart,
   reasoning: ReasoningPart,
+  message: MessagePartComponent,
+  wait: WaitPart,
+}
+
+// Type for wait parts (from message-v2.ts)
+interface WaitPartData {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "wait"
+  sources: string[]
+  timeout: number
+  mode: "all" | "any"
+  status: "waiting" | "resolved" | "timedOut"
+  respondedSources: string[]
+  time: {
+    created: number
+    resolved?: number
+  }
+}
+
+function WaitPart(props: { last: boolean; part: WaitPartData; message: AssistantMessage }) {
+  const { theme } = useTheme()
+  const sync = useSync()
+
+  // Helper to get agent name from session ID (with short ID suffix)
+  const getAgentName = (id: string) => {
+    if (id === "children") return "children"
+    const shortId = id.slice(-4)
+    const session = sync.session.get(id)
+    if (session?.title?.startsWith("Subagent - ")) {
+      const agentType = session.title.slice(11)
+      return `${agentType}#${shortId}`
+    }
+    if (session?.title) return `${session.title}#${shortId}`
+    return `agent#${shortId}`
+  }
+
+  const sourceNames = createMemo(() => props.part.sources.map(getAgentName))
+  const respondedNames = createMemo(() => props.part.respondedSources.map(getAgentName))
+
+  // Sources that didn't respond
+  const failedSources = createMemo(() => {
+    const responded = new Set(props.part.respondedSources)
+    return props.part.sources.filter((s) => !responded.has(s)).map(getAgentName)
+  })
+
+  const duration = createMemo(() => {
+    if (!props.part.time.resolved) return null
+    const secs = (props.part.time.resolved - props.part.time.created) / 1000
+    return secs < 1 ? `${Math.round(secs * 1000)}ms` : `${secs.toFixed(1)}s`
+  })
+
+  const statusColor = createMemo(() => {
+    if (props.part.status === "waiting") return theme.warning
+    if (props.part.status === "resolved") return theme.success
+    return theme.error
+  })
+
+  // Resolved (all mode): hide entirely - responses speak for themselves
+  if (props.part.status === "resolved" && props.part.mode === "all") {
+    return null
+  }
+
+  // Resolved (any mode): show who responded, who was abandoned
+  if (props.part.status === "resolved" && props.part.mode === "any") {
+    return (
+      <box id={"wait-" + props.part.id} marginTop={1} paddingLeft={6}>
+        <text fg={statusColor()}>
+          ✓ {respondedNames().join(", ")}
+          {failedSources().length > 0 && <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>}
+          {duration() && <span style={{ fg: theme.textMuted }}> ({duration()})</span>}
+        </text>
+      </box>
+    )
+  }
+
+  // Timed out: show who failed
+  if (props.part.status === "timedOut") {
+    const timedOutNames = failedSources().length > 0 ? failedSources() : sourceNames()
+    return (
+      <box id={"wait-" + props.part.id} marginTop={1} paddingLeft={6}>
+        <text fg={statusColor()}>
+          ⏱ {timedOutNames.join(", ")} timed out
+          {respondedNames().length > 0 && <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>}
+        </text>
+      </box>
+    )
+  }
+
+  // Waiting: show what we're waiting for
+  return (
+    <box id={"wait-" + props.part.id} marginTop={1} paddingLeft={6}>
+      <text fg={statusColor()}>
+        ⏳ {sourceNames().join(", ")} ({props.part.mode}, {Math.round(props.part.timeout / 1000)}s)
+      </text>
+    </box>
+  )
+}
+
+// Type for message parts (unified protocol messages)
+interface MessagePartData {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "message"
+  direction: "outgoing" | "incoming"
+  peer: string
+  peerType: "human" | "agent"
+  text: string
+  timeout?: number
+  timeoutOccurred?: boolean
+  time: {
+    created: number
+  }
+}
+
+// Message display with directional indentation
+function MessagePartComponent(props: { last: boolean; part: MessagePartData; message: AssistantMessage }) {
+  const { theme, syntax } = useTheme()
+  const ctx = use()
+  const sync = useSync()
+
+  const peerSession = createMemo(() =>
+    props.part.peerType === "agent" ? sync.session.get(props.part.peer) : undefined,
+  )
+
+  const isTimeout = props.part.timeoutOccurred
+  const isIncoming = props.part.direction === "incoming"
+  const isHuman = props.part.peerType === "human"
+  const isToHuman = !isIncoming && isHuman
+
+  // Peer name resolution
+  const peerInfo = createMemo(() => {
+    if (isHuman) return { name: "human", shortId: "" }
+    const shortId = props.part.peer.slice(-4)
+    const session = peerSession()
+    if (session?.title?.startsWith("Subagent - ")) {
+      return { name: session.title.slice(11), shortId }
+    }
+    if (session?.title) return { name: session.title, shortId }
+    return { name: "agent", shortId }
+  })
+
+  const arrow = isIncoming ? "←" : "→"
+  // Colors: → human (primary/orange), → agent (secondary/blue), ← agent (info/cyan)
+  const color = isToHuman ? theme.primary : isIncoming ? theme.info : theme.secondary
+  const headerPad = isIncoming ? "         " : "" // 9 spaces for incoming
+
+  // Content: full markdown for human, truncated for agents
+  const truncatedContent = createMemo(() => {
+    const text = props.part.text.trim()
+    const lines = text.split("\n")
+    const firstLine = lines[0]
+    if (firstLine.length > 100) {
+      return firstLine.slice(0, 100) + "…"
+    }
+    if (lines.length > 1) {
+      return firstLine + " …"
+    }
+    return firstLine
+  })
+
+  return (
+    <box
+      id={"message-" + props.part.id}
+      marginTop={1}
+      paddingLeft={2}
+      border={["left"]}
+      borderColor={color}
+      customBorderChars={SplitBorder.customBorderChars}
+    >
+      {/* Header line: arrow + peer name */}
+      <text>
+        {headerPad}
+        <span style={{ fg: color }}>{arrow}</span>{" "}
+        <span style={{ fg: isTimeout ? theme.error : color, bold: true }}>{peerInfo().name}</span>
+        {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
+        {isTimeout && <span style={{ fg: theme.error }}> (timed out)</span>}
+      </text>
+      {/* Content: full markdown for human, truncated for agents */}
+      <Show when={isToHuman} fallback={<text fg={theme.text}>{truncatedContent()}</text>}>
+        <code
+          filetype="markdown"
+          drawUnstyledText={false}
+          streaming={!props.message.time.completed}
+          syntaxStyle={syntax()}
+          content={props.part.text}
+          conceal={ctx.conceal()}
+          fg={theme.text}
+        />
+      </Show>
+    </box>
+  )
 }
 
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
@@ -1515,22 +1587,112 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
   )
 }
 
+// TextPart: show reasoning/text outside of structural tags
+// During streaming, show content from <message to="human"> with matching border style
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+
+  // Check if the raw text contains <message to="human"> content
+  const hasHumanMessage = createMemo(() => {
+    const text = props.part.text
+    // Check for complete or incomplete <message to="human"> tags
+    return /<message\b[^>]*\bto=["']human["']/i.test(text)
+  })
+
+  const displayText = createMemo(() => {
+    const text = props.part.text
+    const isStreaming = !props.message.time.completed
+
+    let result = text
+
+    // 1. Hide ALL complete <wait> tags (self-closing)
+    result = result.replace(/<wait\b[^>]*\/>/gi, "")
+
+    // 2. Handle <message> tags differently based on streaming state
+    if (isStreaming) {
+      // During streaming: extract content from <message to="human"> for display
+      // (MessagePart doesn't exist yet, so we show content in TextPart)
+      result = result.replace(/<message\b[^>]*\bto=["']human["'][^>]*>([\s\S]*?)<\/message>/gi, "$1")
+      // Hide complete non-human message tags entirely
+      result = result.replace(/<message\b[^>]*>([\s\S]*?)<\/message>/gi, "")
+
+      // 3. Extract content from INCOMPLETE <message to="human"> tags (streaming)
+      const humanMsgMatch = result.match(/<message\b[^>]*\bto=["']human["'][^>]*>(?![\s\S]*<\/message>)([\s\S]*)$/)
+      if (humanMsgMatch) {
+        const beforeTag = result.slice(0, humanMsgMatch.index)
+        const contentInside = humanMsgMatch[1] || ""
+        result = (beforeTag + contentInside).trimEnd()
+      } else {
+        // 4. Hide incomplete <message> tags for non-human targets entirely
+        const incompleteMsg = result.search(/<message\b(?![\s\S]*<\/message>)[\s\S]*$/)
+        if (incompleteMsg > -1) {
+          result = result.slice(0, incompleteMsg).trimEnd()
+        }
+      }
+
+      // 5. Hide incomplete <wait> tags (not yet self-closed)
+      const incompleteWait = result.search(/<wait\b(?![\s\S]*\/>)[\s\S]*$/)
+      if (incompleteWait > -1) {
+        result = result.slice(0, incompleteWait).trimEnd()
+      }
+
+      // 6. Hide trailing partial tag starts (e.g., "<mes", "<wai", "<m")
+      result = result.replace(/<[a-z]{0,6}$/i, "").trimEnd()
+    } else {
+      // After streaming completes: hide ALL message tag content entirely
+      // MessagePartComponent will render these with proper styling (border, header)
+      result = result.replace(/<message\b[^>]*>([\s\S]*?)<\/message>/gi, "")
+    }
+
+    return result
+  })
+
+  const isStreaming = () => !props.message.time.completed
+  const showWithBorder = () => isStreaming() && hasHumanMessage()
+
   return (
-    <Show when={props.part.text.trim()}>
-      <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
-        <code
-          filetype="markdown"
-          drawUnstyledText={false}
-          streaming={true}
-          syntaxStyle={syntax()}
-          content={props.part.text.trim()}
-          conceal={ctx.conceal()}
-          fg={theme.text}
-        />
-      </box>
+    <Show when={displayText().trim()}>
+      <Show
+        when={showWithBorder()}
+        fallback={
+          <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
+            <code
+              filetype="markdown"
+              drawUnstyledText={false}
+              streaming={isStreaming()}
+              syntaxStyle={syntax()}
+              content={displayText()}
+              conceal={ctx.conceal()}
+              fg={theme.text}
+            />
+          </box>
+        }
+      >
+        {/* Render with border styling matching MessagePartComponent when streaming <message to="human"> */}
+        <box
+          id={"text-" + props.part.id}
+          marginTop={1}
+          paddingLeft={2}
+          border={["left"]}
+          borderColor={theme.primary}
+          customBorderChars={SplitBorder.customBorderChars}
+        >
+          {/* Header line matching MessagePartComponent */}
+          <text>
+            <span style={{ fg: theme.primary }}>→</span> <span style={{ fg: theme.primary, bold: true }}>human</span>
+          </text>
+          <code
+            filetype="markdown"
+            drawUnstyledText={false}
+            streaming={true}
+            syntaxStyle={syntax()}
+            content={displayText()}
+            conceal={ctx.conceal()}
+            fg={theme.text}
+          />
+        </box>
+      </Show>
     </Show>
   )
 }
@@ -1543,26 +1705,59 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   const sync = useSync()
   const [margin, setMargin] = createSignal(0)
 
-  const metadata = createMemo(() => (props.part.state.status === "pending" ? {} : (props.part.state.metadata ?? {})))
+  // Helper to get the part's index in the store (for reactive access)
+  const partIndex = createMemo(() => {
+    const parts = sync.data.part[props.message.id]
+    if (!parts) return -1
+    return parts.findIndex((p) => p.id === props.part.id)
+  })
+
+  // Access part reactively for non-state properties (tool name, callID, etc.)
+  const reactivePart = createMemo(() => {
+    const idx = partIndex()
+    if (idx < 0) return props.part
+    const part = sync.data.part[props.message.id]?.[idx]
+    if (part && part.type === "tool") return part
+    return props.part
+  })
+
+  // Access part state directly from store to ensure state changes trigger re-renders
+  // This is separate from reactivePart because SolidJS memo dependencies are based on
+  // property access - we need to directly access state properties through the store path
+  const partState = createMemo(() => {
+    const idx = partIndex()
+    if (idx < 0) return props.part.state
+    const part = sync.data.part[props.message.id]?.[idx]
+    if (part && part.type === "tool") return part.state
+    return props.part.state
+  })
+
+  // Access part state reactively - separate memo to ensure state changes trigger re-renders
+  const metadata = createMemo(() => {
+    const state = partState()
+    return state.status === "pending" ? {} : (state.metadata ?? {})
+  })
 
   const component = createMemo(() => {
+    const part = reactivePart()
+    const state = partState() // Use reactive state directly from store
     // Hide tool if showDetails is false and tool completed successfully
     // But always show if there's an error or permission is required
     const shouldHide =
       !showDetails() &&
-      props.part.state.status === "completed" &&
-      !sync.data.permission[props.message.sessionID]?.some((x) => x.callID === props.part.callID)
+      state.status === "completed" &&
+      !sync.data.permission[props.message.sessionID]?.some((x) => x.callID === part.callID)
 
     if (shouldHide) {
       return undefined
     }
 
-    const render = ToolRegistry.render(props.part.tool) ?? GenericTool
+    const render = ToolRegistry.render(part.tool) ?? GenericTool
 
-    const input = props.part.state.input ?? {}
-    const container = ToolRegistry.container(props.part.tool)
+    const input = state.input ?? {}
+    const container = ToolRegistry.container(part.tool)
     const permissions = sync.data.permission[props.message.sessionID] ?? []
-    const permissionIndex = permissions.findIndex((x) => x.callID === props.part.callID)
+    const permissionIndex = permissions.findIndex((x) => x.callID === part.callID)
     const permission = permissions[permissionIndex]
 
     const style: BoxProps =
@@ -1612,14 +1807,14 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Dynamic
           component={render}
           input={input}
-          tool={props.part.tool}
+          tool={part.tool}
           metadata={metadata()}
           permission={permission?.metadata ?? {}}
-          output={props.part.state.status === "completed" ? props.part.state.output : undefined}
+          output={state.status === "completed" ? state.output : undefined}
         />
-        {props.part.state.status === "error" && (
+        {state.status === "error" && (
           <box paddingLeft={2}>
-            <text fg={theme.error}>{props.part.state.error.replace("Error: ", "")}</text>
+            <text fg={theme.error}>{state.error?.replace("Error: ", "") ?? "Unknown error"}</text>
           </box>
         )}
         {permission && (
@@ -1645,16 +1840,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     )
   })
 
-  // Only render job cards for job start tools (job_*_start pattern)
-  const isJobStartTool = props.part.tool.startsWith("job_") && props.part.tool.endsWith("_start")
-
   return (
     <>
       <Show when={component()}>{component()}</Show>
-      {/* Render job cards only for the tool that created them */}
-      <Show when={isJobStartTool}>
-        <JobCardsForTool metadata={metadata()} sessionID={props.part.sessionID} />
-      </Show>
     </>
   )
 }
@@ -1995,43 +2183,152 @@ ToolRegistry.register<typeof TodoWriteTool>({
   },
 })
 
-// Job notification tool - shows notification card inline at tool call position (callee side)
+// Subagent spawn tool - shows spawned subagent sessions
+// Uses block container for consistent left-border panel style
 ToolRegistry.register({
-  name: "job_notify",
+  name: "subagent_spawn",
   container: "block",
   render(props: ToolProps<any>) {
     const { theme } = useTheme()
-    const ctx = use()
-    const metadata = props.metadata as { notificationText?: string; notificationTime?: number } | undefined
-    const input = props.input as { output?: unknown } | undefined
-    const text = metadata?.notificationText ?? input?.output
-    const time = metadata?.notificationTime
+    const sync = useSync()
+    const dialog = useDialog()
+    const metadata = () =>
+      props.metadata as
+        | {
+            spawned?: Array<{ session_id: string; agent: string }>
+            errors?: string[]
+          }
+        | undefined
+    const input = props.input as { agents?: Array<{ agent: string; message: string }> } | undefined
+
+    const spawned = createMemo(() => metadata()?.spawned ?? [])
+    const count = createMemo(() => spawned().length || input?.agents?.length || 0)
 
     return (
-      <box
-        border={["left"]}
-        borderColor={theme.warning}
-        customBorderChars={SplitBorder.customBorderChars}
-        paddingLeft={2}
-        paddingTop={1}
-        paddingBottom={1}
-        backgroundColor={theme.backgroundPanel}
-      >
-        <text fg={theme.warning}>
-          <b>⚡ Notification sent to caller</b>
+      <box>
+        {/* Header */}
+        <text fg={theme.secondary}>
+          <b>
+            🔀 Spawned {count()} subagent{count() > 1 ? "s" : ""}
+          </b>
         </text>
-        <Show when={text}>
-          <text fg={theme.text} paddingTop={1}>
-            {typeof text === "string" ? text : JSON.stringify(text)}
-          </text>
+
+        {/* Loading state - before spawn completes */}
+        <Show when={!spawned().length && input?.agents?.length}>
+          <For each={input!.agents}>
+            {(agent) => (
+              <box marginTop={1}>
+                <text fg={theme.textMuted}>
+                  <span style={{ fg: theme.warning }}>◐</span> <b>{agent.agent}</b> spawning...
+                </text>
+              </box>
+            )}
+          </For>
         </Show>
-        <Show when={time && ctx.showTimestamps()}>
-          <text fg={theme.textMuted}>{Locale.todayTimeOrDateTime(time!)}</text>
+
+        {/* Spawned subagent rows */}
+        <For each={spawned()}>
+          {(item) => (
+            <SubagentRow
+              sessionID={item.session_id}
+              agent={item.agent}
+              onSelect={() => dialog.replace(() => <DialogSubagent sessionID={item.session_id} />)}
+            />
+          )}
+        </For>
+
+        {/* Errors */}
+        <Show when={metadata()?.errors?.length}>
+          <For each={metadata()?.errors ?? []}>{(error) => <text fg={theme.error}>✗ {error}</text>}</For>
         </Show>
       </box>
     )
   },
 })
+
+// Subagent row - simple text-based display within the panel
+function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => void }) {
+  const { theme } = useTheme()
+  const sync = useSync()
+
+  onMount(() => {
+    sync.session.sync(props.sessionID)
+  })
+
+  const status = createMemo(() => {
+    const s = sync.data.session_status?.[props.sessionID] as { type: string } | undefined
+    if (s?.type === "busy" || s?.type === "retry") return "working"
+    if (s?.type === "waiting") return "waiting"
+    return "done"
+  })
+
+  const isWorking = createMemo(() => status() === "working" || status() === "waiting")
+  const shortId = props.sessionID.slice(-4)
+
+  // Get the initial task
+  const initialTask = createMemo(() => {
+    const messages = sync.data.message[props.sessionID] ?? []
+    const firstUser = messages.find((m) => m.role === "user")
+    if (!firstUser) return undefined
+    const parts = sync.data.part[firstUser.id] ?? []
+    const msgPart = parts.find((p) => (p as any).type === "message" && (p as any).direction === "incoming") as any
+    if (msgPart?.text) {
+      const text = msgPart.text.trim()
+      return text.length > 60 ? text.slice(0, 60) + "..." : text
+    }
+    const textPart = parts.find((p) => p.type === "text" && "synthetic" in p && p.synthetic)
+    if (textPart && textPart.type === "text") {
+      const text = textPart.text.replace(/^\[From [^\]]+\]:\n?/, "").trim()
+      return text.length > 60 ? text.slice(0, 60) + "..." : text
+    }
+    return undefined
+  })
+
+  // Get the last response
+  const lastResponse = createMemo(() => {
+    const messages = sync.data.message[props.sessionID] ?? []
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (msg.role !== "assistant") continue
+      const parts = sync.data.part[msg.id] ?? []
+      const msgPart = parts.find(
+        (p) => (p as any).type === "message" && (p as any).direction === "outgoing" && (p as any).peerType === "agent",
+      ) as any
+      if (msgPart?.text) {
+        const text = msgPart.text.trim()
+        return text.length > 60 ? text.slice(0, 60) + "..." : text
+      }
+      const textPart = parts.find((p) => p.type === "text" && !("synthetic" in p && p.synthetic))
+      if (textPart && textPart.type === "text") {
+        const text = textPart.text.trim()
+        return text.length > 60 ? text.slice(0, 60) + "..." : text
+      }
+    }
+    return undefined
+  })
+
+  return (
+    <box marginTop={1} onMouseUp={props.onSelect}>
+      {/* Status + Agent name */}
+      <text>
+        <Show when={isWorking()} fallback={<span style={{ fg: theme.success }}>✓</span>}>
+          <span style={{ fg: theme.warning }}>◐</span>
+        </Show>{" "}
+        <span style={{ fg: theme.secondary, bold: true }}>{props.agent}</span>
+        <span style={{ fg: theme.textMuted }}>#{shortId}</span>
+        <span style={{ fg: theme.textMuted }}> [{status()}]</span>
+      </text>
+      {/* Task preview */}
+      <Show when={initialTask()}>
+        <text fg={theme.textMuted}> → {initialTask()}</text>
+      </Show>
+      {/* Response preview */}
+      <Show when={lastResponse()}>
+        <text fg={theme.text}> ← {lastResponse()}</text>
+      </Show>
+    </box>
+  )
+}
 
 function normalizePath(input?: string) {
   if (!input) return ""

@@ -1,21 +1,21 @@
 import { useSync } from "@tui/context/sync"
-import { createMemo, createSignal, createEffect, onCleanup, For, Show, Switch, Match } from "solid-js"
+import { createMemo, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { Locale } from "@/util/locale"
 import path from "path"
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
-import { Global } from "@/global"
 import { Installation } from "@/installation"
-import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
-import { statusIcon, jobStatusColor, type JobInfo } from "../../lib/job"
 import { TodoItem } from "../../component/todo-item"
+import { useRoute } from "../../context/route"
+import "opentui-spinner/solid"
 
 export function Sidebar(props: { sessionID: string }) {
   const sync = useSync()
   const { theme } = useTheme()
+  const { navigate } = useRoute()
   const session = createMemo(() => sync.session.get(props.sessionID)!)
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
   const todo = createMemo(() => sync.data.todo[props.sessionID] ?? [])
@@ -26,40 +26,34 @@ export function Sidebar(props: { sessionID: string }) {
     diff: true,
     todo: true,
     lsp: true,
-    jobs: true,
+    subagents: true,
   })
+
+  // Get the root session (parent if we're in a subagent, or current if we're in primary)
+  const rootSessionID = createMemo(() => {
+    const current = session()
+    if (!current) return props.sessionID
+    return current.parentID ?? current.id
+  })
+
+  // Get all subagent sessions for the root session
+  const subagentSessions = createMemo(() => {
+    const rootID = rootSessionID()
+    return sync.data.session.filter((s) => s.parentID === rootID).toSorted((a, b) => a.time.created - b.time.created)
+  })
+
+  // Get status for a session
+  const getSessionStatus = (sessionID: string) => {
+    const status = sync.data.session_status?.[sessionID]
+    if (status?.type === "busy" || status?.type === "retry") return "working"
+    if ((status as any)?.type === "waiting") return "waiting"
+    return "done"
+  }
+
+  const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
   // Sort MCP servers alphabetically for consistent display order
   const mcpEntries = createMemo(() => Object.entries(sync.data.mcp).sort(([a], [b]) => a.localeCompare(b)))
-
-  // Collect jobs from current session and all descendant sessions
-  const allJobs = createMemo(() => {
-    const getDescendantJobs = (parentID: string, depth: number): Array<{ job: JobInfo; depth: number }> => {
-      const children = sync.data.session.filter((s) => s.parentID === parentID)
-      const directJobs = (sync.data.job[parentID] ?? []).map((job) => ({ job, depth }))
-      const descendantJobs = children.flatMap((child) => getDescendantJobs(child.id, depth + 1))
-      return [...directJobs, ...descendantJobs]
-    }
-
-    return getDescendantJobs(props.sessionID, 0)
-  })
-
-  // Tick signal for updating job durations
-  const [tick, setTick] = createSignal(Date.now())
-  const hasRunningJobs = createMemo(() => allJobs().some(({ job }) => job.status === "running"))
-
-  createEffect(() => {
-    if (!hasRunningJobs()) return
-    const interval = setInterval(() => setTick(Date.now()), 100)
-    onCleanup(() => clearInterval(interval))
-  })
-
-  const jobDuration = (job: JobInfo) => {
-    if (job.status === "pending") return "pending"
-    const start = job.time.started ?? job.time.created
-    const end = job.time.completed ?? tick()
-    return Locale.duration(end - start)
-  }
 
   // Count connected and error MCP servers for collapsed header display
   const connectedMcpCount = createMemo(() => mcpEntries().filter(([_, item]) => item.status === "connected").length)
@@ -232,6 +226,77 @@ export function Sidebar(props: { sessionID: string }) {
                 </For>
               </Show>
             </box>
+            {/* Subagents Section */}
+            <Show when={subagentSessions().length > 0}>
+              <box>
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseDown={() => subagentSessions().length > 2 && setExpanded("subagents", !expanded.subagents)}
+                >
+                  <Show when={subagentSessions().length > 2}>
+                    <text fg={theme.text}>{expanded.subagents ? "▼" : "▶"}</text>
+                  </Show>
+                  <text fg={theme.text}>
+                    <b>Subagents</b>
+                    <Show when={!expanded.subagents}>
+                      <span style={{ fg: theme.textMuted }}> ({subagentSessions().length})</span>
+                    </Show>
+                  </text>
+                </box>
+                <Show when={subagentSessions().length <= 2 || expanded.subagents}>
+                  {/* Show parent link if we're in a subagent */}
+                  <Show when={session()?.parentID}>
+                    <box
+                      flexDirection="row"
+                      gap={1}
+                      onMouseDown={() => navigate({ type: "session", sessionID: session()!.parentID! })}
+                    >
+                      <text fg={theme.accent}>↑</text>
+                      <text fg={theme.text}>
+                        <b>Parent</b>
+                        <span style={{ fg: theme.textMuted }}>
+                          {" "}
+                          {sync.session.get(session()!.parentID!)?.title ?? "Primary"}
+                        </span>
+                      </text>
+                    </box>
+                  </Show>
+                  <For each={subagentSessions()}>
+                    {(sub) => {
+                      const status = createMemo(() => getSessionStatus(sub.id))
+                      const isCurrent = sub.id === props.sessionID
+                      const statusColor = createMemo(() => {
+                        if (status() === "working") return theme.warning
+                        if (status() === "waiting") return theme.accent
+                        return theme.success
+                      })
+                      const statusIcon = createMemo(() => {
+                        if (status() === "working") return "◐"
+                        if (status() === "waiting") return "◎"
+                        return "•"
+                      })
+                      return (
+                        <box
+                          flexDirection="row"
+                          gap={1}
+                          onMouseDown={() => !isCurrent && navigate({ type: "session", sessionID: sub.id })}
+                        >
+                          <text flexShrink={0} fg={statusColor()}>
+                            {statusIcon()}
+                          </text>
+                          <text fg={isCurrent ? theme.text : theme.textMuted} wrapMode="word">
+                            {sub.title ?? sub.id.slice(0, 16)}
+                            {isCurrent && <span style={{ fg: theme.accent }}> (current)</span>}
+                            {status() === "waiting" && <span style={{ fg: theme.accent }}> (waiting)</span>}
+                          </text>
+                        </box>
+                      )
+                    }}
+                  </For>
+                </Show>
+              </box>
+            </Show>
             <Show when={todo().length > 0 && todo().some((t) => t.status !== "completed")}>
               <box>
                 <box
@@ -291,37 +356,6 @@ export function Sidebar(props: { sessionID: string }) {
                         </box>
                       )
                     }}
-                  </For>
-                </Show>
-              </box>
-            </Show>
-            <Show when={allJobs().length > 0}>
-              <box>
-                <box
-                  flexDirection="row"
-                  gap={1}
-                  onMouseDown={() => allJobs().length > 2 && setExpanded("jobs", !expanded.jobs)}
-                >
-                  <Show when={allJobs().length > 2}>
-                    <text fg={theme.text}>{expanded.jobs ? "▼" : "▶"}</text>
-                  </Show>
-                  <text fg={theme.text}>
-                    <b>Jobs</b>
-                  </text>
-                </box>
-                <Show when={allJobs().length <= 2 || expanded.jobs}>
-                  <For each={allJobs()}>
-                    {({ job, depth }) => (
-                      <box flexDirection="row" gap={1} paddingLeft={depth * 2}>
-                        <text flexShrink={0} style={{ fg: jobStatusColor(job.status, theme) }}>
-                          {statusIcon(job.status)}
-                        </text>
-                        <text fg={theme.text} wrapMode="word">
-                          {job.title}
-                          <span style={{ fg: theme.textMuted }}> ({jobDuration(job)})</span>
-                        </text>
-                      </box>
-                    )}
                   </For>
                 </Show>
               </box>

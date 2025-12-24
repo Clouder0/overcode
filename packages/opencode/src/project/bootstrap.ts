@@ -11,7 +11,6 @@ import { Instance } from "./instance"
 import { Vcs } from "./vcs"
 import { Log } from "@/util/log"
 import { ShareNext } from "@/share/share-next"
-import { Job } from "@/job"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -23,12 +22,6 @@ export async function InstanceBootstrap() {
   FileWatcher.init()
   File.init()
   Vcs.init()
-
-  // Recover orphaned jobs that were interrupted by application restart
-  const recovered = await Job.recoverOrphanedJobs()
-  if (recovered > 0) {
-    Log.Default.info("recovered orphaned jobs", { count: recovered })
-  }
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {

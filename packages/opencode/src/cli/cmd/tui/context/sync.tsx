@@ -65,30 +65,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       formatter: FormatterStatus[]
       vcs: VcsInfo | undefined
       path: Path
-      job: {
-        [sessionID: string]: Array<{
-          id: string
-          parentSessionID: string
-          type: string
-          title: string
-          status: "pending" | "running" | "completed" | "error" | "canceled"
-          error?: string
-          metadata?: unknown
-          time: {
-            created: number
-            updated: number
-            started?: number
-            completed?: number
-          }
-        }>
-      }
-      job_notifications: {
-        [jobID: string]: Array<{
-          id: string
-          text: string
-          time: number
-        }>
-      }
     }>({
       provider_next: {
         all: [],
@@ -114,8 +90,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       formatter: [],
       vcs: undefined,
       path: { state: "", config: "", worktree: "", directory: "" },
-      job: {},
-      job_notifications: {},
     })
 
     const sdk = useSDK()
@@ -165,6 +139,19 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         case "session.diff":
           setStore("session_diff", event.properties.sessionID, event.properties.diff)
           break
+
+        case "session.created": {
+          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+          if (!result.found) {
+            setStore(
+              "session",
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.info)
+              }),
+            )
+          }
+          break
+        }
 
         case "session.deleted": {
           const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
@@ -278,86 +265,16 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
         }
 
-        case "job.created": {
-          const info = event.properties.info
-          const sessionID = info.parentSessionID
-          const jobs = store.job[sessionID]
-          if (!jobs) {
-            setStore("job", sessionID, [info])
-            break
-          }
-          // Check for duplicate before adding
-          if (jobs.some((j) => j.id === info.id)) break
-          setStore(
-            "job",
-            sessionID,
-            produce((draft) => {
-              draft.push(info)
-            }),
-          )
-          break
-        }
-
-        case "job.updated": {
-          const info = event.properties.info
-          const sessionID = info.parentSessionID
-          const jobs = store.job[sessionID]
-          if (!jobs) {
-            setStore("job", sessionID, [info])
-            break
-          }
-          setStore(
-            "job",
-            sessionID,
-            produce((draft) => {
-              const idx = draft.findIndex((j) => j.id === info.id)
-              if (idx >= 0) draft[idx] = info
-              else draft.push(info)
-            }),
-          )
-          break
-        }
-
-        case "job.deleted": {
-          const { id } = event.properties
-          for (const sessionID of Object.keys(store.job)) {
-            const jobs = store.job[sessionID]
-            const idx = jobs?.findIndex((j) => j.id === id)
-            if (idx !== undefined && idx >= 0) {
-              setStore(
-                "job",
-                sessionID,
-                produce((draft) => {
-                  draft.splice(idx, 1)
-                }),
-              )
-              break
+        default: {
+          // Handle events not in the type union (e.g., session.message.delivered)
+          const eventType = (event as unknown as { type: string }).type
+          if (eventType === "session.message.delivered") {
+            // Sync the target session to ensure MessagePart is available
+            const props = (event as unknown as { properties: { message: { to: string; from: string } } }).properties
+            if (props?.message?.to && props.message.to !== "human") {
+              result.session.sync(props.message.to)
             }
           }
-          break
-        }
-
-        case "job.notify": {
-          const { jobID, frame } = event.properties
-          const text =
-            typeof frame.data === "string"
-              ? frame.data
-              : ((frame.data as { text?: string })?.text ?? JSON.stringify(frame.data))
-          const notification = { id: frame.id, text, time: frame.time.created }
-          const notifications = store.job_notifications[jobID]
-          if (!notifications) {
-            setStore("job_notifications", jobID, [notification])
-            break
-          }
-          // Check for duplicate before adding
-          if (notifications.some((n) => n.id === frame.id)) break
-          setStore(
-            "job_notifications",
-            jobID,
-            produce((draft) => {
-              draft.push(notification)
-            }),
-          )
           break
         }
       }
@@ -406,22 +323,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             sdk.client.provider.auth().then((x) => setStore("provider_auth", x.data ?? {})),
             sdk.client.vcs.get().then((x) => setStore("vcs", x.data)),
             sdk.client.path.get().then((x) => setStore("path", x.data!)),
-            // Load existing jobs grouped by parentSessionID
-            sdk.client.job
-              .list({})
-              .then((x) => {
-                const jobs = x.data ?? []
-                const grouped: Record<string, typeof jobs> = {}
-                for (const job of jobs) {
-                  const sid = job.parentSessionID
-                  if (!grouped[sid]) grouped[sid] = []
-                  grouped[sid].push(job)
-                }
-                setStore("job", grouped)
-              })
-              .catch(() => {
-                // Jobs are optional, don't fail bootstrap
-              }),
           ]).then(() => {
             setStore("status", "complete")
           })
@@ -452,9 +353,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
       session: {
         get(sessionID: string) {
-          const match = Binary.search(store.session, sessionID, (s) => s.id)
-          if (match.found) return store.session[match.index]
-          return undefined
+          // Use .find() for better SolidJS reactivity tracking
+          // Binary.search may not track all accessed indices properly
+          return store.session.find((s) => s.id === sessionID)
         },
         status(sessionID: string) {
           const session = result.session.get(sessionID)
@@ -488,6 +389,18 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             }),
           )
           fullSyncedSessions.add(sessionID)
+        },
+        // Add a session to the store (used when creating a new session to avoid waiting for SSE event)
+        add(session: (typeof store.session)[number]) {
+          setStore(
+            "session",
+            produce((draft) => {
+              const result = Binary.search(draft, session.id, (s) => s.id)
+              if (!result.found) {
+                draft.splice(result.index, 0, session)
+              }
+            }),
+          )
         },
       },
       bootstrap,

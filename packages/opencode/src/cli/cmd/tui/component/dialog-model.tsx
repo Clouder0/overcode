@@ -152,10 +152,10 @@ export function DialogModel(props: { providerID?: string }) {
               (item) => item.providerID === value.providerID && item.modelID === value.modelID,
             )
             if (inFavorites) return false
-            const inRecents = recents.some(
+            const inRecentList = recentList.some(
               (item) => item.providerID === value.providerID && item.modelID === value.modelID,
             )
-            if (inRecents) return false
+            if (inRecentList) return false
             return true
           }),
           sortBy(

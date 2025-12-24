@@ -38,7 +38,6 @@ import { Provider } from "@/provider/provider"
 import { ArgsProvider, useArgs, type Args } from "./context/args"
 import open from "open"
 import { PromptRefProvider, usePromptRef } from "./context/prompt"
-import { getJobTitleForSession } from "./lib/job"
 
 async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
   // can't set raw mode if not a TTY
@@ -215,22 +214,13 @@ function App() {
     if (route.data.type !== "session") return
 
     const session = sync.session.get(route.data.sessionID)
-    const title = (() => {
-      if (!session) return
-      if (!SessionApi.isDefaultTitle(session.title)) return session.title
-      if (!session.parentID) return
-
-      const jobs = sync.data.job[session.parentID] ?? []
-      return getJobTitleForSession(jobs, session.id)
-    })()
-
-    if (!title) {
+    if (!session || SessionApi.isDefaultTitle(session.title)) {
       renderer.setTerminalTitle("OpenCode")
       return
     }
 
     // Truncate title to 40 chars max
-    const truncated = title.length > 40 ? title.slice(0, 37) + "..." : title
+    const truncated = session.title.length > 40 ? session.title.slice(0, 37) + "..." : session.title
     renderer.setTerminalTitle(`OC | ${truncated}`)
   })
 

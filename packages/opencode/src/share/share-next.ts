@@ -45,6 +45,8 @@ export namespace ShareNext {
       }
     })
     Bus.subscribe(MessageV2.Event.PartUpdated, async (evt) => {
+      if (evt.properties.part.type === "message") return
+      if (evt.properties.part.type === "wait") return
       await sync(evt.properties.part.sessionID, [
         {
           type: "part",
@@ -171,6 +173,7 @@ export namespace ShareNext {
         .map((m) => (m.info as SDK.UserMessage).model)
         .map((m) => Provider.getModel(m.providerID, m.modelID).then((m) => m)),
     )
+    const parts = messages.flatMap((x) => x.parts.filter((p) => p.type !== "message"))
     await sync(sessionID, [
       {
         type: "session",
@@ -180,7 +183,7 @@ export namespace ShareNext {
         type: "message" as const,
         data: x.info,
       })),
-      ...messages.flatMap((x) => x.parts.map((y) => ({ type: "part" as const, data: y }))),
+      ...parts.map((y) => ({ type: "part" as const, data: y as SDK.Part })),
       {
         type: "session_diff",
         data: diffs,

@@ -18,6 +18,12 @@ export namespace SessionStatus {
       z.object({
         type: z.literal("busy"),
       }),
+      z.object({
+        type: z.literal("waiting"),
+        sources: z.array(z.string()),
+        timeout: z.number(),
+        mode: z.enum(["all", "any"]),
+      }),
     ])
     .meta({
       ref: "SessionStatus",

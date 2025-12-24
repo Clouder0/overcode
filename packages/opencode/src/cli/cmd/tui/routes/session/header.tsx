@@ -6,7 +6,6 @@ import { useTheme } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { useKeybind } from "../../context/keybind"
-import { getJobTitleForSession } from "../../lib/job"
 import { useTerminalDimensions } from "@opentui/solid"
 
 const Title = (props: { title: Accessor<string>; truncate?: boolean }) => {
@@ -69,13 +68,28 @@ export function Header() {
   const displayTitle = createMemo(() => {
     const current = session()
     if (!current) return ""
-    if (!current.parentID) return current.title
-
-    const jobs = sync.data.job[current.parentID] ?? []
-    return getJobTitleForSession(jobs, current.id) ?? current.title
+    return current.title
   })
 
   const showShare = createMemo(() => shareEnabled() && !session()?.share?.url)
+
+  // Count child/subagent sessions for the current session
+  const childCount = createMemo(() => {
+    const current = session()
+    if (!current) return 0
+    return sync.data.session.filter((s) => s.parentID === current.id).length
+  })
+
+  // Count how many children are currently working
+  const workingChildCount = createMemo(() => {
+    const current = session()
+    if (!current) return 0
+    return sync.data.session.filter((s) => {
+      if (s.parentID !== current.id) return false
+      const status = sync.data.session_status?.[s.id]
+      return status?.type === "busy" || status?.type === "retry"
+    }).length
+  })
 
   return (
     <box flexShrink={0}>
@@ -120,7 +134,21 @@ export function Header() {
           </Match>
           <Match when={true}>
             <box flexDirection="row" justifyContent="space-between" gap={1}>
-              <Title title={displayTitle} truncate={!tall()} />
+              <box flexDirection="row" gap={2}>
+                <Title title={displayTitle} truncate={!tall()} />
+                <Show when={childCount() > 0}>
+                  <text fg={theme.textMuted}>
+                    <span style={{ fg: workingChildCount() > 0 ? theme.warning : theme.success }}>
+                      {workingChildCount() > 0 ? "◐" : "●"}
+                    </span>{" "}
+                    {childCount()} subagent{childCount() > 1 ? "s" : ""}
+                    <Show when={workingChildCount() > 0}>
+                      <span style={{ fg: theme.warning }}> ({workingChildCount()} working)</span>
+                    </Show>{" "}
+                    <span style={{ fg: theme.border }}>{keybind.print("session_child_list")}</span>
+                  </text>
+                </Show>
+              </box>
               <ContextInfo context={context} cost={cost} />
             </box>
             <Show when={shareEnabled()}>

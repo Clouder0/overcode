@@ -166,6 +166,38 @@ export namespace MessageV2 {
   })
   export type SubtaskPart = z.infer<typeof SubtaskPart>
 
+  export const MessagePart = PartBase.extend({
+    type: z.literal("message"),
+    direction: z.enum(["outgoing", "incoming"]),
+    peer: z.string(),
+    peerType: z.enum(["human", "agent"]),
+    text: z.string(),
+    timeout: z.number().optional(),
+    timeoutOccurred: z.boolean().optional(),
+    time: z.object({
+      created: z.number(),
+    }),
+  }).meta({
+    ref: "MessagePart",
+  })
+  export type MessagePart = z.infer<typeof MessagePart>
+
+  export const WaitPart = PartBase.extend({
+    type: z.literal("wait"),
+    sources: z.array(z.string()),
+    timeout: z.number(),
+    mode: z.enum(["all", "any"]),
+    status: z.enum(["waiting", "resolved", "timedOut"]),
+    respondedSources: z.array(z.string()).default([]),
+    time: z.object({
+      created: z.number(),
+      resolved: z.number().optional(),
+    }),
+  }).meta({
+    ref: "WaitPart",
+  })
+  export type WaitPart = z.infer<typeof WaitPart>
+
   export const RetryPart = PartBase.extend({
     type: z.literal("retry"),
     attempt: z.number(),
@@ -327,6 +359,8 @@ export namespace MessageV2 {
       AgentPart,
       RetryPart,
       CompactionPart,
+      MessagePart,
+      WaitPart,
     ])
     .meta({
       ref: "Part",
@@ -533,6 +567,14 @@ export namespace MessageV2 {
               type: "reasoning",
               text: part.text,
               providerMetadata: part.metadata,
+            })
+          }
+          // Include outgoing messages so LLM remembers what it communicated
+          if (part.type === "message" && part.direction === "outgoing") {
+            const timeoutAttr = part.timeout !== undefined ? ` timeout="${part.timeout}"` : ""
+            assistantMessage.parts.push({
+              type: "text",
+              text: `<message to="${part.peer}"${timeoutAttr}>\n${part.text}\n</message>`,
             })
           }
         }
