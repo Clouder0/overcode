@@ -83,9 +83,128 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   let editorRef!: HTMLDivElement
   let fileInputRef!: HTMLInputElement
 
+  // DEBUG: Log on mount
+  onMount(() => {
+    console.log("[DEBUG PromptInput] Component mounted")
+  })
+
   const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
   const tabs = createMemo(() => layout.tabs(sessionKey()))
-  const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+
+  // Get session info reactively - access the full session array to ensure tracking
+  const info = createMemo(() => {
+    const id = params.id
+    console.log("[DEBUG info] params.id =", id)
+    if (!id) return undefined
+    // Access sync.data.session to create dependency
+    const sessions = sync.data.session
+    console.log("[DEBUG info] sessions.length =", sessions.length)
+    // Find session by ID
+    for (let i = 0; i < sessions.length; i++) {
+      if (sessions[i].id === id) {
+        const s = sessions[i]
+        console.log("[DEBUG info] Found session:", { id: s.id, sessionType: s.sessionType, agentName: s.agentName })
+        return s
+      }
+    }
+    console.log("[DEBUG info] Session not found")
+    return undefined
+  })
+
+  // Check if this is a subagent session by looking at sessionType or agentName
+  const isSubagentSession = createMemo(() => {
+    const session = info()
+    return session?.sessionType === "subagent" || !!session?.agentName
+  })
+
+  // Get the agent name for the current session
+  const currentAgentName = createMemo(() => {
+    const session = info()
+    if (session?.agentName) return session.agentName
+    return local.agent.current()?.name
+  })
+
+  // Get the agent for the current session
+  const effectiveAgent = createMemo(() => {
+    const agentName = currentAgentName()
+    console.log("[DEBUG effectiveAgent] agentName =", agentName)
+    if (!agentName) return local.agent.current()
+    // Access sync.data.agent to create dependency
+    const agents = sync.data.agent
+    console.log("[DEBUG effectiveAgent] agents.length =", agents.length)
+    for (let i = 0; i < agents.length; i++) {
+      if (agents[i].name === agentName) {
+        const a = agents[i]
+        console.log("[DEBUG effectiveAgent] Found agent:", { name: a.name, hasModel: !!a.model, model: a.model })
+        return a
+      }
+    }
+    console.log("[DEBUG effectiveAgent] Agent not found, using local.agent.current()")
+    return local.agent.current()
+  })
+
+  // Get the effective model for display and sending
+  const effectiveModel = createMemo(() => {
+    const isSubagent = isSubagentSession()
+    const agent = effectiveAgent()
+    const agentModel = agent?.model
+    console.log("[DEBUG effectiveModel] isSubagent =", isSubagent, "agentModel =", agentModel)
+
+    // If this is a subagent session with a configured model, use that
+    if (isSubagent && agentModel) {
+      const allProviders = providers.all()
+      for (let i = 0; i < allProviders.length; i++) {
+        if (allProviders[i].id === agentModel.providerID) {
+          const provider = allProviders[i]
+          const model = provider.models[agentModel.modelID]
+          if (model) {
+            return { ...model, provider }
+          }
+          return {
+            id: agentModel.modelID,
+            name: agentModel.modelID,
+            provider,
+          }
+        }
+      }
+      return {
+        id: agentModel.modelID,
+        name: agentModel.modelID,
+        provider: { id: agentModel.providerID, name: agentModel.providerID },
+      }
+    }
+
+    // For primary sessions or agents without configured models
+    return local.model.current()
+  })
+
+  // DEBUG: Log when values change to diagnose reactivity issues
+  createEffect(() => {
+    const session = info()
+    const agentName = currentAgentName()
+    const agent = effectiveAgent()
+    const model = effectiveModel()
+    const isSubagent = isSubagentSession()
+
+    console.log("[DEBUG prompt-input] Session/Model state:", {
+      paramsId: params.id,
+      sessionFound: !!session,
+      sessionId: session?.id,
+      sessionType: session?.sessionType,
+      sessionAgentName: session?.agentName,
+      isSubagentSession: isSubagent,
+      currentAgentName: agentName,
+      effectiveAgentName: agent?.name,
+      effectiveAgentHasModel: !!agent?.model,
+      effectiveAgentModel: agent?.model,
+      effectiveModelName: model?.name,
+      effectiveModelId: model?.id,
+      effectiveModelProviderId: model?.provider?.id,
+      localAgentName: local.agent.current()?.name,
+      localModelName: local.model.current()?.name,
+    })
+  })
+
   const status = createMemo(
     () =>
       sync.data.session_status[params.id ?? ""] ?? {
@@ -770,11 +889,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     setStore("imageAttachments", [])
     setStore("mode", "normal")
 
+    // Use effective agent and model (handles subagent sessions automatically)
+    const agent = effectiveAgent()!.name
+    const currentModel = effectiveModel()!
     const model = {
-      modelID: local.model.current()!.id,
-      providerID: local.model.current()!.provider.id,
+      modelID: currentModel.id,
+      providerID: currentModel.provider.id,
     }
-    const agent = local.agent.current()!.name
 
     if (isShellMode) {
       sdk.client.session.shell({
@@ -991,23 +1112,33 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                 </div>
               </Match>
               <Match when={store.mode === "normal"}>
-                <Tooltip
-                  placement="top"
-                  value={
-                    <div class="flex items-center gap-2">
-                      <span>Cycle agent</span>
-                      <span class="text-icon-base text-12-medium">{command.keybind("agent.cycle")}</span>
+                <Show
+                  when={!isSubagentSession()}
+                  fallback={
+                    <div class="flex items-center gap-2 px-2 h-6">
+                      <span class="text-12-regular text-text-base capitalize">{effectiveAgent()?.name}</span>
+                      <span class="text-12-regular text-text-weak">(subagent)</span>
                     </div>
                   }
                 >
-                  <Select
-                    options={local.agent.list().map((agent) => agent.name)}
-                    current={local.agent.current().name}
-                    onSelect={local.agent.set}
-                    class="capitalize"
-                    variant="ghost"
-                  />
-                </Tooltip>
+                  <Tooltip
+                    placement="top"
+                    value={
+                      <div class="flex items-center gap-2">
+                        <span>Cycle agent</span>
+                        <span class="text-icon-base text-12-medium">{command.keybind("agent.cycle")}</span>
+                      </div>
+                    }
+                  >
+                    <Select
+                      options={local.agent.list().map((agent) => agent.name)}
+                      current={local.agent.current().name}
+                      onSelect={local.agent.set}
+                      class="capitalize"
+                      variant="ghost"
+                    />
+                  </Tooltip>
+                </Show>
                 <Tooltip
                   placement="top"
                   value={
@@ -1020,17 +1151,21 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                   <Button
                     as="div"
                     variant="ghost"
-                    onClick={() =>
+                    onClick={() => {
+                      // Don't show model selector for subagent sessions with configured models
+                      if (isSubagentSession() && effectiveAgent()?.model) return
                       dialog.show(() =>
                         providers.paid().length > 0 ? <DialogSelectModel /> : <DialogSelectModelUnpaid />,
                       )
-                    }
+                    }}
                   >
-                    {local.model.current()?.name ?? "Select model"}
+                    {effectiveModel()?.name ?? "Select model"}
                     <span class="hidden md:block ml-0.5 text-text-weak text-12-regular">
-                      {local.model.current()?.provider.name}
+                      {effectiveModel()?.provider.name}
                     </span>
-                    <Icon name="chevron-down" size="small" />
+                    <Show when={!isSubagentSession() || !effectiveAgent()?.model}>
+                      <Icon name="chevron-down" size="small" />
+                    </Show>
                   </Button>
                 </Tooltip>
               </Match>

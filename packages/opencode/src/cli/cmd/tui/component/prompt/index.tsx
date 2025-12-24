@@ -122,6 +122,50 @@ export function Prompt(props: PromptProps) {
   const session = createMemo(() => (props.sessionID ? sync.session.get(props.sessionID) : undefined))
   const lockedAgentName = createMemo(() => (session() as any)?.agentName as string | undefined)
   const displayAgentName = createMemo(() => lockedAgentName() ?? local.agent.current().name)
+
+  // Get the effective agent for subagent sessions
+  const effectiveAgent = createMemo(() => {
+    const agentName = lockedAgentName()
+    if (agentName) {
+      const agents = sync.data.agent
+      const found = agents.find((a) => a.name === agentName)
+      if (found) return found
+    }
+    return local.agent.current()
+  })
+
+  // Get the effective model - for subagent sessions with configured model, use that
+  const effectiveModel = createMemo(() => {
+    const agent = effectiveAgent()
+    const isSubagent = !!lockedAgentName()
+
+    // If this is a subagent session and the agent has a configured model, use it
+    if (isSubagent && agent?.model) {
+      return {
+        providerID: agent.model.providerID,
+        modelID: agent.model.modelID,
+      }
+    }
+
+    // Otherwise use the user's selected model
+    return local.model.current()
+  })
+
+  // For display: get parsed model info
+  const effectiveModelParsed = createMemo(() => {
+    const agent = effectiveAgent()
+    const isSubagent = !!lockedAgentName()
+
+    if (isSubagent && agent?.model) {
+      return {
+        model: agent.model.modelID,
+        provider: agent.model.providerID,
+      }
+    }
+
+    return local.model.parsed()
+  })
+
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -531,7 +575,8 @@ export function Prompt(props: PromptProps) {
       exit()
       return
     }
-    const selectedModel = local.model.current()
+    // Use effective model for subagent sessions
+    const selectedModel = effectiveModel()
     if (!selectedModel) {
       promptModelWarning()
       return
@@ -571,10 +616,13 @@ export function Prompt(props: PromptProps) {
     // Capture mode before it gets reset
     const currentMode = store.mode
 
+    // Use effective agent name for subagent sessions
+    const agentName = displayAgentName()
+
     if (store.mode === "shell") {
       sdk.client.session.shell({
         sessionID,
-        agent: local.agent.current().name,
+        agent: agentName,
         model: {
           providerID: selectedModel.providerID,
           modelID: selectedModel.modelID,
@@ -595,7 +643,7 @@ export function Prompt(props: PromptProps) {
         sessionID,
         command: command.slice(1),
         arguments: args.join(" "),
-        agent: local.agent.current().name,
+        agent: agentName,
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
         messageID,
       })
@@ -604,7 +652,7 @@ export function Prompt(props: PromptProps) {
         sessionID,
         ...selectedModel,
         messageID,
-        agent: local.agent.current().name,
+        agent: agentName,
         model: selectedModel,
         parts: [
           {
@@ -965,9 +1013,9 @@ export function Prompt(props: PromptProps) {
                 <Show when={store.mode === "normal"}>
                   <box flexDirection="row" gap={1}>
                     <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
-                      {local.model.parsed().model}
+                      {effectiveModelParsed().model}
                     </text>
-                    <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
+                    <text fg={theme.textMuted}>{effectiveModelParsed().provider}</text>
                   </box>
                 </Show>
               </box>
@@ -1107,9 +1155,9 @@ export function Prompt(props: PromptProps) {
                 <Show when={store.mode === "normal"}>
                   <box flexDirection="row" gap={1}>
                     <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
-                      {local.model.parsed().model}
+                      {effectiveModelParsed().model}
                     </text>
-                    <text fg={theme.textMuted}>{local.model.parsed().provider}</text>
+                    <text fg={theme.textMuted}>{effectiveModelParsed().provider}</text>
                   </box>
                 </Show>
               </box>

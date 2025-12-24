@@ -410,6 +410,38 @@ export type CompactionPart = {
   auto: boolean
 }
 
+export type MessagePart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "message"
+  direction: "outgoing" | "incoming"
+  peer: string
+  peerType: "human" | "agent"
+  text: string
+  timeout?: number
+  timeoutOccurred?: boolean
+  time: {
+    created: number
+  }
+}
+
+export type WaitPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "wait"
+  sources: Array<string>
+  timeout: number
+  mode: "all" | "any"
+  status: "waiting" | "resolved" | "timedOut"
+  respondedSources?: Array<string>
+  time: {
+    created: number
+    resolved?: number
+  }
+}
+
 export type Part =
   | TextPart
   | {
@@ -432,6 +464,8 @@ export type Part =
   | AgentPart
   | RetryPart
   | CompactionPart
+  | MessagePart
+  | WaitPart
 
 export type EventMessagePartUpdated = {
   type: "message.part.updated"
@@ -514,6 +548,20 @@ export type EventTodoUpdated = {
   }
 }
 
+export type EventSessionMessageDelivered = {
+  type: "session.message.delivered"
+  properties: {
+    message: {
+      id: string
+      from: string
+      to: string
+      text: string
+      time: number
+      messageType?: "normal" | "timeout" | "error"
+    }
+  }
+}
+
 export type SessionStatus =
   | {
       type: "idle"
@@ -526,6 +574,12 @@ export type SessionStatus =
     }
   | {
       type: "busy"
+    }
+  | {
+      type: "waiting"
+      sources: Array<string>
+      timeout: number
+      mode: "all" | "any"
     }
 
 export type EventSessionStatus = {
@@ -609,83 +663,15 @@ export type EventCommandExecuted = {
   }
 }
 
-export type JobStreamFrame = {
-  id: string
-  jobID: string
-  direction: "in" | "out"
-  data: unknown
-  notify: boolean
-  time: {
-    created: number
-  }
-}
-
-export type EventJobOutput = {
-  type: "job.output"
-  properties: {
-    jobID: string
-    sessionID: string
-    frame: JobStreamFrame
-  }
-}
-
-export type EventJobNotify = {
-  type: "job.notify"
-  properties: {
-    jobID: string
-    sessionID: string
-    frame: JobStreamFrame
-  }
-}
-
-export type JobStatus = "pending" | "running" | "completed" | "error" | "canceled"
-
-export type Job = {
-  id: string
-  projectID: string
-  type: string
-  title: string
-  parentSessionID: string
-  status: JobStatus
-  params: unknown
-  metadata?: {
-    [key: string]: unknown
-  }
-  error?: string
-  time: {
-    created: number
-    updated: number
-    started?: number
-    completed?: number
-  }
-}
-
-export type EventJobCreated = {
-  type: "job.created"
-  properties: {
-    info: Job
-  }
-}
-
-export type EventJobUpdated = {
-  type: "job.updated"
-  properties: {
-    info: Job
-  }
-}
-
-export type EventJobDeleted = {
-  type: "job.deleted"
-  properties: {
-    id: string
-  }
-}
-
 export type Session = {
   id: string
   projectID: string
   directory: string
   parentID?: string
+  sessionType?: "primary" | "subagent"
+  agentName?: string
+  callerID?: string
+  childrenIDs?: Array<string>
   summary?: {
     additions: number
     deletions: number
@@ -831,6 +817,7 @@ export type Event =
   | EventPermissionReplied
   | EventFileEdited
   | EventTodoUpdated
+  | EventSessionMessageDelivered
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
@@ -839,11 +826,6 @@ export type Event =
   | EventTuiToastShow
   | EventMcpToolsChanged
   | EventCommandExecuted
-  | EventJobOutput
-  | EventJobNotify
-  | EventJobCreated
-  | EventJobUpdated
-  | EventJobDeleted
   | EventSessionCreated
   | EventSessionUpdated
   | EventSessionDeleted
@@ -1646,23 +1628,6 @@ export type Config = {
   tools?: {
     [key: string]: boolean
   }
-  /**
-   * Job execution limits and timeouts
-   */
-  job?: {
-    /**
-     * Maximum number of concurrent subagent jobs per session (default: 10)
-     */
-    maxConcurrent?: number
-    /**
-     * Maximum total subagent jobs per session (default: 256)
-     */
-    maxPerSession?: number
-    /**
-     * Maximum stream frames per job (default: 1000)
-     */
-    maxFrames?: number
-  }
   enterprise?: {
     /**
      * Enterprise URL
@@ -2160,72 +2125,6 @@ export type ProjectUpdateResponses = {
 }
 
 export type ProjectUpdateResponse = ProjectUpdateResponses[keyof ProjectUpdateResponses]
-
-export type JobListData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-    parentSessionID?: string
-    type?: string
-    status?: JobStatus
-    limit?: number
-  }
-  url: "/job/list"
-}
-
-export type JobListResponses = {
-  /**
-   * Jobs
-   */
-  200: Array<Job>
-}
-
-export type JobListResponse = JobListResponses[keyof JobListResponses]
-
-export type JobFramesData = {
-  body?: never
-  path?: never
-  query: {
-    directory?: string
-    jobID: string
-    after?: string
-    limit?: number
-    direction?: "in" | "out"
-    notify?: boolean
-  }
-  url: "/job/frames"
-}
-
-export type JobFramesResponses = {
-  /**
-   * Frames
-   */
-  200: Array<JobStreamFrame>
-}
-
-export type JobFramesResponse = JobFramesResponses[keyof JobFramesResponses]
-
-export type JobFrameLatestData = {
-  body?: never
-  path?: never
-  query: {
-    directory?: string
-    jobID: string
-    direction?: "in" | "out"
-    notify?: boolean
-  }
-  url: "/job/frame/latest"
-}
-
-export type JobFrameLatestResponses = {
-  /**
-   * Latest frame (or null)
-   */
-  200: JobStreamFrame | null
-}
-
-export type JobFrameLatestResponse = JobFrameLatestResponses[keyof JobFrameLatestResponses]
 
 export type PtyListData = {
   body?: never
