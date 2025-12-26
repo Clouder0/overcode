@@ -245,6 +245,119 @@ export namespace SessionPrompt {
     return extraToolsState().get(sessionID) ?? []
   }
 
+  const ENVIRONMENT_IDLE_CACHE_MAX = 16
+
+  function evictEnvironmentIdle(idle: Map<string, Promise<string[]>>) {
+    while (idle.size > ENVIRONMENT_IDLE_CACHE_MAX) {
+      const oldest = idle.keys().next().value
+      if (!oldest) break
+      idle.delete(oldest)
+    }
+  }
+
+  const environmentState = Instance.state(
+    () => {
+      const pinned = new Map<string, Promise<string[]>>()
+      const idle = new Map<string, Promise<string[]>>()
+
+      const unsubs = [
+        Bus.subscribe(Session.Event.Deleted, (event) => {
+          const sessionID = event.properties.info.id
+          pinned.delete(sessionID)
+          idle.delete(sessionID)
+        }),
+        Bus.subscribe(SessionStatus.Event.Status, (event) => {
+          const sessionID = event.properties.sessionID
+          const status = event.properties.status
+
+          if (status.type === "idle") {
+            const existing = pinned.get(sessionID)
+            if (existing) {
+              pinned.delete(sessionID)
+              idle.delete(sessionID)
+              idle.set(sessionID, existing)
+              evictEnvironmentIdle(idle)
+            }
+            return
+          }
+
+          if (pinned.has(sessionID)) return
+          const existing = idle.get(sessionID)
+          if (!existing) return
+          idle.delete(sessionID)
+          pinned.set(sessionID, existing)
+        }),
+      ]
+
+      return { pinned, idle, unsubs }
+    },
+    async (entry) => {
+      for (const unsub of entry.unsubs) {
+        unsub()
+      }
+      entry.pinned.clear()
+      entry.idle.clear()
+    },
+  )
+
+  function environmentPinned(sessionID: string) {
+    if (state()[sessionID]) return true
+    if (WaitPolicy.isWaiting(sessionID)) return true
+    const status = SessionStatus.get(sessionID)
+    return status.type !== "idle"
+  }
+
+  function pinEnvironment(sessionID: string) {
+    const cache = environmentState()
+    const existing = cache.idle.get(sessionID)
+    if (!existing) return
+    cache.idle.delete(sessionID)
+    cache.pinned.set(sessionID, existing)
+  }
+
+  export function getCachedEnvironment(sessionID: string, load?: () => Promise<string[]>) {
+    const cache = environmentState()
+    const pinned = cache.pinned
+    const idle = cache.idle
+
+    const existingPinned = pinned.get(sessionID)
+    if (existingPinned) return existingPinned
+
+    const existingIdle = idle.get(sessionID)
+    if (existingIdle) {
+      idle.delete(sessionID)
+      if (environmentPinned(sessionID)) {
+        pinned.set(sessionID, existingIdle)
+        return existingIdle
+      }
+      idle.set(sessionID, existingIdle)
+      return existingIdle
+    }
+
+    const next = (load ?? SystemPrompt.environment)()
+    const active = environmentPinned(sessionID)
+    if (active) {
+      pinned.set(sessionID, next)
+    }
+    if (!active) {
+      idle.set(sessionID, next)
+      evictEnvironmentIdle(idle)
+    }
+
+    next.catch(() => {
+      if (pinned.get(sessionID) === next) pinned.delete(sessionID)
+      if (idle.get(sessionID) === next) idle.delete(sessionID)
+    })
+
+    return next
+  }
+
+  export function clearCachedEnvironment(sessionID: string) {
+    const cache = environmentState()
+    cache.pinned.delete(sessionID)
+    cache.idle.delete(sessionID)
+  }
+
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
     if (match) throw new Session.BusyError(sessionID)
@@ -402,6 +515,7 @@ export namespace SessionPrompt {
       abort: controller,
       callbacks: [],
     }
+    pinEnvironment(sessionID)
     return controller.signal
   }
 
@@ -801,7 +915,7 @@ export namespace SessionPrompt {
         abort,
         sessionID,
         system: [
-          ...(await SystemPrompt.environment()),
+          ...(await getCachedEnvironment(sessionID)),
           ...(await SystemPrompt.custom()),
           ...SystemPrompt.messageProtocol(
             currentSession.sessionType,
@@ -913,6 +1027,7 @@ export namespace SessionPrompt {
   }
 
   async function resolveSystemPrompt(input: {
+    sessionID: string
     system?: string
     agent: Agent.Info
     model: Provider.Model
@@ -926,7 +1041,7 @@ export namespace SessionPrompt {
         return SystemPrompt.provider(input.model)
       })(),
     )
-    system.push(...(await SystemPrompt.environment()))
+    system.push(...(await getCachedEnvironment(input.sessionID)))
     system.push(...(await SystemPrompt.custom()))
 
     if (input.isLastStep) {

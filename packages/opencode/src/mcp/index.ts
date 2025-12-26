@@ -15,6 +15,7 @@ import { withTimeout } from "@/util/timeout"
 import { McpOAuthProvider } from "./oauth-provider"
 import { McpOAuthCallback } from "./oauth-callback"
 import { McpAuth } from "./auth"
+import { compareMcpNames, mcpToolKey, stableMcpToolOrder } from "./lib/tool-order"
 import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
@@ -449,7 +450,9 @@ export namespace MCP {
     const s = await state()
     const clientsSnapshot = await clients()
 
-    for (const [clientName, client] of Object.entries(clientsSnapshot)) {
+    const entries = Object.entries(clientsSnapshot).sort(([a], [b]) => compareMcpNames(a, b))
+
+    for (const [clientName, client] of entries) {
       // Only include tools from connected MCPs (skip disabled ones)
       if (s.status[clientName]?.status !== "connected") {
         continue
@@ -468,10 +471,9 @@ export namespace MCP {
       if (!toolsResult) {
         continue
       }
-      for (const mcpTool of toolsResult.tools) {
-        const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
-        const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-        result[sanitizedClientName + "_" + sanitizedToolName] = convertMcpTool(mcpTool, client)
+      for (const mcpTool of stableMcpToolOrder(toolsResult.tools)) {
+        const key = mcpToolKey(clientName, mcpTool.name)
+        result[key] = convertMcpTool(mcpTool, client)
       }
     }
     return result

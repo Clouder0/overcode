@@ -46,6 +46,7 @@ export namespace SystemPrompt {
         `  Today's date: ${new Date().toDateString()}`,
         `</env>`,
         `<files>`,
+        `  (File tree snapshot; may be outdated. Use tools to verify current files.)`,
         `  ${
           project.vcs === "git"
             ? await Ripgrep.tree({
