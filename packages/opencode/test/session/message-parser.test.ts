@@ -3,7 +3,7 @@ import { MessageParser } from "../../src/session/message-parser"
 
 test("formatInbox for normal message", () => {
   const result = MessageParser.formatInbox([{ from: "ses_a", text: "Hello" }])
-  expect(result).toBe(`Agent session ses_a sent a message to you:
+  expect(result).toBe(`Sender Agent with session id ses_a sent a message:
 <content>
 Hello
 </content>`)
@@ -11,7 +11,7 @@ Hello
 
 test("formatInbox for timeout message", () => {
   const result = MessageParser.formatInbox([{ from: "ses_b", text: "Timeout", messageType: "timeout" }])
-  expect(result).toBe(`Agent session ses_b timed out:
+  expect(result).toBe(`Sender Agent with session id ses_b timed out:
 <content>
 Timeout
 </content>`)
@@ -22,8 +22,8 @@ test("formatInbox for multiple messages", () => {
     { from: "ses_a", text: "Hello", messageType: "normal" },
     { from: "ses_b", text: "World", messageType: "timeout" },
   ])
-  expect(result).toContain("Agent session ses_a sent a message to you:")
-  expect(result).toContain("Agent session ses_b timed out:")
+  expect(result).toContain("Sender Agent with session id ses_a sent a message:")
+  expect(result).toContain("Sender Agent with session id ses_b timed out:")
 })
 
 test("formatTimeoutMessage", () => {

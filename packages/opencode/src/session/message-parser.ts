@@ -3,8 +3,8 @@ export namespace MessageParser {
     const parts: string[] = []
 
     for (const msg of messages) {
-      const label = msg.messageType === "timeout" ? "timed out" : "sent a message to you"
-      parts.push(`Agent session ${msg.from} ${label}:`)
+      const label = msg.messageType === "timeout" ? "timed out" : "sent a message"
+      parts.push(`Sender Agent with session id ${msg.from} ${label}:`)
       parts.push("<content>")
       parts.push(msg.text)
       parts.push("</content>")

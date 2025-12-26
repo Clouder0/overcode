@@ -8,13 +8,13 @@ This document originally specified a unified XML-tag message protocol (`<message
 
 The XML-tag protocol described below is no longer used by the runtime. OpenCode now uses tool-based agent↔agent messaging:
 
-- `send_message({ to: "ses_...", text: "..." })` (subagents may use `to: "caller"`)
-- `wait_message({ sources: ["ses_..."], timeout: 60000, mode: "all" | "any" })`
+- `send_agent_message({ to: "ses_...", text: "..." })` (use explicit session IDs; subagents can send results to their Parent Session ID)
+- `wait_agent_message({ sources: ["ses_..."], timeout: 60000, mode: "all" | "any" })`
 
 Notes:
 
-- `wait_message` sources must be a non-empty list of explicit session IDs (no `"children"`, `"caller"`, or `"human"`).
-- `wait_message` timeout must be `> 0` milliseconds.
+- `wait_agent_message` sources must be a non-empty list of explicit session IDs (no `"children"`, `"parent"`, or `"human"`).
+- `wait_agent_message` timeout must be `> 0` milliseconds.
 - XML tags like `<message>` / `<wait>` are not parsed for routing and will be shown as literal text.
 
 Authoritative runtime guidance: `packages/opencode/src/session/system.ts`.
@@ -43,7 +43,7 @@ CONTENT
 
 | Attribute | Required | Type   | Description                                                 |
 | --------- | -------- | ------ | ----------------------------------------------------------- |
-| `to`      | Yes      | string | Target: `"human"`, `"caller"`, or session ID (`"ses_xxx"`)  |
+| `to`      | Yes      | string | Target: `"human"`, `"parent"`, or session ID (`"ses_xxx"`)  |
 | `timeout` | Yes      | number | Wait behavior: `-1` (infinite), `0` (none), or milliseconds |
 
 #### Timeout Semantics
@@ -59,7 +59,7 @@ CONTENT
 | `to` Value  | Resolves To                               |
 | ----------- | ----------------------------------------- |
 | `"human"`   | Human operator (UI/terminal)              |
-| `"caller"`  | Parent session that spawned this subagent |
+| `"parent"`  | Parent session that spawned this subagent |
 | `"ses_xxx"` | Specific session by ID                    |
 
 ### Multiple Messages Per Turn
@@ -201,20 +201,20 @@ Delegate work to a subagent (spawn includes initial message):
 
 ### Pattern 5: Subagent Progress
 
-Subagent reports progress to caller:
+Subagent reports progress to parent:
 
 ```xml
-<message to="caller" timeout="0">
+<message to="parent" timeout="0">
 Found 50 files, analyzing...
 </message>
 ```
 
 ### Pattern 6: Subagent Question
 
-Subagent asks caller for clarification:
+Subagent asks parent for clarification:
 
 ```xml
-<message to="caller" timeout="30000">
+<message to="parent" timeout="30000">
 Should I include test files?
 </message>
 ```
@@ -224,14 +224,14 @@ Should I include test files?
 Subagent returns final result:
 
 ```xml
-<message to="caller" timeout="-1">
+<message to="parent" timeout="-1">
 Complete analysis: Authentication uses JWT...
 </message>
 ```
 
 ### Pattern 8: Subagent to Human
 
-Subagent asks human directly (bypassing caller):
+Subagent asks human directly (bypassing parent):
 
 ```xml
 <message to="human" timeout="-1">
@@ -270,7 +270,7 @@ interface Session {
   id: string // "ses_xxx"
   type: "primary" | "subagent"
   agent: string // Agent type name
-  caller?: string // Parent session ID (for subagents)
+  parent?: string // Parent session ID (for subagents)
   children: string[] // Child session IDs
   status: "active" | "waiting" | "completed"
 }
@@ -327,11 +327,11 @@ For subagent tasks:
 
 You are a subagent.
 Session ID: {SESSION_ID}
-Caller: {CALLER_SESSION_ID}
+Parent: {PARENT_SESSION_ID}
 
 ## Communication Protocol
 
-<message to="caller" timeout="TIMEOUT">
+<message to="parent" timeout="TIMEOUT">
 Your response
 </message>
 
@@ -339,7 +339,7 @@ Patterns:
 - Progress: timeout="0" (continue working)
 - Question: timeout="30000" (wait for answer)
 - Final: timeout="-1" (done, available for follow-up)
-- To human: to="human" (bypass caller)
+- To human: to="human" (bypass parent)
 ```
 
 ## Message Storage
@@ -584,7 +584,7 @@ System logs error, attempts to extract content, falls back to plain text.
 
 ## Security Considerations
 
-1. **Session ID Validation**: Verify session exists and caller has permission
+1. **Session ID Validation**: Verify session exists and parent has permission
 2. **Cross-Session Access**: Only allow communication with related sessions
 3. **Human Impersonation**: Prevent agents from spoofing human messages
 4. **Timeout Limits**: Enforce maximum timeout values to prevent resource exhaustion

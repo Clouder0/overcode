@@ -94,6 +94,32 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const sdk = useSDK()
 
+    const timeoutSignal = (ms: number, message: string) => {
+      const abort = new AbortController()
+      const err = new Error(message)
+      err.name = "TimeoutError"
+
+      const onAbort = () => abort.abort()
+      sdk.signal.addEventListener("abort", onAbort)
+
+      let timer: NodeJS.Timeout | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          abort.abort()
+          reject(err)
+        }, ms).unref()
+      })
+
+      return {
+        signal: abort.signal,
+        timeout,
+        cleanup: () => {
+          if (timer) clearTimeout(timer)
+          sdk.signal.removeEventListener("abort", onAbort)
+        },
+      }
+    }
+
     sdk.event.listen((e) => {
       const event = e.details
       switch (event.type) {
@@ -272,7 +298,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             // Sync the target session to ensure MessagePart is available
             const props = (event as unknown as { properties: { message: { to: string; from: string } } }).properties
             if (props?.message?.to && props.message.to !== "human") {
-              result.session.sync(props.message.to)
+              result.session.sync(props.message.to).catch(() => {})
             }
           }
           break
@@ -342,6 +368,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     })
 
     const fullSyncedSessions = new Set<string>()
+    const fullSyncInFlight = new Map<string, Promise<void>>()
+    const sessionInfoInFlight = new Map<string, Promise<void>>()
     const result = {
       data: store,
       set: setStore,
@@ -367,28 +395,103 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (last.role === "user") return "working"
           return last.time.completed ? "idle" : "working"
         },
+        async info(sessionID: string) {
+          if (result.session.get(sessionID)) return
+          const fullInFlight = fullSyncInFlight.get(sessionID)
+          if (fullInFlight) return fullInFlight
+          const inFlight = sessionInfoInFlight.get(sessionID)
+          if (inFlight) return inFlight
+
+          const t = timeoutSignal(15_000, `Timed out loading session: ${sessionID}`)
+          const req = sdk.client.session.get(
+            { sessionID },
+            {
+              throwOnError: true,
+              signal: t.signal,
+            },
+          )
+          void req.catch(() => {})
+
+          const promise = Promise.race([req, t.timeout])
+            .then((session) => {
+              setStore(
+                produce((draft) => {
+                  const match = Binary.search(draft.session, sessionID, (s) => s.id)
+                  if (match.found) draft.session[match.index] = session.data!
+                  if (!match.found) draft.session.splice(match.index, 0, session.data!)
+                }),
+              )
+            })
+            .finally(() => {
+              t.cleanup()
+              sessionInfoInFlight.delete(sessionID)
+            })
+
+          sessionInfoInFlight.set(sessionID, promise)
+          return promise
+        },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
-          const [session, messages, todo, diff] = await Promise.all([
-            sdk.client.session.get({ sessionID }, { throwOnError: true }),
-            sdk.client.session.messages({ sessionID, limit: 100 }),
-            sdk.client.session.todo({ sessionID }),
-            sdk.client.session.diff({ sessionID }),
+          const inFlight = fullSyncInFlight.get(sessionID)
+          if (inFlight) return inFlight
+
+          const t = timeoutSignal(60_000, `Timed out syncing session: ${sessionID}`)
+          const req = Promise.all([
+            sdk.client.session.get(
+              { sessionID },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
+            sdk.client.session.messages(
+              { sessionID, limit: 100 },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
+            sdk.client.session.todo(
+              { sessionID },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
+            sdk.client.session.diff(
+              { sessionID },
+              {
+                throwOnError: true,
+                signal: t.signal,
+              },
+            ),
           ])
-          setStore(
-            produce((draft) => {
-              const match = Binary.search(draft.session, sessionID, (s) => s.id)
-              if (match.found) draft.session[match.index] = session.data!
-              if (!match.found) draft.session.splice(match.index, 0, session.data!)
-              draft.todo[sessionID] = todo.data ?? []
-              draft.message[sessionID] = messages.data!.map((x) => x.info)
-              for (const message of messages.data!) {
-                draft.part[message.info.id] = message.parts
-              }
-              draft.session_diff[sessionID] = diff.data ?? []
-            }),
-          )
-          fullSyncedSessions.add(sessionID)
+          void req.catch(() => {})
+
+          const promise = Promise.race([req, t.timeout])
+            .then(([session, messages, todo, diff]) => {
+              setStore(
+                produce((draft) => {
+                  const match = Binary.search(draft.session, sessionID, (s) => s.id)
+                  if (match.found) draft.session[match.index] = session.data!
+                  if (!match.found) draft.session.splice(match.index, 0, session.data!)
+                  draft.todo[sessionID] = todo.data ?? []
+                  draft.message[sessionID] = messages.data!.map((x) => x.info)
+                  for (const message of messages.data!) {
+                    draft.part[message.info.id] = message.parts
+                  }
+                  draft.session_diff[sessionID] = diff.data ?? []
+                }),
+              )
+              fullSyncedSessions.add(sessionID)
+            })
+            .finally(() => {
+              t.cleanup()
+              fullSyncInFlight.delete(sessionID)
+            })
+
+          fullSyncInFlight.set(sessionID, promise)
+          return promise
         },
         // Add a session to the store (used when creating a new session to avoid waiting for SSE event)
         add(session: (typeof store.session)[number]) {

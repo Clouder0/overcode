@@ -152,7 +152,7 @@ export namespace SystemPrompt {
   export function messageProtocol(
     sessionType: "primary" | "subagent",
     sessionID: string,
-    callerID?: string,
+    parentID?: string,
     subagentPrompt?: string,
   ): string[] {
     const basePrompt = `## Agent Communication
@@ -163,7 +163,7 @@ Agent sessions communicate by sending and receiving messages.
 
 Incoming agent messages appear in your conversation history with the format:
 \`\`\`
-Agent session ses_... sent a message to you:
+Sender Agent with session id ses_... sent a message:
 <content>
 ...
 </content>
@@ -223,7 +223,7 @@ spawn A, B, C → wait_agent_message(sources: [A, B, C], mode: "all") → combin
 
 **Streaming Receive**: React to findings incrementally without explicit waiting.
 \`\`\`
-spawn explorer → explorer CALLS send_agent_message with updates → caller wakes on each incoming message → react immediately
+spawn explorer → explorer sends findings as discovered → parent wakes on each incoming message → react immediately
 \`\`\`
 
 **Free-form Communication**: Agents communicate directly, bypassing the orchestrator.
@@ -238,14 +238,14 @@ orchestrator spawns dev and QA → orchestrator receives their session_ids → o
     const deliverySection = `
 ## Subagent Delivery Rules (IMPORTANT)
 
-- You are a spawned subagent. The caller expects results via inter-agent messaging.
-- The "Your Task" text is written by the caller but delivered as SYSTEM text (not as an incoming message).
-- Your normal assistant text output is NOT automatically delivered to the caller.
-- To report results, you MUST call send_agent_message using the exact Caller Session ID shown above (it starts with ses_...).
+- You are a spawned subagent. The parent expects results via inter-agent messaging.
+- The "Your Task" text is written by the parent but delivered as SYSTEM text (not as an incoming message).
+- Your normal assistant text output is NOT automatically delivered to the parent.
+- To report results, you MUST call send_agent_message using the exact Parent Session ID shown above (it starts with ses_...).
   Format: send_agent_message(to=<ses_...>, text=<message>)
 
 If your task says "send/deliver/report back", interpret that as a requirement to call send_agent_message, not as writing to the human channel.
-If you need clarification, ask the caller via send_agent_message.
+If you need clarification, ask the parent via send_agent_message.
 
 `
 
@@ -260,7 +260,7 @@ ${subagentPrompt}
 
     return [
       `Current Session ID: ${sessionID}
-Caller Session ID: ${callerID}
+Parent Session ID: ${parentID}
 ${deliverySection}
 ${taskSection}
 ${basePrompt}`,

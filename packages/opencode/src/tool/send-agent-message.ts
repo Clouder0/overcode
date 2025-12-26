@@ -13,7 +13,7 @@ type SendMessageMetadata = {
 
 export const SendAgentMessageTool = Tool.define("send_agent_message", {
   description:
-    "Send a message to another agent session. Use this to reply to your caller or communicate with other agents.",
+    "Send a message to another agent session. Use this to reply to the sender or communicate with other agents.",
   parameters: z.object({
     to: z.string().describe("Target session id (ses_...)"),
     text: z.string().describe("Message content"),

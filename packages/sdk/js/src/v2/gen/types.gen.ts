@@ -209,6 +209,7 @@ export type ReasoningPart = {
   messageID: string
   type: "reasoning"
   text: string
+  ignored?: boolean
   metadata?: {
     [key: string]: unknown
   }
@@ -484,6 +485,20 @@ export type EventMessagePartRemoved = {
   }
 }
 
+export type EventSessionMessageDelivered = {
+  type: "session.message.delivered"
+  properties: {
+    message: {
+      id: string
+      from: string
+      to: string
+      text: string
+      time: number
+      messageType?: "normal" | "timeout" | "error"
+    }
+  }
+}
+
 export type Permission = {
   id: string
   type: string
@@ -548,20 +563,6 @@ export type EventTodoUpdated = {
   }
 }
 
-export type EventSessionMessageDelivered = {
-  type: "session.message.delivered"
-  properties: {
-    message: {
-      id: string
-      from: string
-      to: string
-      text: string
-      time: number
-      messageType?: "normal" | "timeout" | "error"
-    }
-  }
-}
-
 export type SessionStatus =
   | {
       type: "idle"
@@ -580,6 +581,10 @@ export type SessionStatus =
       sources: Array<string>
       timeout: number
       mode: "all" | "any"
+      time: {
+        created: number
+        deadline?: number
+      }
     }
 
 export type EventSessionStatus = {
@@ -670,7 +675,7 @@ export type Session = {
   parentID?: string
   sessionType?: "primary" | "subagent"
   agentName?: string
-  callerID?: string
+  subagentPrompt?: string
   childrenIDs?: Array<string>
   summary?: {
     additions: number
@@ -813,11 +818,11 @@ export type Event =
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
+  | EventSessionMessageDelivered
   | EventPermissionUpdated
   | EventPermissionReplied
   | EventFileEdited
   | EventTodoUpdated
-  | EventSessionMessageDelivered
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
