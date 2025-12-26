@@ -272,9 +272,64 @@ export namespace ProviderTransform {
     })
   }
 
+  function sanitizeOpenAIOrphanReasoning(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
+    const isOpenAI = model.api.npm === "@ai-sdk/openai"
+    const isOpenAICompatibleGPT5 = model.api.npm === "@ai-sdk/openai-compatible" && model.api.id.includes("gpt-5")
+    if (!isOpenAI && !isOpenAICompatibleGPT5) return msgs
+
+    const out: ModelMessage[] = []
+
+    for (const msg of msgs) {
+      if (msg.role !== "assistant") {
+        out.push(msg)
+        continue
+      }
+
+      if (!Array.isArray(msg.content)) {
+        out.push(msg)
+        continue
+      }
+
+      const reasoning = msg.content.filter((part) => part.type === "reasoning")
+      if (reasoning.length === 0) {
+        out.push(msg)
+        continue
+      }
+
+      const nonReasoning = msg.content.filter((part) => part.type !== "reasoning")
+      if (nonReasoning.length > 0) {
+        out.push(msg)
+        continue
+      }
+
+      const summary = reasoning
+        .map((part) => (part as { text?: unknown }).text)
+        .filter((t): t is string => typeof t === "string")
+        .join("")
+        .trim()
+
+      const text = summary
+        ? `[Recovery note] Previous generation was interrupted after emitting a reasoning summary, but no final output/tool call was produced. The original reasoning item cannot be replayed safely. Partial summary (for context only):\n\n${summary}`
+        : "[Recovery note] Previous generation was interrupted during reasoning. No usable summary was captured."
+
+      out.push({
+        ...msg,
+        content: [
+          {
+            type: "text",
+            text,
+          },
+        ],
+      })
+    }
+
+    return out
+  }
+
   export function message(msgs: ModelMessage[], model: Provider.Model) {
     msgs = unsupportedParts(msgs, model)
     msgs = normalizeMessages(msgs, model)
+    msgs = sanitizeOpenAIOrphanReasoning(msgs, model)
     if (
       model.providerID === "anthropic" ||
       model.api.id.includes("anthropic") ||
