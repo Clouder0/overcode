@@ -2,7 +2,22 @@
 
 ## Overview
 
-This document specifies a unified message-based protocol for all agent communication in OpenCode. The protocol replaces the existing job-based system with a simpler, more flexible design that treats all communication (human ↔ agent, agent ↔ subagent) uniformly.
+This document originally specified a unified XML-tag message protocol (`<message>` / `<wait>`) for agent communication in OpenCode.
+
+## Status (deprecated)
+
+The XML-tag protocol described below is no longer used by the runtime. OpenCode now uses tool-based agent↔agent messaging:
+
+- `send_message({ to: "ses_...", text: "..." })` (subagents may use `to: "caller"`)
+- `wait_message({ sources: ["ses_..."], timeout: 60000, mode: "all" | "any" })`
+
+Notes:
+
+- `wait_message` sources must be a non-empty list of explicit session IDs (no `"children"`, `"caller"`, or `"human"`).
+- `wait_message` timeout must be `> 0` milliseconds.
+- XML tags like `<message>` / `<wait>` are not parsed for routing and will be shown as literal text.
+
+Authoritative runtime guidance: `packages/opencode/src/session/system.ts`.
 
 ## Design Principles
 

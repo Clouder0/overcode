@@ -21,15 +21,106 @@ process.env["XDG_CACHE_HOME"] = path.join(dir, "cache")
 process.env["XDG_CONFIG_HOME"] = path.join(dir, "config")
 process.env["XDG_STATE_HOME"] = path.join(dir, "state")
 
-// Pre-fetch models.json so tests don't need the macro fallback
-// Also write the cache version file to prevent global/index.ts from clearing the cache
+// Pre-populate models.json so tests don't depend on network.
+// Also write the cache version file to prevent global/index.ts from clearing the cache.
 const cacheDir = path.join(dir, "cache", "opencode")
 await fs.mkdir(cacheDir, { recursive: true })
 await fs.writeFile(path.join(cacheDir, "version"), "14")
-const response = await fetch("https://models.dev/api.json")
-if (response.ok) {
-  await fs.writeFile(path.join(cacheDir, "models.json"), await response.text())
+
+const modelsDevFixture = {
+  anthropic: {
+    id: "anthropic",
+    name: "Anthropic",
+    api: "https://api.anthropic.com/v1",
+    npm: "@ai-sdk/anthropic",
+    env: ["ANTHROPIC_API_KEY"],
+    models: {
+      "claude-sonnet-4-20250514": {
+        id: "claude-sonnet-4-20250514",
+        name: "Claude Sonnet 4",
+        release_date: "2025-05-14",
+        attachment: true,
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 200000, output: 8192 },
+        modalities: { input: ["text"], output: ["text"] },
+        options: {},
+      },
+      "claude-3-5-haiku-20241022": {
+        id: "claude-3-5-haiku-20241022",
+        name: "Claude 3.5 Haiku",
+        release_date: "2024-10-22",
+        attachment: true,
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 200000, output: 8192 },
+        modalities: { input: ["text"], output: ["text"] },
+        options: {},
+      },
+    },
+    options: {},
+  },
+  openai: {
+    id: "openai",
+    name: "OpenAI",
+    api: "https://api.openai.com/v1",
+    npm: "@ai-sdk/openai",
+    env: ["OPENAI_API_KEY"],
+    models: {
+      "gpt-4": {
+        id: "gpt-4",
+        name: "GPT-4",
+        release_date: "2024-01-01",
+        attachment: true,
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 128000, output: 4096 },
+        modalities: { input: ["text"], output: ["text"] },
+        options: {},
+      },
+      "gpt-5": {
+        id: "gpt-5",
+        name: "GPT-5",
+        release_date: "2025-01-01",
+        attachment: true,
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 256000, output: 8192 },
+        modalities: { input: ["text"], output: ["text"] },
+        options: {},
+      },
+    },
+    options: {},
+  },
+  openrouter: {
+    id: "openrouter",
+    name: "OpenRouter",
+    api: "https://openrouter.ai/api/v1",
+    npm: "@openrouter/ai-sdk-provider",
+    env: ["OPENROUTER_API_KEY"],
+    models: {
+      "anthropic/claude-3-opus": {
+        id: "anthropic/claude-3-opus",
+        name: "Claude 3 Opus (OpenRouter)",
+        release_date: "2024-03-01",
+        attachment: true,
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 200000, output: 8192 },
+        modalities: { input: ["text"], output: ["text"] },
+        options: {},
+      },
+    },
+    options: {},
+  },
 }
+
+await fs.writeFile(path.join(cacheDir, "models.json"), JSON.stringify(modelsDevFixture))
 // Disable models.dev refresh to avoid race conditions during tests
 process.env["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
 

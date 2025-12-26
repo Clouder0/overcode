@@ -45,9 +45,8 @@ import { Shell } from "@/shell/shell"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { SessionMessage } from "./message-routing"
-import { MessageWait } from "./message-wait"
+import { WaitPolicy } from "./wait-policy"
 import { MessageParser } from "./message-parser"
-import { Storage } from "@/storage/storage"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -77,16 +76,145 @@ export namespace SessionPrompt {
     },
   )
 
+  const wake = (sessionID: string) => {
+    log.info("waking session", { sessionID })
+    loop(sessionID).catch((error) => {
+      log.error("failed to wake session", { sessionID, error: error?.message })
+    })
+  }
+
   // Register wake function with SessionMessage to handle dormant session wakeup
   // This avoids circular dependency (message-routing -> prompt)
-  SessionMessage.setWakeSessionFn((sessionID) => {
+  async function persistDeliveredMessage(message: SessionMessage.Message) {
+    const sessionID = message.to
+
+    const agentName = await lastAgent(sessionID)
+    const agentInfo = await Agent.get(agentName)
+
+    const uiMessage: MessageV2.User = {
+      id: message.id,
+      sessionID,
+      time: { created: message.time },
+      role: "user",
+      agent: agentName,
+      model: agentInfo?.model ?? (await lastModel(sessionID)),
+    }
+
+    await Session.updateMessage(uiMessage)
+
+    const msgPart: MessageV2.MessagePart = {
+      id: Identifier.ascending("part"),
+      messageID: uiMessage.id,
+      sessionID,
+      type: "message",
+      direction: "incoming",
+      peer: message.from,
+      peerType: message.from === "human" ? "human" : "agent",
+      text: message.text,
+      timeoutOccurred: message.messageType === "timeout",
+      time: { created: message.time },
+    }
+
+    await Session.updatePart(msgPart)
+  }
+
+  async function updateWaitProgress(sessionID: string, policy: WaitPolicy.Policy) {
+    const pending = SessionMessage.peekPending(sessionID)
+    const pendingFromSources = new Set(pending.filter((m) => policy.sources.includes(m.from)).map((m) => m.from))
+
+    const result = WaitPolicy.evaluate({
+      policy,
+      pendingFromSources,
+    })
+
+    const parts = await MessageV2.parts(policy.messageID)
+    const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === policy.callID)
+    if (!tool) return
+
+    const meta = {
+      ok: true,
+      status: result.timedOut ? "timedOut" : "waiting",
+      sources: policy.sources,
+      respondedSources: result.respondedSources,
+      timedOutSources: result.timedOut ? result.missingSources : [],
+      timeout: policy.timeout,
+      mode: policy.mode,
+      allReceived: false,
+      createdAt: policy.time.created,
+      deadline: policy.time.deadline,
+    }
+
+    if (tool.state.status === "pending") return
+
+    await Session.updatePart({
+      ...tool,
+      state: {
+        ...tool.state,
+        metadata: meta,
+      },
+    })
+  }
+
+  SessionMessage.setWakeSessionFn((message) => {
+    const sessionID = message.to
+
+    // Persist immediately so the TUI can show queued agent messages while busy.
+    persistDeliveredMessage(message).catch((error) => {
+      log.error("failed to persist delivered message", { sessionID, error: error?.message })
+    })
+
+    // If the session loop is currently running, let it observe pending messages directly.
+    if (state()[sessionID]) return
+
     const status = SessionStatus.get(sessionID)
     if (status.type === "idle") {
-      log.info("waking dormant session", { sessionID })
-      loop(sessionID).catch((error) => {
-        log.error("failed to wake session", { sessionID, error: error?.message })
-      })
+      wake(sessionID)
+      return
     }
+
+    if (status.type === "waiting") {
+      const policy = WaitPolicy.get(sessionID)
+      if (!policy) {
+        // Avoid getting stuck in an unwakeable "waiting" state.
+        SessionStatus.set(sessionID, { type: "idle" })
+        wake(sessionID)
+        return
+      }
+
+      updateWaitProgress(sessionID, policy).catch((error) => {
+        log.error("failed to update wait progress", { sessionID, error: error?.message })
+      })
+
+      const pending = SessionMessage.peekPending(sessionID)
+      const pendingFromSources = new Set(pending.filter((m) => policy.sources.includes(m.from)).map((m) => m.from))
+
+      const result = WaitPolicy.evaluate({
+        policy,
+        pendingFromSources,
+      })
+
+      if (!result.ready) return
+
+      wake(sessionID)
+      return
+    }
+
+    if (status.type === "busy" || status.type === "retry") {
+      // Status can become stale if a loop exits unexpectedly.
+      SessionStatus.set(sessionID, { type: "idle" })
+      wake(sessionID)
+    }
+  })
+
+  // Allow WaitPolicy timers (timeout/debounce) to wake sessions.
+  WaitPolicy.setWakeFn((sessionID) => {
+    // Don't start a concurrent loop; the active loop will observe the timeout/debounce itself.
+    if (state()[sessionID]) return
+
+    const status = SessionStatus.get(sessionID)
+    if (status.type === "retry") return
+
+    wake(sessionID)
   })
 
   // Session-scoped extra tools (e.g., bridge tools for worker sessions)
@@ -120,6 +248,9 @@ export namespace SessionPrompt {
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
     if (match) throw new Session.BusyError(sessionID)
+
+    const status = SessionStatus.get(sessionID)
+    if (status.type === "waiting") throw new Session.BusyError(sessionID)
   }
 
   export const PromptInput = z.object({
@@ -185,6 +316,12 @@ export namespace SessionPrompt {
   export const prompt = fn(PromptInput, async (input) => {
     const session = await Session.get(input.sessionID)
     await SessionRevert.cleanup(session)
+
+    // Human input cancels waiting.
+    if (WaitPolicy.isWaiting(input.sessionID)) {
+      WaitPolicy.clear(input.sessionID)
+      SessionStatus.set(input.sessionID, { type: "idle" })
+    }
 
     const message = await createUserMessage(input)
     await Session.touch(input.sessionID)
@@ -268,18 +405,43 @@ export namespace SessionPrompt {
     return controller.signal
   }
 
-  export function cancel(sessionID: string) {
+  export function cancel(sessionID: string, input?: { force?: boolean }) {
     log.info("cancel", { sessionID })
     const s = state()
     const match = s[sessionID]
-    if (!match) return
+
+    const force = input?.force !== false
+
+    // Waiting sessions exit the loop, so there may be no active abort controller.
+    // Still allow a forced cancel to clear wait state.
+    if (!match) {
+      if (force) {
+        const wasWaiting = WaitPolicy.isWaiting(sessionID)
+        WaitPolicy.clear(sessionID)
+        SessionStatus.set(sessionID, { type: "idle" })
+        if (wasWaiting && SessionMessage.hasPending(sessionID)) {
+          wake(sessionID)
+        }
+      }
+      return
+    }
+
     match.abort.abort()
     for (const item of match.callbacks) {
       item.reject()
     }
     delete s[sessionID]
-    SessionStatus.set(sessionID, { type: "idle" })
-    return
+
+    if (force) {
+      WaitPolicy.clear(sessionID)
+      SessionStatus.set(sessionID, { type: "idle" })
+      return
+    }
+
+    const status = SessionStatus.get(sessionID)
+    if (status.type !== "waiting") {
+      SessionStatus.set(sessionID, { type: "idle" })
+    }
   }
 
   export const loop = fn(Identifier.schema("session"), async (sessionID) => {
@@ -291,20 +453,55 @@ export namespace SessionPrompt {
       })
     }
 
-    using _ = defer(() => cancel(sessionID))
+    using _ = defer(() => cancel(sessionID, { force: false }))
 
     let step = 0
     while (true) {
-      SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
       if (abort.aborted) break
 
-      // Check for incoming messages from other sessions
-      if (SessionMessage.hasPending(sessionID)) {
-        const incoming = SessionMessage.pending(sessionID)
-        for (const msg of incoming) {
-          // Create user message for the incoming message
-          // Get the agent to check for configured model - subagents should use their own model setting
+      const wait = WaitPolicy.get(sessionID)
+      if (wait) {
+        const pending = SessionMessage.peekPending(sessionID)
+        const pendingFromSources = new Set(pending.filter((m) => wait.sources.includes(m.from)).map((m) => m.from))
+
+        const result = WaitPolicy.evaluate({
+          policy: wait,
+          pendingFromSources,
+        })
+
+        if (!result.ready) {
+          SessionStatus.set(sessionID, {
+            type: "waiting",
+            sources: wait.sources,
+            timeout: wait.timeout,
+            mode: wait.mode,
+            time: wait.time,
+          })
+          break
+        }
+
+        SessionStatus.set(sessionID, { type: "busy" })
+
+        const taken = SessionMessage.pending(sessionID)
+
+        const respondedSources = result.respondedSources
+        const timedOutSources = result.timedOut ? result.missingSources : []
+
+        const timeoutMessages = timedOutSources.map(
+          (s): SessionMessage.Message => ({
+            id: Identifier.ascending("message"),
+            from: s,
+            to: sessionID,
+            text: MessageParser.formatTimeoutMessage(wait.timeout),
+            time: Date.now(),
+            messageType: "timeout",
+          }),
+        )
+
+        const incoming = [...taken, ...timeoutMessages]
+
+        if (incoming.length > 0) {
           const agentName = await lastAgent(sessionID)
           const agentInfo = await Agent.get(agentName)
           const incomingMessage: MessageV2.User = {
@@ -317,8 +514,25 @@ export namespace SessionPrompt {
           }
           await Session.updateMessage(incomingMessage)
 
-          // Format and add as text part
-          const formatted = MessageParser.formatIncoming(msg.from, msg.text, msg.messageType === "timeout")
+          // Create MessageParts only for timeout messages (taken messages already persisted by persistDeliveredMessage)
+          for (const msg of timeoutMessages) {
+            const msgPart: MessageV2.MessagePart = {
+              id: Identifier.ascending("part"),
+              messageID: incomingMessage.id,
+              sessionID,
+              type: "message",
+              direction: "incoming",
+              peer: msg.from,
+              peerType: msg.from === "human" ? "human" : "agent",
+              text: msg.text,
+              timeoutOccurred: msg.messageType === "timeout",
+              time: { created: msg.time },
+            }
+            await Session.updatePart(msgPart)
+          }
+
+          // Also create a synthetic TextPart with formatted text for LLM context
+          const formatted = MessageParser.formatInbox(incoming)
           const incomingPart: MessageV2.TextPart = {
             id: Identifier.ascending("part"),
             messageID: incomingMessage.id,
@@ -328,21 +542,105 @@ export namespace SessionPrompt {
             synthetic: true,
           }
           await Session.updatePart(incomingPart)
+        }
 
-          // Also create MessagePart for UI display
-          const msgPart: MessageV2.MessagePart = {
+        const parts = await MessageV2.parts(wait.messageID)
+        const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === wait.callID)
+
+        if (tool && tool.state.status === "completed") {
+          const status = result.timedOut ? "timedOut" : "resolved"
+          const allReceived = wait.mode === "all" && !result.timedOut
+
+          const meta = {
+            ok: true,
+            status,
+            sources: wait.sources,
+            respondedSources,
+            timedOutSources,
+            timeout: wait.timeout,
+            mode: wait.mode,
+            allReceived,
+            createdAt: wait.time.created,
+            deadline: wait.time.deadline,
+          }
+
+          await Session.updatePart({
+            ...tool,
+            state: {
+              ...tool.state,
+              title: status === "resolved" ? "Wait resolved" : "Wait timed out",
+              output: "",
+              metadata: meta,
+            },
+          })
+        }
+
+        WaitPolicy.clear(sessionID)
+        SessionStatus.set(sessionID, { type: "busy" })
+        continue
+      }
+
+      SessionStatus.set(sessionID, { type: "busy" })
+
+      // For subagents with a prompt, create an initial user message if none exists
+      const sessionInfo = await Session.get(sessionID)
+      if (sessionInfo.sessionType === "subagent" && sessionInfo.subagentPrompt) {
+        const existingMsgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+        if (existingMsgs.length === 0) {
+          const agentName = sessionInfo.agentName ?? (await lastAgent(sessionID))
+          const agentInfo = await Agent.get(agentName)
+          const initialMessage: MessageV2.User = {
+            id: Identifier.ascending("message"),
+            sessionID,
+            time: { created: Date.now() },
+            role: "user",
+            agent: agentName,
+            model: agentInfo?.model ?? (await lastModel(sessionID)),
+          }
+          await Session.updateMessage(initialMessage)
+
+          const initialPart: MessageV2.TextPart = {
+            id: Identifier.ascending("part"),
+            messageID: initialMessage.id,
+            sessionID,
+            type: "text",
+            text: "Begin your task as specified in the system prompt.",
+            synthetic: true,
+          }
+          await Session.updatePart(initialPart)
+          // Continue loop to process the initial message
+          continue
+        }
+      }
+
+      // Check for incoming messages from other sessions
+      if (SessionMessage.hasPending(sessionID)) {
+        const incoming = SessionMessage.pending(sessionID)
+        if (incoming.length > 0) {
+          // Create a single synthetic user message containing an inbox snapshot.
+          // This avoids losing earlier messages when multiple arrive at once.
+          const agentName = await lastAgent(sessionID)
+          const agentInfo = await Agent.get(agentName)
+          const incomingMessage: MessageV2.User = {
+            id: Identifier.ascending("message"),
+            sessionID,
+            time: { created: Date.now() },
+            role: "user",
+            agent: agentName,
+            model: agentInfo?.model ?? (await lastModel(sessionID)),
+          }
+          await Session.updateMessage(incomingMessage)
+
+          const formatted = MessageParser.formatInbox(incoming)
+          const incomingPart: MessageV2.TextPart = {
             id: Identifier.ascending("part"),
             messageID: incomingMessage.id,
             sessionID,
-            type: "message",
-            direction: "incoming",
-            peer: msg.from,
-            peerType: msg.from === "human" ? "human" : "agent",
-            text: msg.text,
-            timeoutOccurred: msg.messageType === "timeout",
-            time: { created: msg.time },
+            type: "text",
+            text: formatted,
+            synthetic: true,
           }
-          await Session.updatePart(msgPart)
+          await Session.updatePart(incomingPart)
         }
         // Continue loop to process the incoming messages
         continue
@@ -356,7 +654,20 @@ export namespace SessionPrompt {
       let tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
       for (let i = msgs.length - 1; i >= 0; i--) {
         const msg = msgs[i]
-        if (!lastUser && msg.info.role === "user") lastUser = msg.info as MessageV2.User
+        if (
+          !lastUser &&
+          msg.info.role === "user" &&
+          msg.parts.some((part) => {
+            if (part.type === "text") return !part.ignored
+            if (part.type === "file") return true
+            if (part.type === "compaction") return true
+            if (part.type === "subtask") return true
+            if (part.type === "agent") return true
+            return false
+          })
+        ) {
+          lastUser = msg.info as MessageV2.User
+        }
         if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info as MessageV2.Assistant
         if (!lastFinished && msg.info.role === "assistant" && msg.info.finish)
           lastFinished = msg.info as MessageV2.Assistant
@@ -492,7 +803,12 @@ export namespace SessionPrompt {
         system: [
           ...(await SystemPrompt.environment()),
           ...(await SystemPrompt.custom()),
-          ...SystemPrompt.messageProtocol(currentSession.sessionType, currentSession.callerID),
+          ...SystemPrompt.messageProtocol(
+            currentSession.sessionType,
+            sessionID,
+            currentSession.callerID,
+            currentSession.subagentPrompt,
+          ),
         ],
         messages: [
           ...MessageV2.toModelMessage(sessionMessages),
@@ -509,180 +825,35 @@ export namespace SessionPrompt {
         model,
       })
 
-      // Parse message protocol from LLM output
-      const textParts = await MessageV2.parts(processor.message.id).then((parts) =>
-        parts.filter((p): p is MessageV2.TextPart => p.type === "text"),
-      )
-      const fullText = textParts.map((p) => p.text).join("\n")
-      const parsed = MessageParser.parse(fullText)
+      // Agent↔agent messaging and waiting are handled via tools (send_agent_message / wait_agent_message).
 
-      // STRICT STRUCTURAL OUTPUT: All output must be in structural tags
-      if (parsed.malformed) {
-        SessionMessage.deliver({
-          from: "system",
-          to: sessionID,
-          text: `Invalid output format. All output must be in structural tags - no raw text allowed.
-
-Valid formats:
-- <message to="TARGET" timeout="TIMEOUT">content</message>
-- <wait sources="SOURCE1,SOURCE2" timeout="TIMEOUT" mode="all|any"/>
-
-Use provider-level reasoning/thinking for internal thought process.
-Raw text found: "${parsed.remainingText.slice(0, 100)}${parsed.remainingText.length > 100 ? "..." : ""}"`,
-        })
-        continue
-      }
-
-      // Remove text parts since content is in structural tags (strict output)
-      for (const part of textParts) {
-        await Storage.remove(["part", processor.message.id, part.id])
-        Bus.publish(MessageV2.Event.PartRemoved, {
-          sessionID,
-          messageID: processor.message.id,
-          partID: part.id,
-        })
-      }
-
-      // Create MessagePart for each <message> and deliver
-      for (const msg of parsed.messages) {
-        const targetID = await SessionMessage.resolveTarget(msg.to, sessionID)
-        await SessionMessage.deliver({
-          from: sessionID,
-          to: targetID,
-          text: msg.content,
+      if (currentSession.sessionType === "subagent") {
+        const parts = await MessageV2.parts(processor.message.id)
+        const sends = parts.filter(
+          (p): p is MessageV2.ToolPart =>
+            p.type === "tool" && p.tool === "send_agent_message" && p.state.status === "completed",
+        )
+        const okSends = sends.filter((p) => {
+          if (p.state.status !== "completed") return false
+          return (p.state.metadata as { ok?: boolean } | undefined)?.ok === true
         })
 
-        // Create outgoing MessagePart so the UI can show what was sent
-        const outgoingPart: MessageV2.MessagePart = {
-          id: Identifier.ascending("part"),
-          messageID: processor.message.id,
-          sessionID,
-          type: "message",
-          direction: "outgoing",
-          peer: targetID,
-          peerType: targetID === "human" ? "human" : "agent",
-          text: msg.content,
-          timeout: msg.timeout,
-          time: { created: Date.now() },
+        const waits = parts.filter((p): p is MessageV2.ToolPart => p.type === "tool" && p.tool === "wait_agent_message")
+        const hasWait = waits.some((p) => {
+          if (p.state.status !== "completed") return false
+          return (p.state.metadata as { ok?: boolean } | undefined)?.ok === true
+        })
+
+        if (okSends.length > 0 && !hasWait) {
+          break
         }
-        await Session.updatePart(outgoingPart)
-      }
-
-      // Handle waiting: explicit <wait> tag or single message timeout
-      // Protocol rule: At most one <wait> tag, must be last element
-      if (parsed.wait) {
-        const session = await Session.get(sessionID)
-        const sources = parsed.wait.sources[0] === "children" ? session.childrenIDs : parsed.wait.sources
-
-        if (sources.length > 0) {
-          const waitPart: MessageV2.WaitPart = {
-            id: Identifier.ascending("part"),
-            messageID: processor.message.id,
-            sessionID,
-            type: "wait",
-            sources,
-            timeout: parsed.wait.timeout,
-            mode: parsed.wait.mode,
-            status: "waiting",
-            respondedSources: [],
-            time: { created: Date.now() },
-          }
-          await Session.updatePart(waitPart)
-
-          SessionStatus.set(sessionID, {
-            type: "waiting",
-            sources,
-            timeout: parsed.wait.timeout,
-            mode: parsed.wait.mode,
-          })
-
-          const waitResult = await MessageWait.wait({
-            sessionID,
-            sources,
-            timeout: parsed.wait.timeout,
-            mode: parsed.wait.mode,
-          })
-
-          await Session.updatePart({
-            ...waitPart,
-            status: waitResult.allReceived ? "resolved" : "timedOut",
-            respondedSources: waitResult.responses.filter((r) => !r.timedOut).map((r) => r.from),
-            time: { ...waitPart.time, resolved: Date.now() },
-          })
-
-          SessionStatus.set(sessionID, { type: "busy" })
-
-          for (const response of waitResult.responses) {
-            if (response.timedOut) {
-              SessionMessage.deliver({
-                from: response.from,
-                to: sessionID,
-                text: response.text,
-                messageType: "timeout",
-              })
-            }
-          }
-        }
-      } else {
-        // No explicit <wait> - check for single message timeout
-        // Timeout semantics:
-        //   timeout=-1: Final response - ends turn, waits indefinitely for incoming messages
-        //   timeout=0:  Continue/progress - ends turn, auto-continue injected
-        //   timeout>0:  Timed wait - register timeout alert, send timeout message if action still pending
-        const waitingMessage = parsed.messages.find((m) => m.timeout > 0)
-        if (waitingMessage) {
-          const targetID = await SessionMessage.resolveTarget(waitingMessage.to, sessionID)
-          if (targetID !== "human") {
-            SessionStatus.set(sessionID, {
-              type: "waiting",
-              sources: [targetID],
-              timeout: waitingMessage.timeout,
-              mode: "all",
-            })
-
-            const waitResult = await MessageWait.wait({
-              sessionID,
-              sources: [targetID],
-              timeout: waitingMessage.timeout,
-              mode: "all",
-            })
-
-            SessionStatus.set(sessionID, { type: "busy" })
-
-            for (const response of waitResult.responses) {
-              if (response.timedOut) {
-                SessionMessage.deliver({
-                  from: response.from,
-                  to: sessionID,
-                  text: response.text,
-                  messageType: "timeout",
-                })
-              }
-            }
-          }
-        }
-      }
-
-      // Auto-continue: if all messages have timeout=0 and no explicit <wait>,
-      // system injects "Continue" so the agent keeps working
-      const shouldAutoContinue =
-        parsed.messages.length > 0 && !parsed.wait && parsed.messages.every((m) => m.timeout === 0)
-
-      if (shouldAutoContinue) {
-        SessionMessage.deliver({
-          from: "system",
-          to: sessionID,
-          text: "Continue",
-        })
-        continue
       }
 
       if (result === "stop") break
       continue
     }
 
-    // Note: Subagent messages to caller are delivered via the message protocol (line 534)
-    // No separate completion handler needed - avoids duplicate delivery
+    // Subagent messages to caller are sent via send_agent_message tool calls.
 
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {

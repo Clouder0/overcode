@@ -1,22 +1,17 @@
 import z from "zod"
-import { BusEvent } from "@/bus/bus-event"
 import { Bus } from "@/bus"
+import { BusEvent } from "@/bus/bus-event"
 import { Identifier } from "@/id/id"
-import { Session } from "./index"
 import { Log } from "@/util/log"
-import { MessageWait } from "./message-wait"
 
 export namespace SessionMessage {
   const log = Log.create({ service: "session-message" })
 
-  // Register the peekPending function with MessageWait to avoid circular dependency
-  // This is called when this module loads
-  MessageWait.setPeekPendingFn((sessionID) => peekPending(sessionID))
+  // Callback invoked when a message is delivered.
+  // Set by prompt.ts to avoid circular dependency.
+  let wakeSessionFn: ((message: Message) => void) | undefined
 
-  // Callback to wake dormant sessions - set by prompt.ts to avoid circular dependency
-  let wakeSessionFn: ((sessionID: string) => void) | undefined
-
-  export function setWakeSessionFn(fn: (sessionID: string) => void) {
+  export function setWakeSessionFn(fn: (message: Message) => void) {
     wakeSessionFn = fn
   }
 
@@ -58,27 +53,14 @@ export namespace SessionMessage {
 
     log.info("delivering message", { from: message.from, to: message.to })
 
-    if (message.to === "human") {
-      Bus.publish(Event.Delivered, { message })
-      return message
-    }
-
-    // Check if the target session is waiting for messages from this source
-    // This integrates the message delivery with the wait system
-    const handled = MessageWait.onMessage(message.to, message.from, message.text)
-    if (handled) {
-      log.info("message handled by wait system", { from: message.from, to: message.to })
-    }
-
-    // Always add to pending queue for normal processing
+    // Add to pending queue
     const queue = pendingMessages.get(message.to) ?? []
     queue.push(message)
     pendingMessages.set(message.to, queue)
 
     // Wake up dormant session to process the message
-    // This allows subagents to receive follow-up messages after completing their initial task
     if (wakeSessionFn) {
-      wakeSessionFn(message.to)
+      wakeSessionFn(message)
     }
 
     Bus.publish(Event.Delivered, { message })
@@ -91,6 +73,25 @@ export namespace SessionMessage {
     return queue
   }
 
+  export function takePending(sessionID: string, predicate: (message: Message) => boolean): Message[] {
+    const queue = pendingMessages.get(sessionID) ?? []
+    if (queue.length === 0) return []
+
+    const taken: Message[] = []
+    const remaining: Message[] = []
+
+    for (const msg of queue) {
+      if (predicate(msg)) {
+        taken.push(msg)
+        continue
+      }
+      remaining.push(msg)
+    }
+
+    pendingMessages.set(sessionID, remaining)
+    return taken
+  }
+
   export function hasPending(sessionID: string): boolean {
     const queue = pendingMessages.get(sessionID)
     return queue !== undefined && queue.length > 0
@@ -98,18 +99,6 @@ export namespace SessionMessage {
 
   export function peekPending(sessionID: string): Message[] {
     return pendingMessages.get(sessionID) ?? []
-  }
-
-  export async function resolveTarget(to: string, fromSessionID: string): Promise<string> {
-    if (to === "human") return "human"
-
-    if (to === "caller") {
-      const session = await Session.get(fromSessionID)
-      if (session.callerID) return session.callerID
-      return "human"
-    }
-
-    return to
   }
 
   export function subscribe(sessionID: string, callback: (message: Message) => void): () => void {

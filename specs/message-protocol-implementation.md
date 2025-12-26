@@ -2,7 +2,23 @@
 
 ## Executive Summary
 
-This document outlines the plan to migrate from the existing job-based subagent system to the new unified message-based communication protocol. The migration is designed to be incremental, allowing parallel operation during transition.
+This document outlines a historical plan to migrate from the existing job-based subagent system to a unified message-based communication protocol.
+
+## Status (historical)
+
+The plan in this document was based on an XML-tag protocol (`<message>` / `<wait>`) and references many file paths that have since moved. The current runtime implementation uses tool-based messaging:
+
+- `send_message({ to: "ses_..." | "caller", text: "..." })`
+- `wait_message({ sources: ["ses_..."], timeout: 60000, mode: "all" | "any" })` (explicit session IDs only, `timeout > 0`)
+
+Treat the remainder of this document as historical context. For current behavior, see:
+
+- `packages/opencode/src/tool/send-message.ts`
+- `packages/opencode/src/tool/wait-message.ts`
+- `packages/opencode/src/session/message-routing.ts`
+- `packages/opencode/src/session/wait-policy.ts`
+- `packages/opencode/src/session/prompt.ts`
+- `packages/opencode/src/session/system.ts`
 
 ## Current State Analysis
 

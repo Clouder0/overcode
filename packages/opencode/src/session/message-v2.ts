@@ -570,14 +570,6 @@ export namespace MessageV2 {
               providerMetadata: part.metadata,
             })
           }
-          // Include outgoing messages so LLM remembers what it communicated
-          if (part.type === "message" && part.direction === "outgoing") {
-            const timeoutAttr = part.timeout !== undefined ? ` timeout="${part.timeout}"` : ""
-            assistantMessage.parts.push({
-              type: "text",
-              text: `<message to="${part.peer}"${timeoutAttr}>\n${part.text}\n</message>`,
-            })
-          }
         }
       }
     }

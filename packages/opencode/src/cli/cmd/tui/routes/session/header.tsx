@@ -87,7 +87,7 @@ export function Header() {
     return sync.data.session.filter((s) => {
       if (s.parentID !== current.id) return false
       const status = sync.data.session_status?.[s.id]
-      return status?.type === "busy" || status?.type === "retry"
+      return status?.type === "busy" || status?.type === "retry" || status?.type === "waiting"
     }).length
   })
 

@@ -11,6 +11,8 @@ import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import { LspTool } from "./lsp"
 import { SubagentSpawnTool } from "./subagent-spawn"
+import { SendAgentMessageTool } from "./send-agent-message"
+import { WaitAgentMessageTool } from "./wait-agent-message"
 import type { Agent } from "../agent/agent"
 import { Tool } from "./tool"
 import { Instance } from "../project/instance"
@@ -97,6 +99,8 @@ export namespace ToolRegistry {
       EditTool,
       WriteTool,
       SubagentSpawnTool,
+      SendAgentMessageTool,
+      WaitAgentMessageTool,
       WebFetchTool,
       TodoWriteTool,
       TodoReadTool,

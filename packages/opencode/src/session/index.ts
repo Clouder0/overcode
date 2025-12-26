@@ -13,6 +13,8 @@ import { Log } from "../util/log"
 import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
+import { SessionMessage } from "./message-routing"
+import { WaitPolicy } from "./wait-policy"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
@@ -44,6 +46,7 @@ export namespace Session {
       sessionType: z.enum(["primary", "subagent"]).default("primary"),
       agentName: z.string().optional(), // Agent type for subagent sessions (e.g., "explore", "librarian")
       callerID: Identifier.schema("session").optional(),
+      subagentPrompt: z.string().optional(), // Task prompt for subagent sessions (appears in system prompt)
       childrenIDs: z.array(Identifier.schema("session")).default([]),
       summary: z
         .object({
@@ -186,7 +189,13 @@ export namespace Session {
     sessionType?: "primary" | "subagent"
     agentName?: string
     callerID?: string
+    subagentPrompt?: string
   }) {
+    // Subagent sessions must have a callerID
+    if (input.sessionType === "subagent" && !input.callerID) {
+      throw new Error("callerID is required for subagent sessions")
+    }
+
     const result: Info = {
       id: Identifier.descending("session", input.id),
       version: Installation.VERSION,
@@ -196,6 +205,7 @@ export namespace Session {
       sessionType: input.sessionType ?? "primary",
       agentName: input.agentName,
       callerID: input.callerID,
+      subagentPrompt: input.subagentPrompt,
       childrenIDs: [],
       title: input.title ?? createDefaultTitle(!!input.parentID),
       time: {
@@ -339,6 +349,11 @@ export namespace Session {
         await remove(child.id)
       }
       await unshare(sessionID).catch(() => {})
+
+      // Clean up messaging state
+      SessionMessage.clear(sessionID)
+      WaitPolicy.clear(sessionID)
+
       for (const msg of await Storage.list(["message", sessionID])) {
         for (const part of await Storage.list(["part", msg.at(-1)!])) {
           await Storage.remove(part)

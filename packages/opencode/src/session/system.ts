@@ -1,24 +1,22 @@
+import os from "node:os"
+import path from "node:path"
+import type { Provider } from "@/provider/provider"
+import { Config } from "../config/config"
 import { Ripgrep } from "../file/ripgrep"
 import { Global } from "../global"
-import { Filesystem } from "../util/filesystem"
-import { Config } from "../config/config"
-
 import { Instance } from "../project/instance"
-import path from "path"
-import os from "os"
+import { Filesystem } from "../util/filesystem"
 
 import PROMPT_ANTHROPIC from "./prompt/anthropic.txt"
-import PROMPT_ANTHROPIC_WITHOUT_TODO from "./prompt/qwen.txt"
-import PROMPT_POLARIS from "./prompt/polaris.txt"
-import PROMPT_BEAST from "./prompt/beast.txt"
-import PROMPT_GEMINI from "./prompt/gemini.txt"
 import PROMPT_ANTHROPIC_SPOOF from "./prompt/anthropic_spoof.txt"
+import PROMPT_BEAST from "./prompt/beast.txt"
+import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
+import PROMPT_GEMINI from "./prompt/gemini.txt"
+import PROMPT_POLARIS from "./prompt/polaris.txt"
+import PROMPT_ANTHROPIC_WITHOUT_TODO from "./prompt/qwen.txt"
 import PROMPT_SUMMARIZE from "./prompt/summarize.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
-
-import PROMPT_CODEX from "./prompt/codex.txt"
-import type { Provider } from "@/provider/provider"
 
 export namespace SystemPrompt {
   export function header(providerID: string) {
@@ -119,7 +117,7 @@ export namespace SystemPrompt {
       Bun.file(p)
         .text()
         .catch(() => "")
-        .then((x) => "Instructions from: " + p + "\n" + x),
+        .then((x) => `Instructions from: ${p}\n${x}`),
     )
     return Promise.all(found).then((result) => result.filter(Boolean))
   }
@@ -151,116 +149,95 @@ export namespace SystemPrompt {
     }
   }
 
-  export function messageProtocol(sessionType: "primary" | "subagent", callerID?: string): string[] {
-    if (sessionType === "primary") {
-      return [
-        `## Communication Protocol
+  export function messageProtocol(
+    sessionType: "primary" | "subagent",
+    sessionID: string,
+    callerID?: string,
+    subagentPrompt?: string,
+  ): string[] {
+    const basePrompt = `## Agent Communication
 
-All responses must use structured message tags:
+Agent sessions communicate by sending and receiving messages.
 
-<message to="TARGET" timeout="TIMEOUT">
-Your content here
-</message>
+### History & Communication Rules
 
-### Targets
-- to="human": Send to human user
-- to="ses_xxx": Send to specific session ID
-- to="caller": Send to parent session (subagents only)
+Incoming agent messages appear in your conversation history with the format:
+\`\`\`
+Agent session ses_... sent a message to you:
+<content>
+...
+</content>
+\`\`\`
 
-### Timeout Values
-- timeout="-1": Final response (no wait for reply, normal conversation)
-- timeout="0": Send and continue immediately (progress updates, parallel dispatch)
-- timeout="N": Wait N milliseconds for response, then continue
+Your outgoing agent messages are recorded as completed "send_agent_message" tool calls in your history.
 
-### Single-Target Communication
-For sending to ONE target and waiting for response, use message timeout:
+**Crucial Rules:**
+1. **Strict Channel Separation**:
+   - **To the Human**: Your generated text output is for the human user's eyes only. Use it to explain your reasoning, provide status updates, or deliver final results to the user.
+   - **To other Agents**: All communication between agents **MUST** happen via the "send_agent_message" tool with a concrete destination session id ("ses_...") in the "to" field. Agents are blind to each other's text output.
+   - **Replying**: When you receive an agent message that requires a response, you **MUST** use the "send_agent_message" tool targeting the sender's "ses_..." id. Writing a "reply" in your text output will not reach the agent and only clutters the human's view.
 
-<message to="ses_explore_001" timeout="60000">
-Find the authentication implementation
-</message>
+### Receiving & Waking
 
-The system waits 60 seconds for response from ses_explore_001.
+Incoming messages wake your session when:
+- You are idle, or
+- You are waiting and the message satisfies your wait condition.
 
-### Multi-Target Parallel Fan-Out
-For sending to MULTIPLE targets and collecting responses, use <wait>:
+### Waiting Mechanism
 
-<message to="ses_explore_001" timeout="0">Find auth code</message>
-<message to="ses_explore_002" timeout="0">Find database code</message>
-<wait sources="ses_explore_001,ses_explore_002" timeout="120000" mode="all"/>
+wait_agent_message suspends your session until messages arrive from specified sources or timeout.
 
-Wait attributes:
-- sources: comma-separated session IDs, or "children" for all spawned subagents
-- timeout: total milliseconds to wait
-- mode: "all" (wait for all) or "any" (wait for first response)
+**Modes:**
+- \`all\`: Wait until ALL specified sources have sent a message.
+- \`any\`: Wait until AT LEAST ONE source has sent a message.
 
-### CRITICAL: Single Wait Rule
-- At most ONE <wait> tag per turn
-- <wait> MUST be the LAST element - no messages after <wait>
-- Violation triggers a malformed response error
+**Wake Priority**: Once waiting, your session ONLY wakes when:
+- The wait condition is satisfied (sources respond per mode).
+- Timeout occurs.
+- Human sends a message (human input always wakes the session).
 
-### Spawning Subagents
-Use subagent_spawn to delegate work:
-- subagent_spawn({ agents: [{ agent: "explore", message: "Find auth" }] })
-- Returns: { spawned: [{ session_id: "ses_xxx", agent: "explore" }] }
-
-Responses arrive as: [From ses_xxx]: content...
-
-Available agents: explore (codebase search), librarian (docs/examples)`,
-      ]
-    }
-    return [
-      `## Subagent Context
-
-You are a subagent session.
-Session ID: ${callerID ? "subagent" : "unknown"}
-Caller: ${callerID ?? "unknown"}
-
-## Communication Protocol
-
-All responses must use structured message tags:
-
-<message to="TARGET" timeout="TIMEOUT">
-Your content here
-</message>
-
-### Targets
-- to="caller": Send to parent session (default for subagents)
-- to="human": Send directly to human (bypass caller)
-- to="ses_xxx": Send to specific session ID
-
-### Timeout Values
-- timeout="-1": Final response (no wait for reply)
-- timeout="0": Progress update, continue working immediately
-- timeout="N": Question, wait N milliseconds for answer
+Messages from agents not in your sources list are queued and will not wake you. After calling wait_agent_message, end your turn immediately.
 
 ### Patterns
 
-Progress update (continue working):
-<message to="caller" timeout="0">
-Found 50 files, analyzing...
-</message>
+**Fire-and-Wait**: Delegate a task and wait for the result.
+\`\`\`
+spawn subagent → wait_agent_message(sources: [subagent], mode: "all") → process result
+\`\`\`
 
-Question with timeout:
-<message to="caller" timeout="30000">
-Should I include test files?
-</message>
+**Gather-Reduce**: Spawn multiple agents, wait for all responses, aggregate.
+\`\`\`
+spawn A, B, C → wait_agent_message(sources: [A, B, C], mode: "all") → combine results
+\`\`\`
 
-Final response:
-<message to="caller" timeout="-1">
-Analysis complete: Found authentication in src/auth/...
-</message>
+**Streaming Receive**: React to findings incrementally without explicit waiting.
+\`\`\`
+spawn explorer → explorer sends findings as discovered → caller wakes on each incoming message → react immediately
+\`\`\`
 
-Direct to human (bypass caller):
-<message to="human" timeout="-1">
-This requires confirmation. Proceed? [y/n]
-</message>
+**Free-form Communication**: Agents communicate directly, bypassing the orchestrator.
+\`\`\`
+orchestrator spawns dev and QA → orchestrator receives their session_ids → orchestrator sends dev a message containing qa_session_id, and sends QA a message containing dev_session_id → dev↔QA communicate directly using those session_ids (bypassing orchestrator) until done
+ \`\`\``
 
-### CRITICAL: Single Wait Rule
-- At most ONE <wait> tag per turn
-- <wait> MUST be the LAST element - no messages after <wait>
-- Violation triggers a malformed response error
+    if (sessionType === "primary") {
+      return [basePrompt]
+    }
 
-Focus on the task assigned and provide clear, actionable results.`,
+    const taskSection = subagentPrompt
+      ? `
+## Your Task
+
+${subagentPrompt}
+
+`
+      : ""
+
+    return [
+      `Current Session ID: ${sessionID}
+Caller Session ID: ${callerID}
+${taskSection}
+${basePrompt}`,
     ]
   }
 }

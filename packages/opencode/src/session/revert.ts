@@ -8,6 +8,7 @@ import { splitWhen } from "remeda"
 import { Storage } from "../storage/storage"
 import { Bus } from "../bus"
 import { SessionPrompt } from "./prompt"
+import { SessionMessage } from "./message-routing"
 
 export namespace SessionRevert {
   const log = Log.create({ service: "session.revert" })
@@ -21,6 +22,7 @@ export namespace SessionRevert {
 
   export async function revert(input: RevertInput) {
     SessionPrompt.assertNotBusy(input.sessionID)
+    SessionMessage.clear(input.sessionID)
     const all = await Session.messages({ sessionID: input.sessionID })
     let lastUser: MessageV2.User | undefined
     const session = await Session.get(input.sessionID)
@@ -28,7 +30,17 @@ export namespace SessionRevert {
     let revert: Session.Info["revert"]
     const patches: Snapshot.Patch[] = []
     for (const msg of all) {
-      if (msg.info.role === "user") lastUser = msg.info
+      if (
+        msg.info.role === "user" &&
+        msg.parts.some((part) => {
+          if (part.type === "text") return part.synthetic !== true && part.ignored !== true
+          if (part.type === "file") return true
+          if (part.type === "agent") return true
+          return false
+        })
+      ) {
+        lastUser = msg.info
+      }
       const remaining = []
       for (const part of msg.parts) {
         if (revert) {
@@ -79,6 +91,7 @@ export namespace SessionRevert {
   export async function cleanup(session: Session.Info) {
     if (!session.revert) return
     const sessionID = session.id
+    SessionMessage.clear(sessionID)
     let msgs = await Session.messages({ sessionID })
     const messageID = session.revert.messageID
     const [preserve, remove] = splitWhen(msgs, (x) => x.info.id === messageID)

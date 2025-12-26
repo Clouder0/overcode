@@ -1,28 +1,37 @@
 import z from "zod"
-import { Tool } from "./tool"
-import { Session } from "@/session"
 import { Agent } from "@/agent/agent"
+import { Instance } from "@/project/instance"
+import { Session } from "@/session"
 import { SessionMessage } from "@/session/message-routing"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionStatus } from "@/session/status"
-import { Instance } from "@/project/instance"
 import { Log } from "@/util/log"
+import { Tool } from "./tool"
 
 const log = Log.create({ service: "tool.subagent-spawn" })
 
 export const SubagentSpawnTool = Tool.define("subagent_spawn", {
-  description: `Spawn one or more subagent sessions. Each agent receives an initial message and runs in the background.
-Use this to delegate work to specialized agents like "explore" or "librarian".
-After spawning, use <wait> to collect responses from the spawned agents.`,
+  description: `Spawn subagent sessions with specific tasks.
+
+The 'prompt' parameter becomes the subagent's mission in its system prompt. Your prompt MUST include:
+1. Clear task description - what the subagent should accomplish
+2. Communication expectations - what to do when done or during execution
+
+Common patterns:
+- Fire-and-Wait: Include "When complete, reply using send_agent_message to the Caller Session ID with your findings."
+- Streaming: Include "Send updates as you discover them using send_agent_message to the Caller Session ID."
+- Fire-and-Forget: No reply instruction needed for background tasks.
+
+The subagent's system prompt will include its Current Session ID and Caller Session ID, but you must explicitly instruct it to reply if you expect a response.`,
   parameters: z.object({
     agents: z
       .array(
         z.object({
-          agent: z.string().describe("Agent type: explore, librarian, etc."),
-          message: z.string().describe("Initial task/prompt for this agent"),
+          agent: z.string().describe("Agent type (e.g. general_sub, explore)"),
+          prompt: z.string().describe("Task prompt for the subagent (becomes part of its system prompt)"),
         }),
       )
-      .describe("List of agents to spawn with their initial messages"),
+      .describe("Agents to spawn with their task prompts"),
   }),
   async execute(params, ctx) {
     const spawned: Array<{ session_id: string; agent: string }> = []
@@ -43,9 +52,10 @@ After spawning, use <wait> to collect responses from the spawned agents.`,
       const session = await Session.createNext({
         directory: Instance.directory,
         sessionType: "subagent",
-        agentName: item.agent, // Store the agent type for this subagent
+        agentName: item.agent,
         parentID: ctx.sessionID,
         callerID: ctx.sessionID,
+        subagentPrompt: item.prompt,
         title: `Subagent - ${item.agent}`,
       })
 
@@ -54,14 +64,7 @@ After spawning, use <wait> to collect responses from the spawned agents.`,
         childID: session.id,
       })
 
-      SessionMessage.deliver({
-        from: ctx.sessionID,
-        to: session.id,
-        text: item.message,
-      })
-
       // Start subagent loop with proper error handling
-      // On crash, deliver error message to parent so it knows the subagent failed
       const callerID = ctx.sessionID
       SessionPrompt.loop(session.id).catch(async (error) => {
         log.error("subagent crashed", {
@@ -70,7 +73,6 @@ After spawning, use <wait> to collect responses from the spawned agents.`,
           error: error?.message || String(error),
         })
 
-        // Deliver error message to parent - this will also resolve any pending waits
         await SessionMessage.deliver({
           from: session.id,
           to: callerID,
@@ -78,7 +80,6 @@ After spawning, use <wait> to collect responses from the spawned agents.`,
           messageType: "error",
         })
 
-        // Set session status to idle
         SessionStatus.set(session.id, { type: "idle" })
       })
 

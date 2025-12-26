@@ -23,6 +23,10 @@ export namespace SessionStatus {
         sources: z.array(z.string()),
         timeout: z.number(),
         mode: z.enum(["all", "any"]),
+        time: z.object({
+          created: z.number(),
+          deadline: z.number().optional(),
+        }),
       }),
     ])
     .meta({

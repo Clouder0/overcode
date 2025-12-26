@@ -158,6 +158,11 @@ export namespace LLM {
       maxOutputTokens,
       abortSignal: input.abort,
       headers: {
+        ...(input.model.api.npm === "@ai-sdk/openai"
+          ? {
+              "x-session-id": input.sessionID.replace(/^ses_/, "sess_"),
+            }
+          : undefined),
         ...(input.model.providerID.startsWith("opencode")
           ? {
               "x-opencode-project": Instance.project.id,

@@ -111,8 +111,21 @@ export function Session() {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
   const session = createMemo(() => sync.session.get(route.sessionID)!)
-  const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  const rawMessages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
+
+  // Get task prompt for current session
+  const currentTaskPrompt = createMemo((): string | undefined => {
+    const sessionID = route.sessionID
+    const s = sync.data.session.find((x) => x.id === sessionID)
+    if (!s) return undefined
+    const prompt = (s as any).subagentPrompt
+    if (typeof prompt !== "string" || !prompt) return undefined
+    return prompt
+  })
+
+  // Messages getter that other code uses
+  const messages = rawMessages
 
   const pending = createMemo(() => {
     return messages().findLast((x) => x.role === "assistant" && !x.time.completed)?.id
@@ -225,7 +238,12 @@ export function Session() {
         const parts = sync.data.part[message.id]
         if (!parts || !Array.isArray(parts)) return false
 
-        return parts.some((part) => part && part.type === "text" && !part.synthetic && !part.ignored)
+        return parts.some((part) => {
+          if (!part) return false
+          if (part.type === "text" && !part.synthetic && !part.ignored) return true
+          if ((part as any).type === "message") return true
+          return false
+        })
       })
       .sort((a, b) => a.y - b.y)
 
@@ -426,7 +444,12 @@ export function Session() {
         const status = sync.data.session_status?.[route.sessionID]
         if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
         const revert = session().revert?.messageID
-        const message = messages().findLast((x) => (!revert || x.id < revert) && x.role === "user")
+        const message = messages().findLast((x) => {
+          if (x.role !== "user") return false
+          if (revert && x.id >= revert) return false
+          const parts = sync.data.part[x.id] ?? []
+          return parts.some((p) => p.type === "text" && !("synthetic" in p && p.synthetic) && !(p as any).ignored)
+        })
         if (!message) return
         sdk.client.session
           .revert({
@@ -462,7 +485,12 @@ export function Session() {
         dialog.clear()
         const messageID = session().revert?.messageID
         if (!messageID) return
-        const message = messages().find((x) => x.role === "user" && x.id > messageID)
+        const message = messages().find((x) => {
+          if (x.role !== "user") return false
+          if (x.id <= messageID) return false
+          const parts = sync.data.part[x.id] ?? []
+          return parts.some((p) => p.type === "text" && !("synthetic" in p && p.synthetic) && !(p as any).ignored)
+        })
         if (!message) {
           sdk.client.session.unrevert({
             sessionID: route.sessionID,
@@ -776,7 +804,7 @@ export function Session() {
             for (const part of parts) {
               if (part.type === "text" && !part.synthetic) {
                 transcript += `${part.text}\n\n`
-              } else if (part.type === "tool") {
+              } else if (part.type === "tool" && part.tool !== "send_agent_message") {
                 transcript += `\`\`\`\nTool: ${part.tool}\n\`\`\`\n\n`
               }
             }
@@ -818,7 +846,7 @@ export function Session() {
             for (const part of parts) {
               if (part.type === "text" && !part.synthetic) {
                 transcript += `${part.text}\n\n`
-              } else if (part.type === "tool") {
+              } else if (part.type === "tool" && part.tool !== "send_agent_message") {
                 transcript += `\`\`\`\nTool: ${part.tool}\n\`\`\`\n\n`
               }
             }
@@ -997,120 +1025,144 @@ export function Session() {
             <Show when={!sidebarVisible() || sidebarOverlay()}>
               <Header />
             </Show>
-            <scrollbox
-              ref={(r) => (scroll = r)}
-              viewportOptions={{
-                paddingRight: showScrollbar() ? 1 : 0,
-              }}
-              verticalScrollbarOptions={{
-                paddingLeft: 1,
-                visible: showScrollbar(),
-                trackOptions: {
-                  backgroundColor: theme.backgroundElement,
-                  foregroundColor: theme.border,
-                },
-              }}
-              stickyScroll={true}
-              stickyStart="bottom"
-              flexGrow={1}
-              scrollAcceleration={scrollAcceleration()}
-            >
-              <For each={messages()}>
-                {(message, index) => (
-                  <Switch>
-                    <Match when={message.id === revert()?.messageID}>
-                      {(function () {
-                        const command = useCommandDialog()
-                        const [hover, setHover] = createSignal(false)
-                        const dialog = useDialog()
+            <For each={[route.sessionID]}>
+              {(sessionID) => (
+                <scrollbox
+                  ref={(r) => (scroll = r)}
+                  viewportOptions={{
+                    paddingRight: showScrollbar() ? 1 : 0,
+                  }}
+                  verticalScrollbarOptions={{
+                    paddingLeft: 1,
+                    visible: showScrollbar(),
+                    trackOptions: {
+                      backgroundColor: theme.backgroundElement,
+                      foregroundColor: theme.border,
+                    },
+                  }}
+                  stickyScroll={true}
+                  stickyStart="bottom"
+                  flexGrow={1}
+                  scrollAcceleration={scrollAcceleration()}
+                >
+                  {/* Task prompt card - stable placeholder to avoid scrollbox child insertion issues */}
+                  <box id="task-prompt">
+                    <Show when={currentTaskPrompt()}>
+                      {(prompt) => (
+                        <box
+                          id="task-prompt-card"
+                          marginTop={1}
+                          paddingLeft={2}
+                          border={["left"]}
+                          borderColor={theme.secondary}
+                          customBorderChars={SplitBorder.customBorderChars}
+                        >
+                          <text fg={theme.secondary}>
+                            <b>Task</b>
+                          </text>
+                          <text fg={theme.text}>{prompt()}</text>
+                        </box>
+                      )}
+                    </Show>
+                  </box>
+                  <For each={messages()}>
+                    {(message, index) => (
+                      <Switch>
+                        <Match when={message.id === revert()?.messageID}>
+                          {(function () {
+                            const command = useCommandDialog()
+                            const [hover, setHover] = createSignal(false)
+                            const dialog = useDialog()
 
-                        const handleUnrevert = async () => {
-                          const confirmed = await DialogConfirm.show(
-                            dialog,
-                            "Confirm Redo",
-                            "Are you sure you want to restore the reverted messages?",
-                          )
-                          if (confirmed) {
-                            command.trigger("session.redo")
-                          }
-                        }
+                            const handleUnrevert = async () => {
+                              const confirmed = await DialogConfirm.show(
+                                dialog,
+                                "Confirm Redo",
+                                "Are you sure you want to restore the reverted messages?",
+                              )
+                              if (confirmed) {
+                                command.trigger("session.redo")
+                              }
+                            }
 
-                        return (
-                          <box
-                            onMouseOver={() => setHover(true)}
-                            onMouseOut={() => setHover(false)}
-                            onMouseUp={handleUnrevert}
-                            marginTop={1}
-                            flexShrink={0}
-                            border={["left"]}
-                            customBorderChars={SplitBorder.customBorderChars}
-                            borderColor={theme.backgroundPanel}
-                          >
-                            <box
-                              paddingTop={1}
-                              paddingBottom={1}
-                              paddingLeft={2}
-                              backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
-                            >
-                              <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
-                              <text fg={theme.textMuted}>
-                                <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
-                                restore
-                              </text>
-                              <Show when={revert()!.diffFiles?.length}>
-                                <box marginTop={1}>
-                                  <For each={revert()!.diffFiles}>
-                                    {(file) => (
-                                      <text fg={theme.text}>
-                                        {file.filename}
-                                        <Show when={file.additions > 0}>
-                                          <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
-                                        </Show>
-                                        <Show when={file.deletions > 0}>
-                                          <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
-                                        </Show>
-                                      </text>
-                                    )}
-                                  </For>
+                            return (
+                              <box
+                                onMouseOver={() => setHover(true)}
+                                onMouseOut={() => setHover(false)}
+                                onMouseUp={handleUnrevert}
+                                marginTop={1}
+                                flexShrink={0}
+                                border={["left"]}
+                                customBorderChars={SplitBorder.customBorderChars}
+                                borderColor={theme.backgroundPanel}
+                              >
+                                <box
+                                  paddingTop={1}
+                                  paddingBottom={1}
+                                  paddingLeft={2}
+                                  backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+                                >
+                                  <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
+                                  <text fg={theme.textMuted}>
+                                    <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
+                                    restore
+                                  </text>
+                                  <Show when={revert()!.diffFiles?.length}>
+                                    <box marginTop={1}>
+                                      <For each={revert()!.diffFiles}>
+                                        {(file) => (
+                                          <text fg={theme.text}>
+                                            {file.filename}
+                                            <Show when={file.additions > 0}>
+                                              <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
+                                            </Show>
+                                            <Show when={file.deletions > 0}>
+                                              <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
+                                            </Show>
+                                          </text>
+                                        )}
+                                      </For>
+                                    </box>
+                                  </Show>
                                 </box>
-                              </Show>
-                            </box>
-                          </box>
-                        )
-                      })()}
-                    </Match>
-                    <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
-                      <></>
-                    </Match>
-                    <Match when={message.role === "user"}>
-                      <UserMessage
-                        index={index()}
-                        onMouseUp={() => {
-                          if (renderer.getSelection()?.getSelectedText()) return
-                          dialog.replace(() => (
-                            <DialogMessage
-                              messageID={message.id}
-                              sessionID={route.sessionID}
-                              setPrompt={(promptInfo) => prompt.set(promptInfo)}
-                            />
-                          ))
-                        }}
-                        message={message as UserMessage}
-                        parts={sync.data.part[message.id] ?? []}
-                        pending={pending()}
-                      />
-                    </Match>
-                    <Match when={message.role === "assistant"}>
-                      <AssistantMessage
-                        last={lastAssistant()?.id === message.id}
-                        message={message as AssistantMessage}
-                        parts={sync.data.part[message.id] ?? []}
-                      />
-                    </Match>
-                  </Switch>
-                )}
-              </For>
-            </scrollbox>
+                              </box>
+                            )
+                          })()}
+                        </Match>
+                        <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
+                          <></>
+                        </Match>
+                        <Match when={message.role === "user"}>
+                          <UserMessage
+                            index={index()}
+                            onMouseUp={() => {
+                              if (renderer.getSelection()?.getSelectedText()) return
+                              dialog.replace(() => (
+                                <DialogMessage
+                                  messageID={message.id}
+                                  sessionID={route.sessionID}
+                                  setPrompt={(promptInfo) => prompt.set(promptInfo)}
+                                />
+                              ))
+                            }}
+                            message={message as UserMessage}
+                            parts={sync.data.part[message.id] ?? []}
+                            pending={pending()}
+                          />
+                        </Match>
+                        <Match when={message.role === "assistant"}>
+                          <AssistantMessage
+                            last={lastAssistant()?.id === message.id}
+                            message={message as AssistantMessage}
+                            parts={sync.data.part[message.id] ?? []}
+                          />
+                        </Match>
+                      </Switch>
+                    )}
+                  </For>
+                </scrollbox>
+              )}
+            </For>
             <box flexShrink={0}>
               <Prompt
                 ref={(r) => {
@@ -1385,7 +1437,6 @@ function WaitPart(props: { last: boolean; part: WaitPartData; message: Assistant
 
   // Helper to get agent name from session ID (with short ID suffix)
   const getAgentName = (id: string) => {
-    if (id === "children") return "children"
     const shortId = id.slice(-4)
     const session = sync.session.get(id)
     if (session?.title?.startsWith("Subagent - ")) {
@@ -1480,15 +1531,49 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   const { theme, syntax } = useTheme()
   const ctx = use()
   const sync = useSync()
+  const dialog = useDialog()
 
   const peerSession = createMemo(() =>
     props.part.peerType === "agent" ? sync.session.get(props.part.peer) : undefined,
   )
 
+  // Check if current session is a subagent (has parentID)
+  const currentSession = createMemo(() => sync.session.get(props.part.sessionID))
+  const isSubagentSession = createMemo(() => !!currentSession()?.parentID)
+
   const isTimeout = props.part.timeoutOccurred
   const isIncoming = props.part.direction === "incoming"
   const isHuman = props.part.peerType === "human"
   const isToHuman = !isIncoming && isHuman
+
+  // For agent messages: expanded by default in subagent sessions, collapsed in primary
+  const [expanded, setExpanded] = createSignal(isSubagentSession())
+
+  const sessionStatus = createMemo(() => sync.data.session_status?.[props.part.sessionID] as any)
+
+  const pendingAssistant = createMemo(() => {
+    const messages = sync.data.message[props.part.sessionID] ?? []
+    const pending = messages.findLast((x) => x.role === "assistant" && !(x as any).time?.completed) as any
+    return pending?.id as string | undefined
+  })
+
+  const queued = createMemo(() => {
+    if (!isIncoming) return false
+    if (props.part.peerType !== "agent") return false
+
+    const pending = pendingAssistant()
+    if (pending && props.part.messageID > pending) return true
+
+    const status = sessionStatus()
+    if (status?.type === "waiting") {
+      const started = status.time?.created as number | undefined
+      if (started !== undefined) {
+        return props.part.time.created >= started
+      }
+    }
+
+    return false
+  })
 
   // Peer name resolution
   const peerInfo = createMemo(() => {
@@ -1505,21 +1590,39 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   const arrow = isIncoming ? "←" : "→"
   // Colors: → human (primary/orange), → agent (secondary/blue), ← agent (info/cyan)
   const color = isToHuman ? theme.primary : isIncoming ? theme.info : theme.secondary
-  const headerPad = isIncoming ? "         " : "" // 9 spaces for incoming
+  const headerPad = isIncoming ? "" : "      " // 6 spaces for outgoing
 
-  // Content: full markdown for human, truncated for agents
-  const truncatedContent = createMemo(() => {
+  // Content handling for agent messages: show up to 3 lines when collapsed
+  const contentInfo = createMemo(() => {
     const text = props.part.text.trim()
     const lines = text.split("\n")
-    const firstLine = lines[0]
-    if (firstLine.length > 100) {
-      return firstLine.slice(0, 100) + "…"
+    const totalLines = lines.length
+    const maxCollapsedLines = 3
+
+    if (totalLines <= maxCollapsedLines) {
+      return { preview: text, full: text, canExpand: false }
     }
-    if (lines.length > 1) {
-      return firstLine + " …"
-    }
-    return firstLine
+
+    const previewLines = lines.slice(0, maxCollapsedLines)
+    const preview = previewLines.join("\n") + " …"
+    return { preview, full: text, canExpand: true }
   })
+
+  const displayContent = createMemo(() => {
+    if (expanded() || !contentInfo().canExpand) {
+      return contentInfo().full
+    }
+    return contentInfo().preview
+  })
+
+  // Check if peer is an agent that can be navigated to
+  const canNavigateToPeer = createMemo(() => props.part.peerType === "agent" && !!peerSession())
+
+  const handlePeerClick = () => {
+    if (canNavigateToPeer()) {
+      dialog.replace(() => <DialogSubagent sessionID={props.part.peer} />)
+    }
+  }
 
   return (
     <box
@@ -1530,16 +1633,39 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
       borderColor={color}
       customBorderChars={SplitBorder.customBorderChars}
     >
-      {/* Header line: arrow + peer name */}
-      <text>
-        {headerPad}
-        <span style={{ fg: color }}>{arrow}</span>{" "}
-        <span style={{ fg: isTimeout ? theme.error : color, bold: true }}>{peerInfo().name}</span>
-        {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
-        {isTimeout && <span style={{ fg: theme.error }}> (timed out)</span>}
-      </text>
-      {/* Content: full markdown for human, truncated for agents */}
-      <Show when={isToHuman} fallback={<text fg={theme.text}>{truncatedContent()}</text>}>
+      {/* Header line: arrow + peer name (clickable for agents) */}
+      <box flexDirection="row">
+        <text>
+          {headerPad}
+          <span style={{ fg: color }}>{arrow}</span>{" "}
+        </text>
+        <Show
+          when={canNavigateToPeer()}
+          fallback={
+            <text>
+              <span style={{ fg: isTimeout ? theme.error : color, bold: true }}>{peerInfo().name}</span>
+              {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
+            </text>
+          }
+        >
+          <text onMouseDown={handlePeerClick}>
+            <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>{peerInfo().name}</span>
+            {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
+          </text>
+        </Show>
+        <text>
+          {isTimeout && <span style={{ fg: theme.error }}> (timed out)</span>}
+          {queued() && <span style={{ bg: theme.accent, fg: theme.backgroundPanel, bold: true }}> QUEUED </span>}
+        </text>
+      </box>
+      {/* Expand/collapse indicator for agent messages */}
+      <Show when={!isToHuman && contentInfo().canExpand}>
+        <text fg={theme.textMuted} onMouseDown={() => setExpanded(!expanded())}>
+          {expanded() ? " ▼ collapse" : " ▶ expand"}
+        </text>
+      </Show>
+      {/* Content: full markdown for human, expandable for agents */}
+      <Show when={isToHuman} fallback={<text fg={theme.text}>{displayContent()}</text>}>
         <code
           filetype="markdown"
           drawUnstyledText={false}
@@ -1741,10 +1867,17 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   const component = createMemo(() => {
     const part = reactivePart()
     const state = partState() // Use reactive state directly from store
+    if (part.tool === "send_agent_message") {
+      const ok = state.status === "completed" && (state.metadata as any)?.ok === true
+      if (ok) return undefined
+    }
+
     // Hide tool if showDetails is false and tool completed successfully
     // But always show if there's an error or permission is required
+    // wait_agent_message is rendered like a wait indicator and should remain visible
     const shouldHide =
       !showDetails() &&
+      part.tool !== "wait_agent_message" &&
       state.status === "completed" &&
       !sync.data.permission[props.message.sessionID]?.some((x) => x.callID === part.callID)
 
@@ -2199,7 +2332,7 @@ ToolRegistry.register({
             errors?: string[]
           }
         | undefined
-    const input = props.input as { agents?: Array<{ agent: string; message: string }> } | undefined
+    const input = props.input as { agents?: Array<{ agent: string; prompt: string }> } | undefined
 
     const spawned = createMemo(() => metadata()?.spawned ?? [])
     const count = createMemo(() => spawned().length || input?.agents?.length || 0)
@@ -2246,6 +2379,152 @@ ToolRegistry.register({
   },
 })
 
+ToolRegistry.register({
+  name: "wait_agent_message",
+  container: "inline",
+  render(props: ToolProps<any>) {
+    const { theme } = useTheme()
+    const sync = useSync()
+
+    const meta = createMemo(() => props.metadata as any)
+    const input = createMemo(() => props.input as any)
+
+    const status = createMemo(() => (meta()?.status as string | undefined) ?? "waiting")
+    const mode = createMemo(() => (meta()?.mode as ("all" | "any") | undefined) ?? input()?.mode)
+    const timeout = createMemo(() => (meta()?.timeout as number | undefined) ?? input()?.timeout)
+    const sources = createMemo(() => {
+      const fromMetadata = meta()?.sources as string[] | undefined
+      if (fromMetadata) return fromMetadata
+      const raw = input()?.sources
+      if (typeof raw === "string") return [raw]
+      if (Array.isArray(raw)) return raw
+      return []
+    })
+    const respondedSources = createMemo(() => (meta()?.respondedSources as string[] | undefined) ?? [])
+
+    const createdAt = createMemo(() => meta()?.createdAt as number | undefined)
+    const deadline = createMemo(() => meta()?.deadline as number | undefined)
+
+    const [now, setNow] = createSignal(Date.now())
+    createEffect(() => {
+      if (status() !== "waiting") return
+      const timer = setInterval(() => setNow(Date.now()), 100)
+      onCleanup(() => clearInterval(timer))
+    })
+
+    const elapsed = createMemo(() => {
+      const start = createdAt()
+      if (!start) return undefined
+      return Math.max(0, now() - start)
+    })
+
+    const remaining = createMemo(() => {
+      const end = deadline()
+      if (!end) return undefined
+      return Math.max(0, end - now())
+    })
+
+    const fmt = (ms: number | undefined) => {
+      if (ms === undefined) return ""
+      if (ms < 1000) return `${ms}ms`
+      return `${(ms / 1000).toFixed(1)}s`
+    }
+
+    const getAgentName = (id: string) => {
+      const shortId = id.slice(-4)
+      const session = sync.session.get(id)
+      if (session?.title?.startsWith("Subagent - ")) {
+        const agentType = session.title.slice(11)
+        return `${agentType}#${shortId}`
+      }
+      if (session?.title) return `${session.title}#${shortId}`
+      return `agent#${shortId}`
+    }
+
+    const sourceNames = createMemo(() => sources().map(getAgentName))
+    const respondedNames = createMemo(() => respondedSources().map(getAgentName))
+
+    const failedSources = createMemo(() => {
+      const responded = new Set(respondedSources())
+      return sources()
+        .filter((s) => !responded.has(s))
+        .map(getAgentName)
+    })
+
+    const statusColor = createMemo(() => {
+      if (status() === "waiting") return theme.warning
+      if (status() === "resolved") return theme.success
+      return theme.error
+    })
+
+    if (status() === "blocked") {
+      return (
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>⛔ wait_agent_message blocked</text>
+        </box>
+      )
+    }
+
+    // Resolved (all mode): hide entirely - responses speak for themselves
+    if (status() === "resolved" && mode() === "all") {
+      return null
+    }
+
+    // Resolved (any mode): show who responded, who was abandoned
+    if (status() === "resolved" && mode() === "any") {
+      return (
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>
+            ✓ {respondedNames().join(", ")}
+            {failedSources().length > 0 && (
+              <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
+            )}
+          </text>
+        </box>
+      )
+    }
+
+    // Timed out: show who failed
+    if (status() === "timedOut") {
+      const timedOutNames = failedSources().length > 0 ? failedSources() : sourceNames()
+      return (
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>
+            ⏱ {timedOutNames.join(", ")} timed out
+            {respondedNames().length > 0 && (
+              <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>
+            )}
+          </text>
+        </box>
+      )
+    }
+
+    // Waiting: show progress and remaining time
+    return (
+      <box marginTop={1} paddingLeft={6}>
+        <text fg={statusColor()}>
+          ⏳{" "}
+          <Show
+            when={respondedNames().length > 0}
+            fallback={<span style={{ fg: theme.textMuted }}>{sourceNames().join(", ")}</span>}
+          >
+            <span style={{ fg: theme.success }}>✓ {respondedNames().join(", ")}</span>
+            {failedSources().length > 0 && (
+              <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
+            )}
+          </Show>
+          <span style={{ fg: theme.textMuted }}>
+            {" "}
+            ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
+            {elapsed() !== undefined && <span> · {fmt(elapsed())} elapsed</span>}
+            {remaining() !== undefined && <span> · {fmt(remaining())} left</span>}
+          </span>
+        </text>
+      </box>
+    )
+  },
+})
+
 // Subagent row - simple text-based display within the panel
 function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => void }) {
   const { theme } = useTheme()
@@ -2278,7 +2557,21 @@ function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => 
     }
     const textPart = parts.find((p) => p.type === "text" && "synthetic" in p && p.synthetic)
     if (textPart && textPart.type === "text") {
-      const text = textPart.text.replace(/^\[From [^\]]+\]:\n?/, "").trim()
+      const text = (() => {
+        const raw = textPart.text.trim()
+
+        if (raw.startsWith("OPENCODE_INBOX")) {
+          const lines = raw.split("\n")
+          if (lines.length <= 2) return raw
+          return lines.slice(2).join("\n").replace(/^  /gm, "").trim()
+        }
+
+        if (raw.startsWith("OPENCODE_INBOUND")) {
+          return raw.replace(/^OPENCODE_INBOUND[^\n]*\n?/, "").trim()
+        }
+
+        return raw
+      })()
       return text.length > 60 ? text.slice(0, 60) + "..." : text
     }
     return undefined
