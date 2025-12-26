@@ -307,6 +307,171 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
   })
 })
 
+describe("ProviderTransform.message - OpenAI orphan reasoning sanitization", () => {
+  test("replaces reasoning-only assistant messages with recovery text", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "Partial thinking summary.",
+            providerOptions: {
+              openai: {
+                itemId: "rs_0fbd9ca56a9c0fef01694e513084c881919f172ca94482b20e",
+                reasoningEncryptedContent: "deadbeef",
+              },
+            },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, {
+      id: "packycode/gpt-5",
+      providerID: "packycode",
+      api: {
+        id: "gpt-5",
+        url: "https://example.com",
+        npm: "@ai-sdk/openai",
+      },
+      name: "GPT-5",
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: false,
+        toolcall: true,
+        input: { text: true, audio: false, image: false, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+        cache: { read: 0, write: 0 },
+      },
+      limit: {
+        context: 128000,
+        output: 8192,
+      },
+      status: "active",
+      options: {},
+      headers: {},
+      release_date: "2025-01-01",
+    } as any)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].role).toBe("assistant")
+    expect(result[0].content).toHaveLength(1)
+    expect(result[0].content[0].type).toBe("text")
+    expect(result[0].content[0].text).toContain("Recovery note")
+    expect(result[0].content[0].text).toContain("Partial thinking summary")
+    expect((result[0].content[0] as any).providerOptions).toBeUndefined()
+  })
+
+  test("applies to openai-compatible gpt-5 models", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "Recovered summary.",
+            providerOptions: {
+              openai: {
+                itemId: "rs_deadbeef",
+                reasoningEncryptedContent: "deadbeef",
+              },
+            },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, {
+      id: "packycode/gpt-5",
+      providerID: "packycode",
+      api: {
+        id: "gpt-5",
+        url: "https://example.com",
+        npm: "@ai-sdk/openai-compatible",
+      },
+      name: "GPT-5",
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: false,
+        toolcall: true,
+        input: { text: true, audio: false, image: false, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+        cache: { read: 0, write: 0 },
+      },
+      limit: {
+        context: 128000,
+        output: 8192,
+      },
+      status: "active",
+      options: {},
+      headers: {},
+      release_date: "2025-01-01",
+    } as any)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toHaveLength(1)
+    expect(result[0].content[0].type).toBe("text")
+    expect(result[0].content[0].text).toContain("Recovered summary")
+  })
+
+  test("does not apply to openai-compatible non-gpt-5 models", () => {
+    const msgs = [
+      {
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Reasoning only" }],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, {
+      id: "deepseek/deepseek-chat",
+      providerID: "deepseek",
+      api: {
+        id: "deepseek-chat",
+        url: "https://api.deepseek.com",
+        npm: "@ai-sdk/openai-compatible",
+      },
+      name: "DeepSeek Chat",
+      capabilities: {
+        temperature: true,
+        reasoning: true,
+        attachment: false,
+        toolcall: true,
+        input: { text: true, audio: false, image: false, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+        cache: { read: 0, write: 0 },
+      },
+      limit: {
+        context: 128000,
+        output: 8192,
+      },
+      status: "active",
+      options: {},
+      headers: {},
+      release_date: "2023-04-01",
+    } as any)
+
+    expect(result[0].content).toEqual([{ type: "reasoning", text: "Reasoning only" }])
+  })
+})
+
 describe("ProviderTransform.message - empty image handling", () => {
   const mockModel = {
     id: "anthropic/claude-3-5-sonnet",
