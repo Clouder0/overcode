@@ -13,16 +13,22 @@ const log = Log.create({ service: "tool.subagent-spawn" })
 export const SubagentSpawnTool = Tool.define("subagent_spawn", {
   description: `Spawn subagent sessions with specific tasks.
 
-The 'prompt' parameter becomes the subagent's mission in its system prompt. Your prompt MUST include:
+The 'prompt' parameter is injected into the subagent's SYSTEM prompt as its mission.
+The subagent will NOT automatically report back to the caller, and weak models may write a normal assistant response that never reaches the caller.
+If you want results sent back to the caller session, your prompt MUST explicitly require a tool call: send_agent_message(to=<Caller Session ID shown in the subagent system prompt (ses_...)>, text=<results>).
+
+Your prompt MUST include:
 1. Clear task description - what the subagent should accomplish
-2. Communication expectations - what to do when done or during execution
+2. Clear delivery instructions - exactly how to report results (tool name + destination + when)
 
-Common patterns:
-- Fire-and-Wait: Include "When complete, reply using send_agent_message to the Caller Session ID with your findings."
-- Streaming: Include "Send updates as you discover them using send_agent_message to the Caller Session ID."
-- Fire-and-Forget: No reply instruction needed for background tasks.
+Patterns:
+- Fire-and-Wait (recommended): "When finished, CALL send_agent_message(to=<Caller Session ID>, text=<results>). Then stop."
+- Streaming: "Send updates via send_agent_message(to=<Caller Session ID>, text=<update>), then send a final results message."
+- Fire-and-Forget: Do the work; do NOT send a message back unless blocked.
 
-The subagent's system prompt will include its Current Session ID and Caller Session ID, but you must explicitly instruct it to reply if you expect a response.`,
+Avoid vague phrasing like "deliver ..." or "send ..." without naming the tool; weak models may output to the human channel instead of calling send_agent_message.
+
+The subagent's system prompt will include its Current Session ID and Caller Session ID, but you must explicitly instruct it to message the caller if you expect a response.`,
   parameters: z.object({
     agents: z
       .array(

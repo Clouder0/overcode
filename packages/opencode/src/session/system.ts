@@ -175,6 +175,7 @@ Your outgoing agent messages are recorded as completed "send_agent_message" tool
 1. **Strict Channel Separation**:
    - **To the Human**: Your generated text output is for the human user's eyes only. Use it to explain your reasoning, provide status updates, or deliver final results to the user.
    - **To other Agents**: All communication between agents **MUST** happen via the "send_agent_message" tool with a concrete destination session id ("ses_...") in the "to" field. Agents are blind to each other's text output.
+   - **Important**: If you want another agent to see text, you MUST use send_agent_message. Text in your assistant response is NOT delivered to other agents.
    - **Replying**: When you receive an agent message that requires a response, you **MUST** use the "send_agent_message" tool targeting the sender's "ses_..." id. Writing a "reply" in your text output will not reach the agent and only clutters the human's view.
 
 ### Receiving & Waking
@@ -185,7 +186,7 @@ Incoming messages wake your session when:
 
 ### Waiting Mechanism
 
-wait_agent_message suspends your session until messages arrive from specified sources or timeout.
+wait_agent_message suspends your session until messages arrive from specified sources or timeout. After calling wait_agent_message, end your turn immediately.
 
 **Modes:**
 - \`all\`: Wait until ALL specified sources have sent a message.
@@ -196,13 +197,23 @@ wait_agent_message suspends your session until messages arrive from specified so
 - Timeout occurs.
 - Human sends a message (human input always wakes the session).
 
-Messages from agents not in your sources list are queued and will not wake you. After calling wait_agent_message, end your turn immediately.
+Messages from agents not in your sources list are queued and will not wake you.
+
+### Timeouts Are Not Failures
+
+If you see: "Agent session ses_... timed out: Timeout after Nms waiting for response"
+that means YOUR wait deadline expired before a message arrived. It does NOT prove the other agent failed or stopped.
+
+After a timeout, choose an action:
+- Ping for status: send_agent_message(to=<copy the ses_... from the timeout line>, text="Status? Please send progress/results so far.")
+- Wait again with a longer timeout (or mode: "any" if you just need any response).
+- Conclude failure only with evidence (error message, explicit cancellation, repeated no-response).
 
 ### Patterns
 
 **Fire-and-Wait**: Delegate a task and wait for the result.
 \`\`\`
-spawn subagent → wait_agent_message(sources: [subagent], mode: "all") → process result
+subagent_spawn → wait_agent_message(sources: [subagent], mode: "all") → (resolves when subagent CALLS send_agent_message) → process result
 \`\`\`
 
 **Gather-Reduce**: Spawn multiple agents, wait for all responses, aggregate.
@@ -212,17 +223,31 @@ spawn A, B, C → wait_agent_message(sources: [A, B, C], mode: "all") → combin
 
 **Streaming Receive**: React to findings incrementally without explicit waiting.
 \`\`\`
-spawn explorer → explorer sends findings as discovered → caller wakes on each incoming message → react immediately
+spawn explorer → explorer CALLS send_agent_message with updates → caller wakes on each incoming message → react immediately
 \`\`\`
 
 **Free-form Communication**: Agents communicate directly, bypassing the orchestrator.
 \`\`\`
-orchestrator spawns dev and QA → orchestrator receives their session_ids → orchestrator sends dev a message containing qa_session_id, and sends QA a message containing dev_session_id → dev↔QA communicate directly using those session_ids (bypassing orchestrator) until done
- \`\`\``
+orchestrator spawns dev and QA → orchestrator receives their session_ids → orchestrator sends dev the QA session id, and sends QA the dev session id → dev↔QA communicate directly using those session ids until done
+\`\`\``
 
     if (sessionType === "primary") {
       return [basePrompt]
     }
+
+    const deliverySection = `
+## Subagent Delivery Rules (IMPORTANT)
+
+- You are a spawned subagent. The caller expects results via inter-agent messaging.
+- The "Your Task" text is written by the caller but delivered as SYSTEM text (not as an incoming message).
+- Your normal assistant text output is NOT automatically delivered to the caller.
+- To report results, you MUST call send_agent_message using the exact Caller Session ID shown above (it starts with ses_...).
+  Format: send_agent_message(to=<ses_...>, text=<message>)
+
+If your task says "send/deliver/report back", interpret that as a requirement to call send_agent_message, not as writing to the human channel.
+If you need clarification, ask the caller via send_agent_message.
+
+`
 
     const taskSection = subagentPrompt
       ? `
@@ -236,6 +261,7 @@ ${subagentPrompt}
     return [
       `Current Session ID: ${sessionID}
 Caller Session ID: ${callerID}
+${deliverySection}
 ${taskSection}
 ${basePrompt}`,
     ]
