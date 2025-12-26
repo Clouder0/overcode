@@ -21,14 +21,14 @@
 
 The system implements **defense-in-depth** recovery across multiple failure categories:
 
-| Category | Hook | Trigger | Recovery Strategy |
-|----------|------|---------|-------------------|
-| API structural errors | `session-recovery` | Claude API errors | Filesystem patching |
-| Token limit exceeded | `anthropic-auto-compact` | Context overflow | Truncate → Summarize → Revert |
-| Empty messages | `empty-message-sanitizer` | Missing content | Placeholder injection |
-| Empty task responses | `empty-task-response-detector` | Task tool returns nothing | Warning injection |
-| Incomplete work | `todo-continuation-enforcer` | Agent stops with pending todos | Auto-resume prompt |
-| Context anxiety | `context-window-monitor` | High context usage | Reassurance injection |
+| Category              | Hook                           | Trigger                        | Recovery Strategy             |
+| --------------------- | ------------------------------ | ------------------------------ | ----------------------------- |
+| API structural errors | `session-recovery`             | Claude API errors              | Filesystem patching           |
+| Token limit exceeded  | `anthropic-auto-compact`       | Context overflow               | Truncate → Summarize → Revert |
+| Empty messages        | `empty-message-sanitizer`      | Missing content                | Placeholder injection         |
+| Empty task responses  | `empty-task-response-detector` | Task tool returns nothing      | Warning injection             |
+| Incomplete work       | `todo-continuation-enforcer`   | Agent stops with pending todos | Auto-resume prompt            |
+| Context anxiety       | `context-window-monitor`       | High context usage             | Reassurance injection         |
 
 ---
 
@@ -82,6 +82,7 @@ Detect and fix Claude API structural errors by patching the local message storag
 **Cause**: User presses ESC mid-tool-call. Claude expects `tool_result` for every `tool_use`.
 
 **Detection**:
+
 ```typescript
 if (message.includes("tool_use") && message.includes("tool_result")) {
   return "tool_result_missing"
@@ -89,14 +90,13 @@ if (message.includes("tool_use") && message.includes("tool_result")) {
 ```
 
 **Recovery**:
+
 ```typescript
 // Extract tool_use IDs from failed assistant message
-const toolUseIds = parts
-  .filter(p => p.type === "tool_use" && p.id)
-  .map(p => p.id)
+const toolUseIds = parts.filter((p) => p.type === "tool_use" && p.id).map((p) => p.id)
 
 // Inject synthetic tool_result for each
-const toolResultParts = toolUseIds.map(id => ({
+const toolResultParts = toolUseIds.map((id) => ({
   type: "tool_result",
   tool_use_id: id,
   content: "Operation cancelled by user (ESC pressed)",
@@ -113,20 +113,22 @@ await client.session.prompt({
 **Cause**: Claude's thinking block is not the first part in assistant message.
 
 **Detection**:
+
 ```typescript
-if (message.includes("thinking") && 
-    (message.includes("first block") || 
-     message.includes("must start with") ||
-     message.includes("preceeding"))) {
+if (
+  message.includes("thinking") &&
+  (message.includes("first block") || message.includes("must start with") || message.includes("preceeding"))
+) {
   return "thinking_block_order"
 }
 ```
 
 **Recovery**: Prepend synthetic thinking part with lexicographically-first ID:
+
 ```typescript
 function prependThinkingPart(sessionID: string, messageID: string): boolean {
   const partDir = join(PART_STORAGE, messageID)
-  
+
   // ID starts with "0000000000" to sort before other parts
   const partId = `prt_0000000000_thinking`
   const part = {
@@ -137,7 +139,7 @@ function prependThinkingPart(sessionID: string, messageID: string): boolean {
     thinking: "",
     synthetic: true,
   }
-  
+
   writeFileSync(join(partDir, `${partId}.json`), JSON.stringify(part))
   return true
 }
@@ -148,18 +150,19 @@ function prependThinkingPart(sessionID: string, messageID: string): boolean {
 **Cause**: Message contains thinking blocks but model has thinking disabled.
 
 **Detection**:
+
 ```typescript
-if (message.includes("thinking is disabled") && 
-    message.includes("cannot contain")) {
+if (message.includes("thinking is disabled") && message.includes("cannot contain")) {
   return "thinking_disabled_violation"
 }
 ```
 
 **Recovery**: Delete all thinking parts from filesystem:
+
 ```typescript
 function stripThinkingParts(messageID: string): boolean {
   const THINKING_TYPES = new Set(["thinking", "redacted_thinking", "reasoning"])
-  
+
   for (const file of readdirSync(partDir)) {
     const part = JSON.parse(readFileSync(join(partDir, file)))
     if (THINKING_TYPES.has(part.type)) {
@@ -176,6 +179,7 @@ function stripThinkingParts(messageID: string): boolean {
 **Detection**: Error message contains `"non-empty content"`
 
 **Recovery**: Inject placeholder text or replace empty text parts:
+
 ```typescript
 const PLACEHOLDER_TEXT = "[user interrupted]"
 
@@ -250,9 +254,9 @@ let onAbortCallback: (sessionID: string) => void
 let onRecoveryCompleteCallback: (sessionID: string) => void
 
 // Usage: todo-continuation-enforcer checks this to avoid fighting
-onAbortCallback(sessionID)  // Mark recovering BEFORE abort
+onAbortCallback(sessionID) // Mark recovering BEFORE abort
 // ... recovery logic ...
-onRecoveryCompleteCallback(sessionID)  // Mark done in finally block
+onRecoveryCompleteCallback(sessionID) // Mark done in finally block
 ```
 
 ---
@@ -269,13 +273,13 @@ Parse various error formats to extract token information:
 
 ```typescript
 interface ParsedTokenLimitError {
-  currentTokens: number      // Actual tokens used
-  maxTokens: number          // Model's limit
+  currentTokens: number // Actual tokens used
+  maxTokens: number // Model's limit
   requestId?: string
   errorType: string
   providerID?: string
   modelID?: string
-  messageIndex?: number      // For empty content errors
+  messageIndex?: number // For empty content errors
 }
 
 const TOKEN_LIMIT_PATTERNS = [
@@ -355,29 +359,29 @@ const TOKEN_LIMIT_KEYWORDS = [
 interface AutoCompactState {
   // Sessions pending compaction
   pendingCompact: Set<string>
-  
+
   // Parsed error data per session
   errorDataBySession: Map<string, ParsedTokenLimitError>
-  
+
   // Summarize retry state
   retryStateBySession: Map<string, RetryState>
-  
+
   // Revert fallback state
   fallbackStateBySession: Map<string, FallbackState>
-  
+
   // Truncation state
   truncateStateBySession: Map<string, TruncateState>
-  
+
   // Empty content fix attempts
   emptyContentAttemptBySession: Map<string, number>
-  
+
   // Prevent concurrent compaction
   compactionInProgress: Set<string>
 }
 
 interface RetryState {
   attempt: number
-  lastAttemptTime: number  // For cooldown (5 min reset)
+  lastAttemptTime: number // For cooldown (5 min reset)
 }
 
 interface FallbackState {
@@ -408,16 +412,17 @@ const FALLBACK_CONFIG = {
 
 const TRUNCATE_CONFIG = {
   maxTruncateAttempts: 20,
-  minOutputSizeToTruncate: 500,  // bytes
-  targetTokenRatio: 0.5,         // Target 50% of max
-  charsPerToken: 4,              // Approximation
+  minOutputSizeToTruncate: 500, // bytes
+  targetTokenRatio: 0.5, // Target 50% of max
+  charsPerToken: 4, // Approximation
 }
 ```
 
 ### Tool Output Truncation
 
 ```typescript
-const TRUNCATION_MESSAGE = "[TOOL RESULT TRUNCATED - Context limit exceeded. " +
+const TRUNCATION_MESSAGE =
+  "[TOOL RESULT TRUNCATED - Context limit exceeded. " +
   "Original output was too large and has been truncated to recover the session. " +
   "Please re-run this tool if you need the full output.]"
 
@@ -430,18 +435,18 @@ interface StoredToolPart {
     output?: string
     time?: { compacted?: number }
   }
-  truncated?: boolean      // Flag for truncated parts
-  originalSize?: number    // Original output size
+  truncated?: boolean // Flag for truncated parts
+  originalSize?: number // Original output size
 }
 
 function truncateToolResult(partPath: string): Result {
   const part = JSON.parse(readFileSync(partPath))
-  
+
   part.truncated = true
   part.originalSize = part.state.output.length
   part.state.output = TRUNCATION_MESSAGE
   part.state.time.compacted = Date.now()
-  
+
   writeFileSync(partPath, JSON.stringify(part))
 }
 ```
@@ -457,20 +462,20 @@ function createAnthropicAutoCompactHook(ctx) {
         clearSessionState(sessionID)
         return
       }
-      
+
       // Primary trigger: session.error
       if (event.type === "session.error") {
         const parsed = parseAnthropicTokenLimitError(error)
         if (parsed) {
           pendingCompact.add(sessionID)
           errorDataBySession.set(sessionID, parsed)
-          
+
           // Immediate truncation attempt
           setTimeout(() => executeCompact(...), 300)
         }
         return
       }
-      
+
       // Secondary trigger: message.updated with error
       if (event.type === "message.updated") {
         if (info.role === "assistant" && info.error) {
@@ -481,7 +486,7 @@ function createAnthropicAutoCompactHook(ctx) {
         }
         return
       }
-      
+
       // Fallback trigger: session.idle with pending compact
       if (event.type === "session.idle") {
         if (pendingCompact.has(sessionID)) {
@@ -509,7 +514,7 @@ function createEmptyMessageSanitizerHook() {
     "experimental.chat.messages.transform": async (_input, output) => {
       for (const message of output.messages) {
         if (message.info.role === "user") continue
-        
+
         // Check if message has valid content
         if (!hasValidContent(message.parts)) {
           // Inject placeholder
@@ -519,7 +524,7 @@ function createEmptyMessageSanitizerHook() {
             synthetic: true,
           })
         }
-        
+
         // Also fix empty text parts within valid messages
         for (const part of message.parts) {
           if (part.type === "text" && !part.text?.trim()) {
@@ -527,7 +532,7 @@ function createEmptyMessageSanitizerHook() {
           }
         }
       }
-    }
+    },
   }
 }
 ```
@@ -543,7 +548,7 @@ function createEmptyTaskResponseDetectorHook() {
   return {
     "tool.execute.after": async (input, output) => {
       if (input.tool !== "Task") return
-      
+
       if (output.output?.trim() === "") {
         output.output = `[Task Empty Response Warning]
         
@@ -554,7 +559,7 @@ Task invocation completed but returned no response. This indicates the agent eit
 
 Note: The call has already completed - you are NOT waiting for a response.`
       }
-    }
+    },
   }
 }
 ```
@@ -575,27 +580,25 @@ Incomplete tasks remain in your todo list. Continue working on the next pending 
 - Do not stop until all tasks are done`
 
 function createTodoContinuationEnforcer(ctx) {
-  const recoveringSessions = new Set<string>()  // Coordination with session-recovery
-  
+  const recoveringSessions = new Set<string>() // Coordination with session-recovery
+
   return {
     handler: async ({ event }) => {
       if (event.type === "session.idle") {
         const sessionID = event.properties.sessionID
-        
+
         // Skip if another hook is recovering this session
         if (recoveringSessions.has(sessionID)) return
-        
+
         // Check for incomplete todos
         const todos = await ctx.client.session.todo({ path: { id: sessionID } })
-        const incomplete = todos.filter(t => 
-          t.status !== "completed" && t.status !== "cancelled"
-        )
-        
+        const incomplete = todos.filter((t) => t.status !== "completed" && t.status !== "cancelled")
+
         if (incomplete.length === 0) return
-        
+
         // 2-second countdown (allows user to interrupt)
         await showCountdown(2)
-        
+
         // Inject continuation prompt
         await ctx.client.session.prompt({
           path: { id: sessionID },
@@ -605,7 +608,7 @@ function createTodoContinuationEnforcer(ctx) {
         })
       }
     },
-    
+
     // Coordination methods
     markRecovering: (sessionID) => recoveringSessions.add(sessionID),
     markRecoveryComplete: (sessionID) => recoveringSessions.delete(sessionID),
@@ -632,19 +635,19 @@ Complete your work thoroughly and methodically.`
 
 function createContextWindowMonitorHook(ctx) {
   const reminded = new Set<string>()
-  
+
   return {
     "tool.execute.after": async (input, output) => {
       if (reminded.has(input.sessionID)) return
-      
+
       const messages = await ctx.client.session.messages(...)
       const lastAssistant = messages.filter(m => m.role === "assistant").pop()
-      
+
       if (lastAssistant.providerID !== "anthropic") return
-      
+
       const tokens = lastAssistant.tokens.input + lastAssistant.tokens.cache.read
       const usage = tokens / ANTHROPIC_ACTUAL_LIMIT
-      
+
       if (usage >= WARNING_THRESHOLD) {
         reminded.add(input.sessionID)
         output.output += `\n\n${REMINDER}\n[Context: ${usage*100}% used]`
@@ -702,7 +705,7 @@ interface StoredTextPart {
   messageID: string
   type: "text"
   text: string
-  synthetic?: boolean  // True if injected by recovery
+  synthetic?: boolean // True if injected by recovery
   ignored?: boolean
 }
 
@@ -721,8 +724,8 @@ interface StoredToolPart {
     error?: string
     time?: { start: number; end?: number; compacted?: number }
   }
-  truncated?: boolean    // True if truncated by auto-compact
-  originalSize?: number  // Original output size before truncation
+  truncated?: boolean // True if truncated by auto-compact
+  originalSize?: number // Original output size before truncation
 }
 
 // Thinking/reasoning
@@ -750,7 +753,7 @@ const CONTENT_TYPES = new Set(["text", "tool", "tool_use", "tool_result"])
 function getMessageDir(sessionID: string): string {
   const directPath = join(MESSAGE_STORAGE, sessionID)
   if (existsSync(directPath)) return directPath
-  
+
   // Search in subdirectories
   for (const dir of readdirSync(MESSAGE_STORAGE)) {
     const sessionPath = join(MESSAGE_STORAGE, dir, sessionID)
@@ -789,13 +792,13 @@ function readParts(messageID: string): StoredPart[] {
 interface ExperimentalConfig {
   // Auto-resume after successful recovery
   auto_resume?: boolean
-  
+
   // Aggressive truncation of all tool outputs
   aggressive_truncation?: boolean
-  
+
   // Enable preemptive compaction before overflow
   preemptive_compaction?: boolean
-  
+
   // Threshold for preemptive compaction (default: 0.85)
   preemptive_compaction_threshold?: number
 }
@@ -822,11 +825,11 @@ Multiple hooks may respond to the same event. Use shared state to prevent confli
 
 ```typescript
 // In session-recovery
-setOnAbortCallback(sessionID => {
+setOnAbortCallback((sessionID) => {
   todoContinuationEnforcer.markRecovering(sessionID)
 })
 
-setOnRecoveryCompleteCallback(sessionID => {
+setOnRecoveryCompleteCallback((sessionID) => {
   todoContinuationEnforcer.markRecoveryComplete(sessionID)
 })
 ```
@@ -859,9 +862,9 @@ await client.tui.showToast({
   body: {
     title: "Session Recovery",
     message: "Fixing message structure...",
-    variant: "warning",  // or "success", "error"
+    variant: "warning", // or "success", "error"
     duration: 3000,
-  }
+  },
 })
 ```
 
@@ -872,21 +875,15 @@ Handle various error object structures:
 ```typescript
 function getErrorMessage(error: unknown): string {
   if (typeof error === "string") return error.toLowerCase()
-  
-  const paths = [
-    error.data,
-    error.error,
-    error.data?.error,
-    error.error?.message,
-    error.message,
-  ]
-  
+
+  const paths = [error.data, error.error, error.data?.error, error.error?.message, error.message]
+
   for (const obj of paths) {
     if (typeof obj?.message === "string") {
       return obj.message.toLowerCase()
     }
   }
-  
+
   return JSON.stringify(error).toLowerCase()
 }
 ```
@@ -898,7 +895,7 @@ Always clean up state when session is deleted:
 ```typescript
 if (event.type === "session.deleted") {
   const sessionID = event.properties.info.id
-  
+
   pendingCompact.delete(sessionID)
   errorDataBySession.delete(sessionID)
   retryStateBySession.delete(sessionID)

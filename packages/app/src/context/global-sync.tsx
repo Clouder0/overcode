@@ -76,6 +76,7 @@ function createGlobalSync() {
   const children: Record<string, ReturnType<typeof createStore<State>>> = {}
   function child(directory: string) {
     if (!directory) console.error("No directory provided")
+    if (directory) globalSDK.subscribe(directory)
     if (!children[directory]) {
       setGlobalStore("children", directory, {
         project: "",

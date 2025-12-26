@@ -806,7 +806,7 @@ export namespace SessionPrompt {
           ...SystemPrompt.messageProtocol(
             currentSession.sessionType,
             sessionID,
-            currentSession.callerID,
+            currentSession.parentID,
             currentSession.subagentPrompt,
           ),
         ],
@@ -853,7 +853,7 @@ export namespace SessionPrompt {
       continue
     }
 
-    // Subagent messages to caller are sent via send_agent_message tool calls.
+    // Subagent messages to parent are sent via send_agent_message tool calls.
 
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {

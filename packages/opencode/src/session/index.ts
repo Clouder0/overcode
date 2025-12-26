@@ -45,7 +45,6 @@ export namespace Session {
       parentID: Identifier.schema("session").optional(),
       sessionType: z.enum(["primary", "subagent"]).default("primary"),
       agentName: z.string().optional(), // Agent type for subagent sessions (e.g., "explore", "librarian")
-      callerID: Identifier.schema("session").optional(),
       subagentPrompt: z.string().optional(), // Task prompt for subagent sessions (appears in system prompt)
       childrenIDs: z.array(Identifier.schema("session")).default([]),
       summary: z
@@ -188,12 +187,11 @@ export namespace Session {
     directory: string
     sessionType?: "primary" | "subagent"
     agentName?: string
-    callerID?: string
     subagentPrompt?: string
   }) {
-    // Subagent sessions must have a callerID
-    if (input.sessionType === "subagent" && !input.callerID) {
-      throw new Error("callerID is required for subagent sessions")
+    // Subagent sessions must have a parentID
+    if (input.sessionType === "subagent" && !input.parentID) {
+      throw new Error("parentID is required for subagent sessions")
     }
 
     const result: Info = {
@@ -204,7 +202,6 @@ export namespace Session {
       parentID: input.parentID,
       sessionType: input.sessionType ?? "primary",
       agentName: input.agentName,
-      callerID: input.callerID,
       subagentPrompt: input.subagentPrompt,
       childrenIDs: [],
       title: input.title ?? createDefaultTitle(!!input.parentID),

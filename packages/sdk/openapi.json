@@ -5613,6 +5613,9 @@
           "text": {
             "type": "string"
           },
+          "ignored": {
+            "type": "boolean"
+          },
           "metadata": {
             "type": "object",
             "propertyNames": {
@@ -6413,6 +6416,48 @@
         },
         "required": ["type", "properties"]
       },
+      "Event.session.message.delivered": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.message.delivered"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "type": "number"
+                  },
+                  "messageType": {
+                    "default": "normal",
+                    "type": "string",
+                    "enum": ["normal", "timeout", "error"]
+                  }
+                },
+                "required": ["id", "from", "to", "text", "time"]
+              }
+            },
+            "required": ["message"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "Permission": {
         "type": "object",
         "properties": {
@@ -6570,48 +6615,6 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.session.message.delivered": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.message.delivered"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  },
-                  "from": {
-                    "type": "string"
-                  },
-                  "to": {
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "time": {
-                    "type": "number"
-                  },
-                  "messageType": {
-                    "default": "normal",
-                    "type": "string",
-                    "enum": ["normal", "timeout", "error"]
-                  }
-                },
-                "required": ["id", "from", "to", "text", "time"]
-              }
-            },
-            "required": ["message"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
       "SessionStatus": {
         "anyOf": [
           {
@@ -6672,9 +6675,21 @@
               "mode": {
                 "type": "string",
                 "enum": ["all", "any"]
+              },
+              "time": {
+                "type": "object",
+                "properties": {
+                  "created": {
+                    "type": "number"
+                  },
+                  "deadline": {
+                    "type": "number"
+                  }
+                },
+                "required": ["created"]
               }
             },
-            "required": ["type", "sources", "timeout", "mode"]
+            "required": ["type", "sources", "timeout", "mode", "time"]
           }
         ]
       },
@@ -6904,9 +6919,8 @@
           "agentName": {
             "type": "string"
           },
-          "callerID": {
-            "type": "string",
-            "pattern": "^ses.*"
+          "subagentPrompt": {
+            "type": "string"
           },
           "childrenIDs": {
             "default": [],
@@ -7337,6 +7351,9 @@
             "$ref": "#/components/schemas/Event.message.part.removed"
           },
           {
+            "$ref": "#/components/schemas/Event.session.message.delivered"
+          },
+          {
             "$ref": "#/components/schemas/Event.permission.updated"
           },
           {
@@ -7347,9 +7364,6 @@
           },
           {
             "$ref": "#/components/schemas/Event.todo.updated"
-          },
-          {
-            "$ref": "#/components/schemas/Event.session.message.delivered"
           },
           {
             "$ref": "#/components/schemas/Event.session.status"

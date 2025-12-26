@@ -1,25 +1,54 @@
 import { DialogSelect } from "@tui/ui/dialog-select"
+import type { DialogContext } from "@tui/ui/dialog"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
-import { createMemo } from "solid-js"
+import { createMemo, onMount } from "solid-js"
 
 export function DialogSubagent(props: { sessionID: string }) {
   const route = useRoute()
   const sync = useSync()
 
+  onMount(() => {
+    sync.session.info(props.sessionID).catch(() => {})
+  })
+
+  const currentID = createMemo(() => {
+    if (route.data.type !== "session") return undefined
+    return route.data.sessionID
+  })
+
   const session = createMemo(() => sync.session.get(props.sessionID))
   const status = createMemo(() => {
-    const s = sync.data.session_status?.[props.sessionID]
+    const s = sync.data.session_status?.[props.sessionID] as { type?: string } | undefined
     if (s?.type === "busy" || s?.type === "retry") return "working"
-    if ((s as any)?.type === "waiting") return "waiting"
+    if (s?.type === "waiting") return "waiting"
     return "idle"
   })
 
-  const title = createMemo(() => {
+  const name = createMemo(() => {
     const s = session()
+    if (!s?.title) return "Subagent Session"
+    if (s.title.startsWith("Subagent - ")) return s.title.slice(11)
+    return s.title
+  })
+
+  const shortId = createMemo(() => props.sessionID.slice(-4))
+
+  const title = createMemo(() => {
     const statusIcon = status() === "working" ? "🔄" : status() === "waiting" ? "⏳" : "✓"
-    if (!s) return `${statusIcon} Subagent Session`
-    return `${statusIcon} ${s.title || "Subagent Session"}`
+    return `${statusIcon} ${name()}#${shortId()}`
+  })
+
+  const parentID = createMemo(() => session()?.parentID)
+
+  const showCaller = createMemo(() => {
+    const parent = parentID()
+    if (!parent) return false
+
+    const current = currentID()
+    if (!current) return true
+
+    return parent !== current
   })
 
   return (
@@ -29,8 +58,8 @@ export function DialogSubagent(props: { sessionID: string }) {
         {
           title: "Open session",
           value: "subagent.view",
-          description: "View the subagent's full session",
-          onSelect: (dialog) => {
+          description: "View this session",
+          onSelect: (dialog: DialogContext) => {
             route.navigate({
               type: "session",
               sessionID: props.sessionID,
@@ -38,22 +67,25 @@ export function DialogSubagent(props: { sessionID: string }) {
             dialog.clear()
           },
         },
-        {
-          title: "Back to parent",
-          value: "subagent.parent",
-          description: "Return to the caller session",
-          disabled: !session()?.parentID,
-          onSelect: (dialog) => {
-            const parentID = session()?.parentID
-            if (parentID) {
-              route.navigate({
-                type: "session",
-                sessionID: parentID,
-              })
-            }
-            dialog.clear()
-          },
-        },
+        ...(showCaller()
+          ? [
+              {
+                title: "Open parent session",
+                value: "subagent.parent",
+                description: "Go to the session that spawned this session",
+                onSelect: (dialog: DialogContext) => {
+                  const parent = parentID()
+                  if (parent) {
+                    route.navigate({
+                      type: "session",
+                      sessionID: parent,
+                    })
+                  }
+                  dialog.clear()
+                },
+              },
+            ]
+          : []),
       ]}
     />
   )

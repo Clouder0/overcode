@@ -8,13 +8,13 @@ This document outlines a historical plan to migrate from the existing job-based 
 
 The plan in this document was based on an XML-tag protocol (`<message>` / `<wait>`) and references many file paths that have since moved. The current runtime implementation uses tool-based messaging:
 
-- `send_message({ to: "ses_..." | "caller", text: "..." })`
-- `wait_message({ sources: ["ses_..."], timeout: 60000, mode: "all" | "any" })` (explicit session IDs only, `timeout > 0`)
+- `send_agent_message({ to: "ses_...", text: "..." })` (subagents can send results to their Parent Session ID)
+- `wait_agent_message({ sources: ["ses_..."], timeout: 60000, mode: "all" | "any" })` (explicit session IDs only, `timeout > 0`)
 
 Treat the remainder of this document as historical context. For current behavior, see:
 
-- `packages/opencode/src/tool/send-message.ts`
-- `packages/opencode/src/tool/wait-message.ts`
+- `packages/opencode/src/tool/send-agent-message.ts`
+- `packages/opencode/src/tool/wait-agent-message.ts`
 - `packages/opencode/src/session/message-routing.ts`
 - `packages/opencode/src/session/wait-policy.ts`
 - `packages/opencode/src/session/prompt.ts`
@@ -65,7 +65,7 @@ Treat the remainder of this document as historical context. For current behavior
 | File                        | Changes                            |
 | --------------------------- | ---------------------------------- |
 | `src/session/prompt.ts`     | Add message parsing, wait handling |
-| `src/session/index.ts`      | Add caller tracking, session type  |
+| `src/session/index.ts`      | Add parent tracking, session type  |
 | `src/session/message-v2.ts` | Add AgentMessagePart type          |
 | `src/session/system.ts`     | Update system prompts              |
 | `src/tool/registry.ts`      | Register new tools                 |
@@ -116,15 +116,15 @@ Add session relationship tracking:
 interface SessionInfo {
   // ... existing fields ...
   type: "primary" | "subagent"
-  caller?: string // Parent session ID
+  parent?: string // Parent session ID
   children: string[] // Child session IDs
 }
 ```
 
 **Tasks:**
 
-- [ ] Add type, caller, children fields to Session.Info
-- [ ] Update Session.create() to accept caller parameter
+- [ ] Add type, parent, children fields to Session.Info
+- [ ] Update Session.create() to accept parent parameter
 - [ ] Add Session.getChildren() helper
 - [ ] Update Session.close() to close children
 - [ ] Write unit tests
@@ -189,7 +189,7 @@ export namespace SessionMessage {
   // Get pending messages for a session
   export async function pending(sessionID: string): Promise<Message[]>
 
-  // Resolve target ("caller", "human", or session ID)
+  // Resolve target ("parent", "human", or session ID)
   export function resolveTarget(to: string, fromSession: string): string
 
   // Subscribe to messages for a session
@@ -200,7 +200,7 @@ export namespace SessionMessage {
 **Tasks:**
 
 - [ ] Implement message delivery with storage
-- [ ] Implement target resolution (caller, human, session ID)
+- [ ] Implement target resolution (parent, human, session ID)
 - [ ] Implement pending message retrieval
 - [ ] Implement subscription mechanism
 - [ ] Handle "human" target specially (no storage, direct to UI)
@@ -360,7 +360,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", {
     const session = await Session.create({
       type: "subagent",
       agent: params.agent,
-      caller: ctx.sessionID,
+      parent: ctx.sessionID,
       parentID: ctx.sessionID,
     })
 
@@ -379,7 +379,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", {
 
 - [ ] Implement subagent_spawn tool
 - [ ] Validate agent exists and is not primary
-- [ ] Create session with caller tracking
+- [ ] Create session with parent tracking
 - [ ] Update parent's children list
 - [ ] Register tool in registry
 - [ ] Write unit tests
@@ -402,9 +402,9 @@ export const SessionCloseTool = Tool.define("session_close", {
       return { output: `Session not found: ${params.session_id}` }
     }
 
-    // Verify caller owns this session
-    if (session.caller !== ctx.sessionID) {
-      return { output: `Cannot close session not owned by caller` }
+    // Verify parent owns this session
+    if (session.parent !== ctx.sessionID) {
+      return { output: `Cannot close session not owned by parent` }
     }
 
     await Session.close(params.session_id)
@@ -432,7 +432,7 @@ export const SessionCloseTool = Tool.define("session_close", {
 Add message protocol instructions:
 
 ```typescript
-export function messageProtocol(sessionType: "primary" | "subagent", caller?: string): string {
+export function messageProtocol(sessionType: "primary" | "subagent", parent?: string): string {
   if (sessionType === "primary") {
     return `
 ## Communication Protocol
@@ -459,11 +459,11 @@ For subagents:
 
 You are a subagent.
 Session: ${sessionID}
-Caller: ${caller}
+Parent: ${parent}
 
 ## Communication Protocol
 
-<message to="caller" timeout="TIMEOUT">
+<message to="parent" timeout="TIMEOUT">
 Response
 </message>
 

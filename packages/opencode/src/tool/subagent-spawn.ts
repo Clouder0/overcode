@@ -18,11 +18,11 @@ The 'prompt' parameter becomes the subagent's mission in its system prompt. Your
 2. Communication expectations - what to do when done or during execution
 
 Common patterns:
-- Fire-and-Wait: Include "When complete, reply using send_agent_message to the Caller Session ID with your findings."
-- Streaming: Include "Send updates as you discover them using send_agent_message to the Caller Session ID."
+- Fire-and-Wait: Include "When complete, reply using send_agent_message to the Parent Session ID with your findings."
+- Streaming: Include "Send updates as you discover them using send_agent_message to the Parent Session ID."
 - Fire-and-Forget: No reply instruction needed for background tasks.
 
-The subagent's system prompt will include its Current Session ID and Caller Session ID, but you must explicitly instruct it to reply if you expect a response.`,
+The subagent's system prompt will include its Current Session ID and Parent Session ID, but you must explicitly instruct it to reply if you expect a response.`,
   parameters: z.object({
     agents: z
       .array(
@@ -54,7 +54,6 @@ The subagent's system prompt will include its Current Session ID and Caller Sess
         sessionType: "subagent",
         agentName: item.agent,
         parentID: ctx.sessionID,
-        callerID: ctx.sessionID,
         subagentPrompt: item.prompt,
         title: `Subagent - ${item.agent}`,
       })
@@ -65,7 +64,7 @@ The subagent's system prompt will include its Current Session ID and Caller Sess
       })
 
       // Start subagent loop with proper error handling
-      const callerID = ctx.sessionID
+      const parentID = ctx.sessionID
       SessionPrompt.loop(session.id).catch(async (error) => {
         log.error("subagent crashed", {
           sessionID: session.id,
@@ -75,7 +74,7 @@ The subagent's system prompt will include its Current Session ID and Caller Sess
 
         await SessionMessage.deliver({
           from: session.id,
-          to: callerID,
+          to: parentID,
           text: `Subagent error: ${error?.message || "Unknown error"}`,
           messageType: "error",
         })

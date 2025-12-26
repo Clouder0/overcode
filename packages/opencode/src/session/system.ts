@@ -152,7 +152,7 @@ export namespace SystemPrompt {
   export function messageProtocol(
     sessionType: "primary" | "subagent",
     sessionID: string,
-    callerID?: string,
+    parentID?: string,
     subagentPrompt?: string,
   ): string[] {
     const basePrompt = `## Agent Communication
@@ -163,7 +163,7 @@ Agent sessions communicate by sending and receiving messages.
 
 Incoming agent messages appear in your conversation history with the format:
 \`\`\`
-Agent session ses_... sent a message to you:
+Sender Agent with session id ses_... sent a message:
 <content>
 ...
 </content>
@@ -212,7 +212,7 @@ spawn A, B, C → wait_agent_message(sources: [A, B, C], mode: "all") → combin
 
 **Streaming Receive**: React to findings incrementally without explicit waiting.
 \`\`\`
-spawn explorer → explorer sends findings as discovered → caller wakes on each incoming message → react immediately
+spawn explorer → explorer sends findings as discovered → parent wakes on each incoming message → react immediately
 \`\`\`
 
 **Free-form Communication**: Agents communicate directly, bypassing the orchestrator.
@@ -235,7 +235,7 @@ ${subagentPrompt}
 
     return [
       `Current Session ID: ${sessionID}
-Caller Session ID: ${callerID}
+Parent Session ID: ${parentID}
 ${taskSection}
 ${basePrompt}`,
     ]

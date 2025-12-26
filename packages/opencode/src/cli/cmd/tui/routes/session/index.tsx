@@ -176,6 +176,15 @@ export function Session() {
         if (scroll) scroll.scrollBy(100_000)
       })
       .catch((e) => {
+        const name = e instanceof Error ? e.name : undefined
+        if (name === "AbortError") return
+        if (name === "TimeoutError") {
+          toast.show({
+            message: `Timed out loading session: ${route.sessionID}`,
+            variant: "error",
+          })
+          return
+        }
         console.error(e)
         toast.show({
           message: `Session not found: ${route.sessionID}`,
@@ -1532,6 +1541,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   const ctx = use()
   const sync = useSync()
   const dialog = useDialog()
+  const renderer = useRenderer()
 
   const peerSession = createMemo(() =>
     props.part.peerType === "agent" ? sync.session.get(props.part.peer) : undefined,
@@ -1616,12 +1626,18 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   })
 
   // Check if peer is an agent that can be navigated to
-  const canNavigateToPeer = createMemo(() => props.part.peerType === "agent" && !!peerSession())
+  const canNavigateToPeer = createMemo(() => props.part.peerType === "agent")
 
   const handlePeerClick = () => {
+    if (renderer.getSelection()?.getSelectedText()) return
     if (canNavigateToPeer()) {
       dialog.replace(() => <DialogSubagent sessionID={props.part.peer} />)
     }
+  }
+
+  const toggleExpand = () => {
+    if (renderer.getSelection()?.getSelectedText()) return
+    setExpanded(!expanded())
   }
 
   return (
@@ -1648,7 +1664,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
             </text>
           }
         >
-          <text onMouseDown={handlePeerClick}>
+          <text onMouseUp={handlePeerClick}>
             <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>{peerInfo().name}</span>
             {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
           </text>
@@ -1660,7 +1676,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
       </box>
       {/* Expand/collapse indicator for agent messages */}
       <Show when={!isToHuman && contentInfo().canExpand}>
-        <text fg={theme.textMuted} onMouseDown={() => setExpanded(!expanded())}>
+        <text fg={theme.textMuted} onMouseUp={toggleExpand}>
           {expanded() ? " ▼ collapse" : " ▶ expand"}
         </text>
       </Show>
@@ -2531,7 +2547,7 @@ function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => 
   const sync = useSync()
 
   onMount(() => {
-    sync.session.sync(props.sessionID)
+    sync.session.sync(props.sessionID).catch(() => {})
   })
 
   const status = createMemo(() => {
