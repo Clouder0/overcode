@@ -9,6 +9,7 @@ import { Installation } from "@/installation"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
+import { computeCacheStats, updateCacheStatsState, type CacheStatsState } from "../../lib/cache-stats"
 import { useRoute } from "../../context/route"
 import "opentui-spinner/solid"
 
@@ -73,8 +74,20 @@ export function Sidebar(props: { sessionID: string }) {
     }).format(total)
   })
 
+  const cache = createMemo<CacheStatsState | undefined>((prev) => updateCacheStatsState(prev, messages()), undefined)
+
+  const lastAssistant = createMemo(
+    () => messages().findLast((x) => x.role === "assistant" && x.tokens.output > 0) as AssistantMessage | undefined,
+  )
+
+  const lastCache = createMemo(() => {
+    const last = lastAssistant()
+    if (!last) return
+    return computeCacheStats([last])
+  })
+
   const context = createMemo(() => {
-    const last = messages().findLast((x) => x.role === "assistant" && x.tokens.output > 0) as AssistantMessage
+    const last = lastAssistant()
     if (!last) return
     const total =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
@@ -120,6 +133,12 @@ export function Sidebar(props: { sessionID: string }) {
               </text>
               <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
+              <text fg={theme.textMuted}>
+                {`Session cache: ${cache()?.stats.hitPercentage ?? 0}% r${Locale.number(cache()?.stats.readTokens ?? 0)} w${Locale.number(cache()?.stats.writeTokens ?? 0)}`}
+              </text>
+              <text fg={theme.textMuted}>
+                {`Last step cache: ${lastCache()?.hitPercentage ?? 0}% r${Locale.number(lastCache()?.readTokens ?? 0)} w${Locale.number(lastCache()?.writeTokens ?? 0)}`}
+              </text>
               <text fg={theme.textMuted}>{cost()} spent</text>
             </box>
             <Show when={mcpEntries().length > 0}>

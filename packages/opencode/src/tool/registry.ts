@@ -25,6 +25,7 @@ import { WebSearchTool } from "./websearch"
 import { CodeSearchTool } from "./codesearch"
 import { Flag } from "@/flag/flag"
 import { Log } from "@/util/log"
+import { sortEntries, sortPaths } from "./lib/registry-order"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -34,15 +35,22 @@ export namespace ToolRegistry {
     const glob = new Bun.Glob("tool/*.{js,ts}")
 
     for (const dir of await Config.directories()) {
-      for await (const match of glob.scan({
-        cwd: dir,
-        absolute: true,
-        followSymlinks: true,
-        dot: true,
-      })) {
+      const matches = sortPaths(
+        await Array.fromAsync(
+          glob.scan({
+            cwd: dir,
+            absolute: true,
+            followSymlinks: true,
+            dot: true,
+          }),
+        ),
+      )
+
+      for (const match of matches) {
         const namespace = path.basename(match, path.extname(match))
         const mod = await import(match)
-        for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
+        const entries = sortEntries(Object.entries<ToolDefinition>(mod))
+        for (const [id, def] of entries) {
           custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
         }
       }
@@ -50,7 +58,8 @@ export namespace ToolRegistry {
 
     const plugins = await Plugin.list()
     for (const plugin of plugins) {
-      for (const [id, def] of Object.entries(plugin.tool ?? {})) {
+      const entries = sortEntries(Object.entries(plugin.tool ?? {}))
+      for (const [id, def] of entries) {
         custom.push(fromPlugin(id, def))
       }
     }

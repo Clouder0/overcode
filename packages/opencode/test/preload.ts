@@ -21,6 +21,9 @@ process.env["XDG_CACHE_HOME"] = path.join(dir, "cache")
 process.env["XDG_CONFIG_HOME"] = path.join(dir, "config")
 process.env["XDG_STATE_HOME"] = path.join(dir, "state")
 
+// Avoid loading/installing default plugins during tests.
+process.env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
+
 // Pre-populate models.json so tests don't depend on network.
 // Also write the cache version file to prevent global/index.ts from clearing the cache.
 const cacheDir = path.join(dir, "cache", "opencode")
