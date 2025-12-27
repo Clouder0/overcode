@@ -1,5 +1,6 @@
 import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg, type KeyBinding } from "@opentui/core"
 import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, Show, Switch, Match } from "solid-js"
+import "opentui-spinner/solid"
 import { useLocal } from "@tui/context/local"
 import { useTheme } from "@tui/context/theme"
 import { EmptyBorder } from "@tui/component/border"
@@ -28,6 +29,7 @@ import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
 import { useToast } from "../../ui/toast"
+import { useKV } from "../../context/kv"
 
 export type PromptProps = {
   sessionID?: string
@@ -174,6 +176,7 @@ export function Prompt(props: PromptProps) {
   const tall = createMemo(() => dimensions().height > 40)
   const wide = createMemo(() => dimensions().width > 120)
   const { theme, syntax } = useTheme()
+  const kv = useKV()
 
   function promptModelWarning() {
     toast.show({
@@ -1053,8 +1056,11 @@ export function Prompt(props: PromptProps) {
             <Match when={(status() as any).type === "waiting"}>
               <box flexDirection="row" gap={1} flexGrow={1} justifyContent="space-between">
                 <box flexShrink={0} flexDirection="row" gap={1}>
-                  {/* @ts-ignore // SpinnerOptions doesn't support marginLeft */}
-                  <spinner marginLeft={1} color={theme.accent} frames={["◜", "◠", "◝", "◞", "◡", "◟"]} interval={80} />
+                  <box marginLeft={1}>
+                    <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                      <spinner color={theme.accent} frames={["◜", "◠", "◝", "◞", "◡", "◟"]} interval={80} />
+                    </Show>
+                  </box>
                   <text fg={theme.accent}>
                     Waiting for {(status() as any).sources?.length ?? 0} subagent
                     {(status() as any).sources?.length === 1 ? "" : "s"}...
@@ -1076,8 +1082,11 @@ export function Prompt(props: PromptProps) {
                 justifyContent={status().type === "retry" ? "space-between" : "flex-start"}
               >
                 <box flexShrink={0} flexDirection="row" gap={1}>
-                  {/* @ts-ignore // SpinnerOptions doesn't support marginLeft */}
-                  <spinner marginLeft={1} color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
+                  <box marginLeft={1}>
+                    <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                      <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
+                    </Show>
+                  </box>
                   <box flexDirection="row" gap={1} flexShrink={0}>
                     {(() => {
                       const retry = createMemo(() => {
@@ -1106,7 +1115,7 @@ export function Prompt(props: PromptProps) {
                         }, 1000)
 
                         onCleanup(() => {
-                          clearTimeout(timer)
+                          clearInterval(timer)
                         })
                       })
                       const handleMessageClick = () => {
@@ -1163,30 +1172,32 @@ export function Prompt(props: PromptProps) {
               </box>
             </Match>
           </Switch>
-          <box gap={2} flexDirection="row" marginLeft="auto">
-            <Switch>
-              <Match when={store.mode === "normal"}>
-                <Show when={wide() && !lockedAgentName()}>
+          <Show when={status().type !== "retry"}>
+            <box gap={2} flexDirection="row" marginLeft="auto">
+              <Switch>
+                <Match when={store.mode === "normal"}>
+                  <Show when={wide() && !lockedAgentName()}>
+                    <text fg={theme.text}>
+                      {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>switch agent</span>
+                    </text>
+                  </Show>
+                  <Show when={!wide()}>
+                    <text fg={theme.text}>
+                      {keybind.print("sidebar_toggle")} <span style={{ fg: theme.textMuted }}>sidebar</span>
+                    </text>
+                  </Show>
                   <text fg={theme.text}>
-                    {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>switch agent</span>
+                    {keybind.print("command_list")} <span style={{ fg: theme.textMuted }}>commands</span>
                   </text>
-                </Show>
-                <Show when={!wide()}>
+                </Match>
+                <Match when={store.mode === "shell"}>
                   <text fg={theme.text}>
-                    {keybind.print("sidebar_toggle")} <span style={{ fg: theme.textMuted }}>sidebar</span>
+                    esc <span style={{ fg: theme.textMuted }}>exit shell mode</span>
                   </text>
-                </Show>
-                <text fg={theme.text}>
-                  {keybind.print("command_list")} <span style={{ fg: theme.textMuted }}>commands</span>
-                </text>
-              </Match>
-              <Match when={store.mode === "shell"}>
-                <text fg={theme.text}>
-                  esc <span style={{ fg: theme.textMuted }}>exit shell mode</span>
-                </text>
-              </Match>
-            </Switch>
-          </box>
+                </Match>
+              </Switch>
+            </box>
+          </Show>
         </box>
       </box>
     </>
