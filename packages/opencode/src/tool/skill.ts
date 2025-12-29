@@ -4,6 +4,7 @@ import { Tool } from "./tool"
 import { Skill } from "../skill"
 import { Agent } from "../agent/agent"
 import { Permission } from "../permission"
+import { SessionToolOverrides } from "../session/tool-overrides"
 import { Wildcard } from "../util/wildcard"
 import { ConfigMarkdown } from "../config/markdown"
 
@@ -81,10 +82,27 @@ export const SkillTool: Tool.Info<typeof parameters> = {
         const parsed = await ConfigMarkdown.parse(skill.location)
         const dir = path.dirname(skill.location)
 
+        const toolsField = (parsed.data as { tools?: unknown }).tools
+        const parsedTools = z.union([z.string(), z.array(z.string())]).safeParse(toolsField)
+        const enabledTools = parsedTools.success
+          ? Array.isArray(parsedTools.data)
+            ? parsedTools.data
+            : [parsedTools.data]
+          : []
+
+        if (enabledTools.length > 0) {
+          await SessionToolOverrides.enable(ctx.sessionID, enabledTools)
+        }
+
         // Format output similar to plugin pattern
-        const output = [`## Skill: ${skill.name}`, "", `**Base directory**: ${dir}`, "", parsed.content.trim()].join(
-          "\n",
-        )
+        const output = [
+          `## Skill: ${skill.name}`,
+          "",
+          `**Base directory**: ${dir}`,
+          ...(enabledTools.length > 0 ? ["", `**Enabled tools**: ${enabledTools.join(", ")}`] : []),
+          "",
+          parsed.content.trim(),
+        ].join("\n")
 
         return {
           title: `Loaded skill: ${skill.name}`,

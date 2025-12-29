@@ -1,7 +1,12 @@
 import { test, expect } from "bun:test"
+import { Agent } from "../../src/agent/agent"
+import { Instance } from "../../src/project/instance"
 import { Skill } from "../../src/skill"
 import { SystemPrompt } from "../../src/session/system"
-import { Instance } from "../../src/project/instance"
+import { SessionToolOverrides } from "../../src/session/tool-overrides"
+import { ToolRegistry } from "../../src/tool/registry"
+import { SkillTool } from "../../src/tool/skill"
+import { Wildcard } from "../../src/util/wildcard"
 import { tmpdir } from "../fixture/fixture"
 import path from "path"
 
@@ -97,6 +102,94 @@ test("returns empty array when no skills exist", async () => {
     fn: async () => {
       const skills = await Skill.all()
       expect(skills).toEqual([])
+    },
+  })
+})
+
+test("loading a skill can enable tools for the session", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "opencode.json"),
+        JSON.stringify(
+          {
+            tools: {
+              heavy: false,
+            },
+          },
+          null,
+          2,
+        ),
+      )
+
+      await Bun.write(
+        path.join(dir, ".opencode", "tool", "heavy.ts"),
+        `export default {
+  description: "A heavy tool used for tests",
+  args: {},
+  async execute() {
+    return "ok"
+  },
+}
+`,
+      )
+
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "webdev", "SKILL.md"),
+        `---
+name: webdev
+description: Enables heavy tools
+tools:
+  - heavy
+---
+
+Use the heavy tool.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_test"
+
+      const ids = await ToolRegistry.ids()
+      expect(ids).toContain("heavy")
+
+      const before = {
+        ...agent.tools,
+        ...(await SessionToolOverrides.get(sessionID)),
+        ...(await ToolRegistry.enabled(agent)),
+      }
+      expect(Wildcard.all("heavy", before)).toBe(false)
+
+      const skillTool = await SkillTool.init({ agent })
+      await skillTool.execute(
+        { name: "webdev" },
+        {
+          sessionID,
+          messageID: "message_test",
+          agent: agent.name,
+          abort: new AbortController().signal,
+          metadata() {},
+        },
+      )
+
+      const after = {
+        ...agent.tools,
+        ...(await SessionToolOverrides.get(sessionID)),
+        ...(await ToolRegistry.enabled(agent)),
+      }
+      expect(Wildcard.all("heavy", after)).toBe(true)
+
+      SessionToolOverrides.evict(sessionID)
+      const persisted = await SessionToolOverrides.get(sessionID)
+      expect(Wildcard.all("heavy", persisted)).toBe(true)
+
+      await SessionToolOverrides.clear(sessionID)
     },
   })
 })

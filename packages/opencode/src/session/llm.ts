@@ -19,6 +19,8 @@ import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { ToolRegistry } from "@/tool/registry"
 import { Flag } from "@/flag/flag"
+import { Wildcard } from "@/util/wildcard"
+import { SessionToolOverrides } from "./tool-overrides"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -202,15 +204,19 @@ export namespace LLM {
     })
   }
 
-  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user">) {
+  async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user" | "sessionID">) {
     const enabled = pipe(
       input.agent.tools,
+      mergeDeep(await SessionToolOverrides.get(input.sessionID)),
       mergeDeep(await ToolRegistry.enabled(input.agent)),
       mergeDeep(input.user.tools ?? {}),
     )
-    for (const [key, value] of Object.entries(enabled)) {
-      if (value === false) delete input.tools[key]
+
+    for (const key of Object.keys(input.tools)) {
+      if (key === "invalid") continue
+      if (Wildcard.all(key, enabled) === false) delete input.tools[key]
     }
+
     return input.tools
   }
 }

@@ -15,6 +15,7 @@ import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
 import { SessionMessage } from "./message-routing"
 import { WaitPolicy } from "./wait-policy"
+import { SessionToolOverrides } from "./tool-overrides"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
@@ -350,6 +351,9 @@ export namespace Session {
       // Clean up messaging state
       SessionMessage.clear(sessionID)
       WaitPolicy.clear(sessionID)
+      await SessionToolOverrides.clear(sessionID).catch((error) => {
+        log.error("failed to clear tool overrides", { sessionID, error })
+      })
 
       for (const msg of await Storage.list(["message", sessionID])) {
         for (const part of await Storage.list(["part", msg.at(-1)!])) {

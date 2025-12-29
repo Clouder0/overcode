@@ -23,6 +23,7 @@ import { defer } from "../util/defer"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ToolRegistry } from "../tool/registry"
 import { Tool } from "../tool/tool"
+import { SessionToolOverrides } from "./tool-overrides"
 import { Wildcard } from "../util/wildcard"
 import { MCP } from "../mcp"
 import { LSP } from "../lsp"
@@ -1065,6 +1066,7 @@ export namespace SessionPrompt {
     const tools: Record<string, AITool> = {}
     const enabledTools = pipe(
       input.agent.tools,
+      mergeDeep(await SessionToolOverrides.get(input.sessionID)),
       mergeDeep(await ToolRegistry.enabled(input.agent)),
       mergeDeep(input.tools ?? {}),
     )

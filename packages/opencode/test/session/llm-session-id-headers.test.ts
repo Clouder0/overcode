@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, mock, spyOn, test } from "bun:test"
+import { Instance } from "../../src/project/instance"
+import { tmpdir } from "../fixture/fixture"
 
 const streamCalls: Array<{ headers?: Record<string, string> }> = []
 
@@ -48,126 +50,140 @@ beforeEach(() => {
 const { LLM } = await import("../../src/session/llm")
 
 test("adds x-session-id header for @ai-sdk/openai models", async () => {
-  const sessionID = "ses_0123456789ABCDEF0123456789"
-  const upstreamSessionID = sessionID.replace(/^ses_/, "sess_")
+  await using tmp = await tmpdir({ git: true })
 
-  await LLM.stream({
-    sessionID,
-    model: {
-      id: "custom/gpt-5.1-codex",
-      providerID: "custom",
-      name: "Test",
-      family: "test",
-      api: {
-        id: "gpt-5.1-codex",
-        url: "https://example.com/v1",
-        npm: "@ai-sdk/openai",
-      },
-      status: "active",
-      headers: {},
-      options: {},
-      cost: {
-        input: 0,
-        output: 0,
-        cache: {
-          read: 0,
-          write: 0,
-        },
-      },
-      limit: {
-        context: 10_000,
-        output: 1_000,
-      },
-      capabilities: {
-        temperature: true,
-        reasoning: false,
-        attachment: false,
-        toolcall: true,
-        input: { text: true, audio: false, image: false, video: false, pdf: false },
-        output: { text: true, audio: false, image: false, video: false, pdf: false },
-        interleaved: false,
-      },
-      release_date: "2025-01-01",
-    } as any,
-    agent: {
-      name: "test",
-      tools: {},
-      options: {},
-    } as any,
-    user: {
-      id: "msg_1",
-    } as any,
-    system: [],
-    abort: new AbortController().signal,
-    messages: [],
-    tools: {},
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const sessionID = "ses_0123456789ABCDEF0123456789"
+      const upstreamSessionID = sessionID.replace(/^ses_/, "sess_")
+
+      await LLM.stream({
+        sessionID,
+        model: {
+          id: "custom/gpt-5.1-codex",
+          providerID: "custom",
+          name: "Test",
+          family: "test",
+          api: {
+            id: "gpt-5.1-codex",
+            url: "https://example.com/v1",
+            npm: "@ai-sdk/openai",
+          },
+          status: "active",
+          headers: {},
+          options: {},
+          cost: {
+            input: 0,
+            output: 0,
+            cache: {
+              read: 0,
+              write: 0,
+            },
+          },
+          limit: {
+            context: 10_000,
+            output: 1_000,
+          },
+          capabilities: {
+            temperature: true,
+            reasoning: false,
+            attachment: false,
+            toolcall: true,
+            input: { text: true, audio: false, image: false, video: false, pdf: false },
+            output: { text: true, audio: false, image: false, video: false, pdf: false },
+            interleaved: false,
+          },
+          release_date: "2025-01-01",
+        } as any,
+        agent: {
+          name: "test",
+          tools: {},
+          options: {},
+        } as any,
+        user: {
+          id: "msg_1",
+        } as any,
+        system: [],
+        abort: new AbortController().signal,
+        messages: [],
+        tools: {},
+      })
+
+      expect(streamCalls).toHaveLength(1)
+
+      const call = streamCalls[0]
+      expect(call.headers?.["x-session-id"]).toBe(upstreamSessionID)
+      expect(call.headers?.["session_id"]).toBeUndefined()
+    },
   })
-
-  expect(streamCalls).toHaveLength(1)
-
-  const call = streamCalls[0]
-  expect(call.headers?.["x-session-id"]).toBe(upstreamSessionID)
-  expect(call.headers?.["session_id"]).toBeUndefined()
 })
 
 test("does not add x-session-id/session_id for non-openai models", async () => {
-  const sessionID = "ses_0123456789ABCDEF0123456789"
+  await using tmp = await tmpdir({ git: true })
 
-  await LLM.stream({
-    sessionID,
-    model: {
-      id: "custom/claude",
-      providerID: "custom",
-      name: "Test",
-      family: "test",
-      api: {
-        id: "claude-3-5-sonnet-20241022",
-        url: "https://example.com",
-        npm: "@ai-sdk/anthropic",
-      },
-      status: "active",
-      headers: {},
-      options: {},
-      cost: {
-        input: 0,
-        output: 0,
-        cache: {
-          read: 0,
-          write: 0,
-        },
-      },
-      limit: {
-        context: 10_000,
-        output: 1_000,
-      },
-      capabilities: {
-        temperature: true,
-        reasoning: false,
-        attachment: false,
-        toolcall: true,
-        input: { text: true, audio: false, image: false, video: false, pdf: false },
-        output: { text: true, audio: false, image: false, video: false, pdf: false },
-        interleaved: false,
-      },
-      release_date: "2025-01-01",
-    } as any,
-    agent: {
-      name: "test",
-      tools: {},
-      options: {},
-    } as any,
-    user: {
-      id: "msg_1",
-    } as any,
-    system: [],
-    abort: new AbortController().signal,
-    messages: [],
-    tools: {},
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const sessionID = "ses_0123456789ABCDEF0123456789"
+
+      await LLM.stream({
+        sessionID,
+        model: {
+          id: "custom/claude",
+          providerID: "custom",
+          name: "Test",
+          family: "test",
+          api: {
+            id: "claude-3-5-sonnet-20241022",
+            url: "https://example.com",
+            npm: "@ai-sdk/anthropic",
+          },
+          status: "active",
+          headers: {},
+          options: {},
+          cost: {
+            input: 0,
+            output: 0,
+            cache: {
+              read: 0,
+              write: 0,
+            },
+          },
+          limit: {
+            context: 10_000,
+            output: 1_000,
+          },
+          capabilities: {
+            temperature: true,
+            reasoning: false,
+            attachment: false,
+            toolcall: true,
+            input: { text: true, audio: false, image: false, video: false, pdf: false },
+            output: { text: true, audio: false, image: false, video: false, pdf: false },
+            interleaved: false,
+          },
+          release_date: "2025-01-01",
+        } as any,
+        agent: {
+          name: "test",
+          tools: {},
+          options: {},
+        } as any,
+        user: {
+          id: "msg_1",
+        } as any,
+        system: [],
+        abort: new AbortController().signal,
+        messages: [],
+        tools: {},
+      })
+
+      expect(streamCalls).toHaveLength(1)
+
+      const call = streamCalls[0]
+      expect(call.headers?.["x-session-id"]).toBeUndefined()
+      expect(call.headers?.["session_id"]).toBeUndefined()
+    },
   })
-
-  expect(streamCalls).toHaveLength(1)
-
-  const call = streamCalls[0]
-  expect(call.headers?.["x-session-id"]).toBeUndefined()
-  expect(call.headers?.["session_id"]).toBeUndefined()
 })
