@@ -37,11 +37,9 @@ export function DialogModel(props: { providerID?: string }) {
     const recents = local.model.recent()
 
     const recentList = showExtra()
-      ? recents
-          .filter(
-            (item) => !favorites.some((fav) => fav.providerID === item.providerID && fav.modelID === item.modelID),
-          )
-          .slice(0, 5)
+      ? recents.filter(
+          (item) => !favorites.some((fav) => fav.providerID === item.providerID && fav.modelID === item.modelID),
+        )
       : []
 
     const favoriteOptions = favorites.flatMap((item) => {
@@ -152,10 +150,10 @@ export function DialogModel(props: { providerID?: string }) {
               (item) => item.providerID === value.providerID && item.modelID === value.modelID,
             )
             if (inFavorites) return false
-            const inRecentList = recentList.some(
+            const inRecents = recentList.some(
               (item) => item.providerID === value.providerID && item.modelID === value.modelID,
             )
-            if (inRecentList) return false
+            if (inRecents) return false
             return true
           }),
           sortBy(
@@ -182,7 +180,10 @@ export function DialogModel(props: { providerID?: string }) {
     // Apply fuzzy filtering to each section separately, maintaining section order
     if (q) {
       const filteredFavorites = fuzzysort.go(q, favoriteOptions, { keys: ["title"] }).map((x) => x.obj)
-      const filteredRecents = fuzzysort.go(q, recentOptions, { keys: ["title"] }).map((x) => x.obj)
+      const filteredRecents = fuzzysort
+        .go(q, recentOptions, { keys: ["title"] })
+        .map((x) => x.obj)
+        .slice(0, 5)
       const filteredProviders = fuzzysort.go(q, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj)
       const filteredPopular = fuzzysort.go(q, popularProviders, { keys: ["title"] }).map((x) => x.obj)
       return [...filteredFavorites, ...filteredRecents, ...filteredProviders, ...filteredPopular]

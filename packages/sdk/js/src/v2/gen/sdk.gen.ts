@@ -55,6 +55,7 @@ import type {
   PartUpdateErrors,
   PartUpdateResponses,
   PathGetResponses,
+  PermissionListResponses,
   PermissionRespondErrors,
   PermissionRespondResponses,
   ProjectCurrentResponses,
@@ -1235,6 +1236,7 @@ export class Session extends HeyApiClient {
         [key: string]: boolean
       }
       system?: string
+      variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -1252,6 +1254,7 @@ export class Session extends HeyApiClient {
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
             { in: "body", key: "system" },
+            { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],
         },
@@ -1321,6 +1324,7 @@ export class Session extends HeyApiClient {
         [key: string]: boolean
       }
       system?: string
+      variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -1338,6 +1342,7 @@ export class Session extends HeyApiClient {
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
             { in: "body", key: "system" },
+            { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],
         },
@@ -1369,6 +1374,7 @@ export class Session extends HeyApiClient {
       model?: string
       arguments?: string
       command?: string
+      variant?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1384,6 +1390,7 @@ export class Session extends HeyApiClient {
             { in: "body", key: "model" },
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
+            { in: "body", key: "variant" },
           ],
         },
       ],
@@ -1624,6 +1631,25 @@ export class Permission extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * List pending permissions
+   *
+   * Get all pending permission requests across all sessions.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).get<PermissionListResponses, unknown, ThrowOnError>({
+      url: "/permission",
+      ...options,
+      ...params,
     })
   }
 }

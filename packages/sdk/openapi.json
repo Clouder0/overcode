@@ -2069,6 +2069,9 @@
                   "system": {
                     "type": "string"
                   },
+                  "variant": {
+                    "type": "string"
+                  },
                   "parts": {
                     "type": "array",
                     "items": {
@@ -2441,6 +2444,9 @@
                   "system": {
                     "type": "string"
                   },
+                  "variant": {
+                    "type": "string"
+                  },
                   "parts": {
                     "type": "array",
                     "items": {
@@ -2561,6 +2567,9 @@
                     "type": "string"
                   },
                   "command": {
+                    "type": "string"
+                  },
+                  "variant": {
                     "type": "string"
                   }
                 },
@@ -2896,6 +2905,43 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.respond({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/permission": {
+      "get": {
+        "operationId": "permission.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List pending permissions",
+        "description": "Get all pending permission requests across all sessions.",
+        "responses": {
+          "200": {
+            "description": "List of pending permissions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Permission"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.list({\n  ...\n})"
           }
         ]
       }
@@ -5249,6 +5295,9 @@
             "additionalProperties": {
               "type": "boolean"
             }
+          },
+          "variant": {
+            "type": "string"
           }
         },
         "required": ["id", "sessionID", "role", "time", "agent", "model"]
@@ -7733,6 +7782,11 @@
             "default": "shift+tab",
             "type": "string"
           },
+          "variant_cycle": {
+            "description": "Cycle model variants",
+            "default": "ctrl+t",
+            "type": "string"
+          },
           "input_clear": {
             "description": "Clear input field",
             "default": "ctrl+c",
@@ -9160,6 +9214,16 @@
         },
         "required": ["name", "template"]
       },
+      "Variant": {
+        "type": "object",
+        "properties": {
+          "disabled": {
+            "type": "boolean"
+          }
+        },
+        "required": ["disabled"],
+        "additionalProperties": {}
+      },
       "Model": {
         "type": "object",
         "properties": {
@@ -9349,6 +9413,15 @@
           },
           "release_date": {
             "type": "string"
+          },
+          "variants": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Variant"
+            }
           }
         },
         "required": [

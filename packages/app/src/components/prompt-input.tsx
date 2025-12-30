@@ -367,6 +367,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }
 
   const handlePaste = async (event: ClipboardEvent) => {
+    if (!isFocused()) return
     const clipboardData = event.clipboardData
     if (!clipboardData) return
 
@@ -389,7 +390,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     addPart({ type: "text", content: plainText, start: 0, end: 0 })
   }
 
-  const handleDragOver = (event: DragEvent) => {
+  const handleGlobalDragOver = (event: DragEvent) => {
     event.preventDefault()
     const hasFiles = event.dataTransfer?.types.includes("Files")
     if (hasFiles) {
@@ -397,15 +398,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     }
   }
 
-  const handleDragLeave = (event: DragEvent) => {
-    const related = event.relatedTarget as Node | null
-    const form = event.currentTarget as HTMLElement
-    if (!related || !form.contains(related)) {
+  const handleGlobalDragLeave = (event: DragEvent) => {
+    // relatedTarget is null when leaving the document window
+    if (!event.relatedTarget) {
       setStore("dragging", false)
     }
   }
 
-  const handleDrop = async (event: DragEvent) => {
+  const handleGlobalDrop = async (event: DragEvent) => {
     event.preventDefault()
     setStore("dragging", false)
 
@@ -421,9 +421,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   onMount(() => {
     editorRef.addEventListener("paste", handlePaste)
+    document.addEventListener("dragover", handleGlobalDragOver)
+    document.addEventListener("dragleave", handleGlobalDragLeave)
+    document.addEventListener("drop", handleGlobalDrop)
   })
   onCleanup(() => {
     editorRef.removeEventListener("paste", handlePaste)
+    document.removeEventListener("dragover", handleGlobalDragOver)
+    document.removeEventListener("dragleave", handleGlobalDragLeave)
+    document.removeEventListener("drop", handleGlobalDrop)
   })
 
   createEffect(() => {
@@ -762,9 +768,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }
 
   const abort = () =>
-    sdk.client.session.abort({
-      sessionID: params.id!,
-    })
+    sdk.client.session
+      .abort({
+        sessionID: params.id!,
+      })
+      .catch(() => {})
 
   const addToHistory = (prompt: Prompt, mode: "normal" | "shell") => {
     const text = prompt
@@ -1004,12 +1012,16 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     }
 
     if (isShellMode) {
-      sdk.client.session.shell({
-        sessionID: existing.id,
-        agent,
-        model,
-        command: text,
-      })
+      sdk.client.session
+        .shell({
+          sessionID: existing.id,
+          agent,
+          model,
+          command: text,
+        })
+        .catch((e) => {
+          console.error("Failed to send shell command", e)
+        })
       return
     }
 
@@ -1018,13 +1030,17 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       const commandName = cmdName.slice(1)
       const customCommand = sync.data.command.find((c) => c.name === commandName)
       if (customCommand) {
-        sdk.client.session.command({
-          sessionID: existing.id,
-          command: commandName,
-          arguments: args.join(" "),
-          agent,
-          model: `${model.providerID}/${model.modelID}`,
-        })
+        sdk.client.session
+          .command({
+            sessionID: existing.id,
+            command: commandName,
+            arguments: args.join(" "),
+            agent,
+            model: `${model.providerID}/${model.modelID}`,
+          })
+          .catch((e) => {
+            console.error("Failed to send command", e)
+          })
         return
       }
     }
@@ -1050,13 +1066,17 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       model,
     })
 
-    sdk.client.session.prompt({
-      sessionID: existing.id,
-      agent,
-      model,
-      messageID,
-      parts: requestParts,
-    })
+    sdk.client.session
+      .prompt({
+        sessionID: existing.id,
+        agent,
+        model,
+        messageID,
+        parts: requestParts,
+      })
+      .catch((e) => {
+        console.error("Failed to send prompt", e)
+      })
   }
 
   return (
@@ -1131,9 +1151,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       </Show>
       <form
         onSubmit={handleSubmit}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
         classList={{
           "bg-surface-raised-stronger-non-alpha shadow-xs-border relative": true,
           "rounded-md overflow-clip focus-within:shadow-xs-border": true,
