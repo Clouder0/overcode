@@ -51,6 +51,7 @@ import { parsePatch } from "diff"
 import { useDialog } from "../../ui/dialog"
 import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
+import { DialogSubagent } from "./dialog-subagent"
 import type { PromptInfo } from "../../component/prompt/history"
 
 import { iife } from "@/util/iife"
