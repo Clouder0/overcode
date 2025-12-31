@@ -27,6 +27,7 @@ export namespace Editor {
     opts.renderer.currentRenderBuffer.clear()
     opts.renderer.resume()
     opts.renderer.requestRender()
-    return content || undefined
+    if (content === "" && opts.value === "") return
+    return content
   }
 }

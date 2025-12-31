@@ -30,6 +30,7 @@ import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
+import { deleteSpanBackward, deleteSpanForward } from "../../lib/delete-span"
 
 export type PromptProps = {
   sessionID?: string
@@ -105,6 +106,63 @@ function mapTextareaKeybindings(
     super: binding.super || undefined,
     action,
   }))
+}
+
+function DialogPasteEditor(props: { value: string; onSave: (value: string) => void }) {
+  const dialog = useDialog()
+  const { theme } = useTheme()
+  const dimensions = useTerminalDimensions()
+  let textarea: TextareaRenderable
+
+  const height = createMemo(() => {
+    const h = dimensions().height
+    return Math.max(6, Math.min(20, h - 16))
+  })
+
+  onMount(() => {
+    dialog.setSize("large")
+    setTimeout(() => {
+      textarea.focus()
+    }, 1)
+    textarea.gotoBufferEnd()
+  })
+
+  return (
+    <box paddingLeft={2} paddingRight={2} gap={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={theme.text}>Edit pasted text</text>
+        <text fg={theme.textMuted}>esc</text>
+      </box>
+      <textarea
+        height={height()}
+        ref={(val: TextareaRenderable) => {
+          textarea = val
+        }}
+        initialValue={props.value}
+        backgroundColor={theme.backgroundPanel}
+        focusedBackgroundColor={theme.backgroundPanel}
+        textColor={theme.text}
+        focusedTextColor={theme.text}
+        cursorColor={theme.text}
+        onKeyDown={(e) => {
+          if (e.ctrl && e.name === "s") {
+            props.onSave(textarea.plainText)
+            dialog.clear()
+            e.preventDefault()
+            return
+          }
+        }}
+      />
+      <box paddingBottom={1} flexDirection="row" gap={1}>
+        <text fg={theme.text}>
+          ctrl+s <span style={{ fg: theme.textMuted }}>save</span>
+        </text>
+        <text fg={theme.text}>
+          esc <span style={{ fg: theme.textMuted }}>cancel</span>
+        </text>
+      </box>
+    </box>
+  )
 }
 
 export function Prompt(props: PromptProps) {
@@ -202,7 +260,10 @@ export function Prompt(props: PromptProps) {
   const fileStyleId = syntax().getStyleId("extmark.file")!
   const agentStyleId = syntax().getStyleId("extmark.agent")!
   const pasteStyleId = syntax().getStyleId("extmark.paste")!
+  const pasteSelectedStyleId = syntax().getStyleId("extmark.paste.selected")!
   let promptPartTypeId: number
+  let pasteFocusTypeId: number
+  let pasteFocusOverlayId: number | undefined
 
   sdk.event.on(TuiEvent.PromptAppend.type, (evt) => {
     input.insertText(evt.properties.text)
@@ -222,16 +283,24 @@ export function Prompt(props: PromptProps) {
     prompt: PromptInfo
     mode: "normal" | "shell"
     extmarkToPartIndex: Map<number, number>
+    partByExtmarkId: Map<number, PromptInfo["parts"][number]>
+    recentRemovedExtmarkIds: number[]
     interrupt: number
     placeholder: number
+    suspend: boolean
+    pasteFocus: { extmarkId: number; side: "left" | "right" } | null
   }>({
     placeholder: Math.floor(Math.random() * PLACEHOLDERS.length),
+    suspend: false,
+    pasteFocus: null,
     prompt: {
       input: "",
       parts: [],
     },
     mode: "normal",
     extmarkToPartIndex: new Map(),
+    partByExtmarkId: new Map(),
+    recentRemovedExtmarkIds: [],
     interrupt: 0,
   })
 
@@ -278,6 +347,30 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
+        title: "Expand all pastes",
+        value: "prompt.paste.expandAll",
+        category: "Prompt",
+        onSelect: (dialog) => {
+          expandAllPastes()
+          dialog.clear()
+        },
+      },
+      {
+        title: "Toggle paste default collapse",
+        value: "prompt.paste.defaultCollapse",
+        category: "Prompt",
+        onSelect: (dialog) => {
+          const next = !kv.get("paste_collapse_default", true)
+          kv.set("paste_collapse_default", next)
+          toast.show({
+            message: `Default paste collapse: ${next ? "on" : "off"}`,
+            variant: "info",
+          })
+          dialog.clear()
+        },
+      },
+
+      {
         title: "Interrupt session",
         value: "session.interrupt",
         keybind: "session_interrupt",
@@ -316,19 +409,13 @@ export function Prompt(props: PromptProps) {
         onSelect: async (dialog, trigger) => {
           dialog.clear()
 
-          // replace summarized text parts with the actual text
-          const text = store.prompt.parts
-            .filter((p) => p.type === "text")
-            .reduce((acc, p) => {
-              if (!p.source) return acc
-              return acc.replace(p.source.text.value, p.text)
-            }, store.prompt.input)
+          const text = textWithExpandedPastes()
 
           const nonTextParts = store.prompt.parts.filter((p) => p.type !== "text")
 
           const value = trigger === "prompt" ? "" : text
           const content = await Editor.open({ value, renderer })
-          if (!content) return
+          if (content === undefined) return
 
           input.setText(content)
 
@@ -401,81 +488,182 @@ export function Prompt(props: PromptProps) {
 
   onMount(() => {
     promptPartTypeId = input.extmarks.registerType("prompt-part")
+    pasteFocusTypeId = input.extmarks.registerType("prompt-paste-focus")
+  })
+
+  function clearPasteFocusOverlays() {
+    pasteFocusOverlayId = undefined
+    if (!Number.isFinite(pasteFocusTypeId)) return
+
+    const overlays = input.extmarks.getAll().filter((m) => m.typeId === pasteFocusTypeId)
+    if (!overlays.length) return
+
+    for (const overlay of overlays) {
+      input.extmarks.delete(overlay.id)
+    }
+  }
+
+  createEffect(() => {
+    const focus = store.pasteFocus
+    if (!focus) {
+      input.showCursor = true
+      clearPasteFocusOverlays()
+      return
+    }
+
+    input.showCursor = false
+    if (input.focused) {
+      renderer.setCursorPosition(0, 0, false)
+    }
+
+    const extmark = input.extmarks.get(focus.extmarkId)
+    if (!extmark || !extmark.virtual) {
+      clearPasteFocus()
+      return
+    }
+
+    if (!Number.isFinite(pasteFocusTypeId)) return
+
+    clearPasteFocusOverlays()
+
+    if (extmark.end <= extmark.start) return
+
+    pasteFocusOverlayId = input.extmarks.create({
+      start: extmark.start,
+      end: extmark.end,
+      virtual: false,
+      priority: 255,
+      styleId: pasteSelectedStyleId,
+      typeId: pasteFocusTypeId,
+    })
   })
 
   function restoreExtmarksFromParts(parts: PromptInfo["parts"]) {
     input.extmarks.clear()
     setStore("extmarkToPartIndex", new Map())
+    setStore("partByExtmarkId", new Map())
+    setStore("recentRemovedExtmarkIds", [])
 
     parts.forEach((part, partIndex) => {
       let start = 0
       let end = 0
-      let virtualText = ""
       let styleId: number | undefined
+      let virtual = true
 
       if (part.type === "file" && part.source?.text) {
         start = part.source.text.start
         end = part.source.text.end
-        virtualText = part.source.text.value
         styleId = fileStyleId
+        virtual = true
       } else if (part.type === "agent" && part.source) {
         start = part.source.start
         end = part.source.end
-        virtualText = part.source.value
         styleId = agentStyleId
+        virtual = true
       } else if (part.type === "text" && part.source?.text) {
         start = part.source.text.start
         end = part.source.text.end
-        virtualText = part.source.text.value
-        styleId = pasteStyleId
+        const expanded = part.source.expanded ?? false
+        styleId = expanded ? undefined : pasteStyleId
+        virtual = !expanded
       }
 
-      if (virtualText) {
-        const extmarkId = input.extmarks.create({
-          start,
-          end,
-          virtual: true,
-          styleId,
-          typeId: promptPartTypeId,
-        })
-        setStore("extmarkToPartIndex", (map: Map<number, number>) => {
-          const newMap = new Map(map)
-          newMap.set(extmarkId, partIndex)
-          return newMap
-        })
-      }
+      if (end <= start) return
+
+      const extmarkId = input.extmarks.create({
+        start,
+        end,
+        virtual,
+        styleId,
+        typeId: promptPartTypeId,
+      })
+      setStore("extmarkToPartIndex", (map: Map<number, number>) => {
+        const newMap = new Map(map)
+        newMap.set(extmarkId, partIndex)
+        return newMap
+      })
+      setStore("partByExtmarkId", (map: Map<number, PromptInfo["parts"][number]>) => {
+        const newMap = new Map(map)
+        newMap.set(extmarkId, part)
+        return newMap
+      })
     })
   }
 
   function syncExtmarksWithPromptParts() {
-    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
+    const allExtmarks = input.extmarks
+      .getAll()
+      .filter((extmark) => extmark.typeId === promptPartTypeId)
+      .sort((a, b) => a.start - b.start)
+
     setStore(
       produce((draft) => {
+        const previousMap = draft.extmarkToPartIndex
         const newMap = new Map<number, number>()
         const newParts: typeof draft.prompt.parts = []
+        const cache = new Map(draft.partByExtmarkId)
 
         for (const extmark of allExtmarks) {
-          const partIndex = draft.extmarkToPartIndex.get(extmark.id)
-          if (partIndex !== undefined) {
-            const part = draft.prompt.parts[partIndex]
-            if (part) {
-              if (part.type === "agent" && part.source) {
-                part.source.start = extmark.start
-                part.source.end = extmark.end
-              } else if (part.type === "file" && part.source?.text) {
-                part.source.text.start = extmark.start
-                part.source.text.end = extmark.end
-              } else if (part.type === "text" && part.source?.text) {
-                part.source.text.start = extmark.start
-                part.source.text.end = extmark.end
-              }
-              newMap.set(extmark.id, newParts.length)
-              newParts.push(part)
-            }
+          const token = input.getTextRange(extmark.start, extmark.end)
+
+          const existingIndex = draft.extmarkToPartIndex.get(extmark.id)
+          const existingPart = existingIndex === undefined ? undefined : draft.prompt.parts[existingIndex]
+          const cachedPart = cache.get(extmark.id)
+          const part = existingPart ?? cachedPart
+
+          if (!part) continue
+
+          if (part.type === "agent" && part.source) {
+            part.source.start = extmark.start
+            part.source.end = extmark.end
+            part.source.value = token
+          } else if (part.type === "file" && part.source?.text) {
+            part.source.text.start = extmark.start
+            part.source.text.end = extmark.end
+            part.source.text.value = token
+          } else if (part.type === "text" && part.source?.text) {
+            part.source.text.start = extmark.start
+            part.source.text.end = extmark.end
+            part.source.text.value = token
+            part.source.expanded = !extmark.virtual
           }
+
+          cache.set(extmark.id, part)
+          newMap.set(extmark.id, newParts.length)
+          newParts.push(part)
+        }
+
+        const removed: number[] = []
+        for (const id of previousMap.keys()) {
+          if (newMap.has(id)) continue
+          removed.push(id)
+        }
+
+        const maxRemoved = 50
+        const seen = new Set<number>()
+        const nextRemoved: number[] = []
+        for (const id of removed.concat(draft.recentRemovedExtmarkIds)) {
+          if (newMap.has(id)) continue
+          if (seen.has(id)) continue
+          seen.add(id)
+          nextRemoved.push(id)
+          if (nextRemoved.length >= maxRemoved) break
+        }
+
+        const nextCache = new Map<number, PromptInfo["parts"][number]>()
+        for (const id of newMap.keys()) {
+          const part = cache.get(id)
+          if (part) nextCache.set(id, part)
+        }
+
+        for (const id of nextRemoved) {
+          const part = cache.get(id)
+          if (part) nextCache.set(id, part)
         }
 
         draft.extmarkToPartIndex = newMap
+        draft.recentRemovedExtmarkIds = nextRemoved
+        draft.partByExtmarkId = nextCache
         draft.prompt.parts = newParts
       }),
     )
@@ -497,6 +685,8 @@ export function Prompt(props: PromptProps) {
         input.clear()
         setStore("prompt", { input: "", parts: [] })
         setStore("extmarkToPartIndex", new Map())
+        setStore("partByExtmarkId", new Map())
+        setStore("recentRemovedExtmarkIds", [])
         dialog.clear()
       },
     },
@@ -595,23 +785,7 @@ export function Prompt(props: PromptProps) {
           return newSession.id
         })()
     const messageID = Identifier.ascending("message")
-    let inputText = store.prompt.input
-
-    // Expand pasted text inline before submitting
-    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
-    const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
-
-    for (const extmark of sortedExtmarks) {
-      const partIndex = store.extmarkToPartIndex.get(extmark.id)
-      if (partIndex !== undefined) {
-        const part = store.prompt.parts[partIndex]
-        if (part?.type === "text" && part.text) {
-          const before = inputText.slice(0, extmark.start)
-          const after = inputText.slice(extmark.end)
-          inputText = before + part.text + after
-        }
-      }
-    }
+    let inputText = textWithExpandedPastes()
 
     // Filter out text parts (pasted content) since they're now expanded inline
     const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
@@ -680,6 +854,8 @@ export function Prompt(props: PromptProps) {
       parts: [],
     })
     setStore("extmarkToPartIndex", new Map())
+    setStore("partByExtmarkId", new Map())
+    setStore("recentRemovedExtmarkIds", [])
     props.onSubmit?.()
 
     // Navigate to the new session immediately
@@ -693,11 +869,11 @@ export function Prompt(props: PromptProps) {
   const exit = useExit()
 
   function pasteText(text: string, virtualText: string) {
-    const currentOffset = input.visualCursor.offset
-    const extmarkStart = currentOffset
-    const extmarkEnd = extmarkStart + virtualText.length
+    const extmarkStart = input.visualCursor.offset
 
-    input.insertText(virtualText + " ")
+    input.insertText(virtualText)
+    const extmarkEnd = input.visualCursor.offset
+    input.insertText(" ")
 
     const extmarkId = input.extmarks.create({
       start: extmarkStart,
@@ -714,6 +890,7 @@ export function Prompt(props: PromptProps) {
           type: "text" as const,
           text,
           source: {
+            expanded: false,
             text: {
               start: extmarkStart,
               end: extmarkEnd,
@@ -724,6 +901,310 @@ export function Prompt(props: PromptProps) {
         draft.extmarkToPartIndex.set(extmarkId, partIndex)
       }),
     )
+  }
+
+  function pasteSummary(text: string) {
+    const lines = (text.match(/\n/g)?.length ?? 0) + 1
+    if (lines === 1) return "[Pasted ~1 line]"
+    return `[Pasted ~${lines} lines]`
+  }
+
+  function isPasteSummaryToken(text: string) {
+    return /^\[Pasted ~\d+ lines?\]$/.test(text)
+  }
+
+  function textWithExpandedPastes() {
+    const base = store.prompt.input
+    const chunks: string[] = []
+    let index = 0
+    let missing = 0
+
+    const items: { start: number; token: string; text: string }[] = []
+    for (const part of store.prompt.parts) {
+      if (part.type !== "text") continue
+      const source = part.source
+      if (!source) continue
+      if (!("text" in source)) continue
+      if (source.expanded) continue
+
+      const text = source.text
+      if (!text) continue
+
+      items.push({ start: text.start, token: text.value, text: part.text })
+    }
+
+    items.sort((a, b) => a.start - b.start)
+
+    for (const item of items) {
+      const found = base.indexOf(item.token, index)
+      if (found === -1) {
+        missing++
+        continue
+      }
+
+      chunks.push(base.slice(index, found))
+      chunks.push(item.text)
+      index = found + item.token.length
+    }
+
+    chunks.push(base.slice(index))
+
+    if (missing > 0) {
+      toast.show({
+        message: `Couldn't expand ${missing} pasted item(s); submitting placeholders as-is`,
+        variant: "warning",
+      })
+    }
+
+    return chunks.join("")
+  }
+
+  function getPasteAtOffset(offset: number) {
+    const marks = input.extmarks.getAtOffset(offset)
+    for (const m of marks) {
+      if (m.typeId !== promptPartTypeId) continue
+      const partIndex = store.extmarkToPartIndex.get(m.id)
+      if (partIndex === undefined) continue
+      const part = store.prompt.parts[partIndex]
+      if (!part || part.type !== "text" || !part.source?.text) continue
+      return { extmark: m, partIndex, part }
+    }
+  }
+
+  function getPasteByExtmarkId(extmarkId: number) {
+    const extmark = input.extmarks.get(extmarkId)
+    if (!extmark) return
+
+    const partIndex = store.extmarkToPartIndex.get(extmarkId)
+    if (partIndex === undefined) return
+
+    const part = store.prompt.parts[partIndex]
+    if (!part || part.type !== "text" || !part.source?.text) return
+
+    return { extmark, partIndex, part }
+  }
+
+  function clearPasteFocus() {
+    if (!store.pasteFocus) return
+    setStore("pasteFocus", null)
+  }
+
+  function getPasteAtCursor() {
+    if (!input) return
+    if (!Number.isFinite(promptPartTypeId)) return
+    const offset = input.visualCursor.offset
+
+    for (const i of [0, 1, 2, 3]) {
+      const o = offset - i
+      if (o < 0) break
+      const hit = getPasteAtOffset(o)
+      if (hit) return hit
+    }
+  }
+
+  function updatePaste(hit: ReturnType<typeof getPasteAtCursor>, next: { text: string; expanded: boolean }) {
+    if (!hit) return
+
+    setStore(
+      produce((draft) => {
+        const part = draft.prompt.parts[hit.partIndex]
+        if (!part || part.type !== "text") return
+        part.text = next.text
+      }),
+    )
+
+    const part = store.prompt.parts[hit.partIndex]
+    if (!part || part.type !== "text") return
+
+    setStore("partByExtmarkId", (map: Map<number, PromptInfo["parts"][number]>) => {
+      const newMap = new Map(map)
+      newMap.set(hit.extmark.id, part)
+      return newMap
+    })
+  }
+
+  function deletePasteChip(extmarkId: number) {
+    const hit = getPasteByExtmarkId(extmarkId)
+    if (!hit) return
+
+    let start = hit.extmark.start
+    let end = hit.extmark.end
+    const token = hit.part.source?.text?.value
+    const cursor = input.cursorOffset
+
+    if (hit.extmark.virtual && token) {
+      const current = input.getTextRange(start, end)
+      if (current !== token) {
+        const len = end - start
+        const findNear = (around: number) => {
+          const window = Math.max(200, len * 4)
+          const from = Math.max(0, around - window)
+          const to = around + window
+          for (let pos = from; pos <= to; pos++) {
+            if (input.getTextRange(pos, pos + len) !== token) continue
+            return { start: pos, end: pos + len }
+          }
+        }
+
+        const found = findNear(cursor) ?? findNear(start) ?? findNear(end)
+        if (!found) {
+          toast.show({
+            message: "Paste marker moved; can't safely delete it here",
+            variant: "warning",
+          })
+          return
+        }
+
+        start = found.start
+        end = found.end
+      }
+    }
+
+    let deleteEnd = end
+    if (input.getTextRange(end, end + 1) === " ") deleteEnd = end + 1
+
+    setStore("suspend", true)
+    try {
+      const startPos = input.editBuffer.offsetToPosition(start)
+      const endPos = input.editBuffer.offsetToPosition(deleteEnd)
+      if (!startPos || !endPos) return
+
+      input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
+
+      const value = input.plainText
+      setStore("prompt", "input", value)
+      autocomplete?.onInput(value)
+      syncExtmarksWithPromptParts()
+
+      input.cursorOffset = start
+      input.getLayoutNode().markDirty()
+      renderer.requestRender()
+    } finally {
+      setStore("suspend", false)
+    }
+  }
+
+  function expandPasteChip(extmarkId: number, options?: { quiet?: boolean }) {
+    const hit = getPasteByExtmarkId(extmarkId)
+    if (!hit || !hit.extmark.virtual) return false
+    if (!isPasteSummaryToken(hit.part.source?.text?.value ?? "")) return false
+
+    let start = hit.extmark.start
+    let end = hit.extmark.end
+    const token = hit.part.source?.text?.value
+    const cursor = input.cursorOffset
+
+    if (token) {
+      const current = input.getTextRange(start, end)
+      if (current !== token) {
+        const len = end - start
+        const findNear = (around: number) => {
+          const window = Math.max(200, len * 4)
+          const from = Math.max(0, around - window)
+          const to = around + window
+          for (let pos = from; pos <= to; pos++) {
+            if (input.getTextRange(pos, pos + len) !== token) continue
+            return { start: pos, end: pos + len }
+          }
+        }
+
+        const found = findNear(cursor) ?? findNear(start) ?? findNear(end)
+        if (!found) {
+          if (!options?.quiet) {
+            toast.show({
+              message: "Paste marker moved; can't safely expand it here",
+              variant: "warning",
+            })
+          }
+          return false
+        }
+
+        start = found.start
+        end = found.end
+      }
+    }
+
+    setStore("suspend", true)
+    try {
+      const startPos = input.editBuffer.offsetToPosition(start)
+      const endPos = input.editBuffer.offsetToPosition(end)
+      if (!startPos || !endPos) return false
+
+      input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
+
+      input.cursorOffset = start
+      input.insertText(hit.part.text)
+
+      let next = input.cursorOffset
+      if (input.getTextRange(next, next + 1) === " ") next++
+      input.cursorOffset = next
+
+      const value = input.plainText
+      setStore("prompt", "input", value)
+      autocomplete?.onInput(value)
+      syncExtmarksWithPromptParts()
+
+      input.getLayoutNode().markDirty()
+      renderer.requestRender()
+    } finally {
+      setStore("suspend", false)
+    }
+    return true
+  }
+
+  function expandAllPastes() {
+    clearPasteFocus()
+
+    const marks = input.extmarks
+      .getAll()
+      .filter((m) => m.typeId === promptPartTypeId && m.virtual)
+      .sort((a, b) => b.start - a.start)
+
+    let expanded = 0
+    for (const mark of marks) {
+      if (expandPasteChip(mark.id, { quiet: true })) expanded++
+    }
+
+    if (expanded === 0) {
+      toast.show({ message: "No pasted text to expand", variant: "info" })
+      return
+    }
+
+    toast.show({ message: `Expanded ${expanded} pasted item(s)`, variant: "info" })
+  }
+
+  async function showPasteEditor(value: string) {
+    return new Promise<string | null>((resolve) => {
+      let done = false
+      const finish = (v: string | null) => {
+        if (done) return
+        done = true
+        resolve(v)
+      }
+
+      dialog.replace(
+        () => <DialogPasteEditor value={value} onSave={(v) => finish(v)} />,
+        () => finish(null),
+      )
+    })
+  }
+
+  async function editPasteAtCursor() {
+    const focused = store.pasteFocus ? getPasteByExtmarkId(store.pasteFocus.extmarkId) : undefined
+    const hit = focused ?? getPasteAtCursor()
+    if (!hit) {
+      toast.show({ message: "No pasted text under cursor", variant: "info" })
+      return
+    }
+
+    const expanded = !hit.extmark.virtual
+    const value = expanded ? input.getTextRange(hit.extmark.start, hit.extmark.end) : hit.part.text
+
+    clearPasteFocus()
+    const content = await showPasteEditor(value)
+    if (content === null) return
+
+    updatePaste(hit, { text: content, expanded })
   }
 
   async function pasteImage(file: { filename?: string; content: string; mime: string }) {
@@ -775,6 +1256,20 @@ export function Prompt(props: PromptProps) {
     return local.agent.color(displayAgentName())
   })
 
+  const pasteHint = createMemo(() => {
+    const focus = store.pasteFocus
+    if (!focus) return ""
+
+    const hit = getPasteByExtmarkId(focus.extmarkId)
+    const token = hit?.part.source?.text?.value
+
+    if (token && isPasteSummaryToken(token)) {
+      return "Paste selected • x expand • e edit • ←/→ jump • backspace/delete remove"
+    }
+
+    return "Paste selected • e edit • ←/→ jump • backspace/delete remove"
+  })
+
   const spinnerDef = createMemo(() => {
     const color = local.agent.color(displayAgentName())
     return {
@@ -799,7 +1294,9 @@ export function Prompt(props: PromptProps) {
     <>
       <Autocomplete
         sessionID={props.sessionID}
-        ref={(r) => (autocomplete = r)}
+        ref={(r) => {
+          autocomplete = r
+        }}
         anchor={() => anchor}
         input={() => input}
         setPrompt={(cb) => {
@@ -817,7 +1314,11 @@ export function Prompt(props: PromptProps) {
         agentStyleId={agentStyleId}
         promptPartTypeId={() => promptPartTypeId}
       />
-      <box ref={(r) => (anchor = r)}>
+      <box
+        ref={(r) => {
+          anchor = r
+        }}
+      >
         <box
           border={["left"]}
           borderColor={highlight()}
@@ -842,10 +1343,44 @@ export function Prompt(props: PromptProps) {
               minHeight={1}
               maxHeight={6}
               onContentChange={() => {
+                if (store.suspend) return
                 const value = input.plainText
                 setStore("prompt", "input", value)
                 autocomplete.onInput(value)
                 syncExtmarksWithPromptParts()
+                if (!store.pasteFocus) clearPasteFocusOverlays()
+              }}
+              onCursorChange={() => {
+                const focus = store.pasteFocus
+                const offset = input.visualCursor.offset
+
+                if (focus) {
+                  const extmark = input.extmarks.get(focus.extmarkId)
+                  if (!extmark || !extmark.virtual) {
+                    clearPasteFocus()
+                  }
+
+                  if (extmark && extmark.virtual) {
+                    const left = Math.max(0, extmark.start - 1)
+                    let right = extmark.end
+                    if (input.getTextRange(extmark.end, extmark.end + 1) === " ") right = extmark.end + 1
+
+                    const ok =
+                      focus.side === "left"
+                        ? offset === extmark.start || offset === left
+                        : offset === extmark.end || offset === right
+
+                    if (!ok) clearPasteFocus()
+                  }
+                }
+
+                const hit = getPasteAtOffset(offset)
+                if (hit?.extmark.virtual && offset > hit.extmark.start && offset < hit.extmark.end) {
+                  let next = hit.extmark.end
+                  if (input.getTextRange(hit.extmark.end, hit.extmark.end + 1) === " ") next = hit.extmark.end + 1
+                  input.cursorOffset = next
+                  setStore("pasteFocus", { extmarkId: hit.extmark.id, side: "right" })
+                }
               }}
               keyBindings={textareaKeybindings()}
               onKeyDown={async (e) => {
@@ -853,6 +1388,160 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
+
+                if (store.pasteFocus && e.name === "escape") {
+                  clearPasteFocus()
+                  e.preventDefault()
+                  return
+                }
+
+                if (
+                  store.pasteFocus &&
+                  (e.name === "backspace" || e.name === "delete") &&
+                  !e.ctrl &&
+                  !e.meta &&
+                  !e.shift &&
+                  !e.super &&
+                  !e.hyper &&
+                  !e.option
+                ) {
+                  deletePasteChip(store.pasteFocus.extmarkId)
+                  clearPasteFocus()
+                  e.preventDefault()
+                  return
+                }
+
+                const plain = !e.ctrl && !e.meta && !e.shift && !e.super && !e.hyper && !e.option
+
+                if (
+                  !store.pasteFocus &&
+                  plain &&
+                  (e.name === "backspace" || e.name === "delete") &&
+                  !input.hasSelection()
+                ) {
+                  const offset = input.visualCursor.offset
+                  const target = e.name === "delete" ? offset : offset - 1
+                  if (target < 0) {
+                    e.preventDefault()
+                    return
+                  }
+
+                  for (const mark of input.extmarks.getAtOffset(target)) {
+                    if (mark.typeId !== promptPartTypeId) continue
+                    if (!mark.virtual) continue
+
+                    const partIndex = store.extmarkToPartIndex.get(mark.id)
+                    const part = partIndex === undefined ? undefined : store.prompt.parts[partIndex]
+                    const token = part?.type === "text" && part.source?.text ? part.source.text.value : undefined
+
+                    if (token && isPasteSummaryToken(token)) {
+                      setStore("pasteFocus", { extmarkId: mark.id, side: e.name === "delete" ? "left" : "right" })
+                      e.preventDefault()
+                      return
+                    }
+
+                    const startPos = input.editBuffer.offsetToPosition(mark.start)
+                    const endPos = input.editBuffer.offsetToPosition(mark.end)
+                    if (!startPos || !endPos) {
+                      e.preventDefault()
+                      return
+                    }
+
+                    input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
+                    e.preventDefault()
+                    return
+                  }
+
+                  const span =
+                    e.name === "delete"
+                      ? deleteSpanForward(input.getTextRange.bind(input), offset)
+                      : deleteSpanBackward(input.getTextRange.bind(input), offset)
+                  if (!span) {
+                    e.preventDefault()
+                    return
+                  }
+
+                  const startPos = input.editBuffer.offsetToPosition(span.start)
+                  const endPos = input.editBuffer.offsetToPosition(span.end)
+                  if (!startPos || !endPos) {
+                    e.preventDefault()
+                    return
+                  }
+
+                  input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
+                  e.preventDefault()
+                  return
+                }
+
+                if (store.pasteFocus && plain && e.name === "x") {
+                  const id = store.pasteFocus.extmarkId
+                  const ok = expandPasteChip(id)
+                  if (ok) clearPasteFocus()
+                  if (!ok) {
+                    toast.show({ message: "Can't expand this chip", variant: "info" })
+                  }
+                  e.preventDefault()
+                  return
+                }
+
+                if (store.pasteFocus && plain && e.name === "e") {
+                  e.preventDefault()
+                  await editPasteAtCursor()
+                  return
+                }
+
+                if (store.pasteFocus && !(plain && (e.name === "left" || e.name === "right"))) {
+                  clearPasteFocus()
+                }
+
+                if (plain && !autocomplete.visible && (e.name === "left" || e.name === "right")) {
+                  const focus = store.pasteFocus
+                  if (focus) {
+                    const extmark = input.extmarks.get(focus.extmarkId)
+                    if (extmark && extmark.virtual) {
+                      if (e.name === "right" && focus.side === "left") {
+                        let next = extmark.end
+                        if (input.getTextRange(extmark.end, extmark.end + 1) === " ") next = extmark.end + 1
+                        input.cursorOffset = next
+                        clearPasteFocus()
+                        e.preventDefault()
+                        return
+                      }
+
+                      if (e.name === "left" && focus.side === "right") {
+                        input.cursorOffset = Math.max(0, extmark.start - 1)
+                        clearPasteFocus()
+                        e.preventDefault()
+                        return
+                      }
+                    }
+
+                    clearPasteFocus()
+                  }
+
+                  const offset = input.visualCursor.offset
+                  if (e.name === "right") {
+                    const hit = getPasteAtOffset(offset + 1)
+                    if (hit?.extmark.virtual) {
+                      setStore("pasteFocus", { extmarkId: hit.extmark.id, side: "left" })
+                      e.preventDefault()
+                      return
+                    }
+                  }
+
+                  if (e.name === "left") {
+                    let hit = offset > 0 ? getPasteAtOffset(offset - 1) : undefined
+                    if (!hit && offset > 1 && input.getTextRange(offset - 1, offset) === " ") {
+                      hit = getPasteAtOffset(offset - 2)
+                    }
+                    if (hit?.extmark.virtual) {
+                      setStore("pasteFocus", { extmarkId: hit.extmark.id, side: "right" })
+                      e.preventDefault()
+                      return
+                    }
+                  }
+                }
+
                 // Handle clipboard paste (Ctrl+V) - check for images first on Windows
                 // This is needed because Windows terminal doesn't properly send image data
                 // through bracketed paste, so we need to intercept the keypress and
@@ -878,6 +1567,10 @@ export function Prompt(props: PromptProps) {
                     parts: [],
                   })
                   setStore("extmarkToPartIndex", new Map())
+                  setStore("partByExtmarkId", new Map())
+                  setStore("recentRemovedExtmarkIds", [])
+                  setStore("partByExtmarkId", new Map())
+                  setStore("recentRemovedExtmarkIds", [])
                   return
                 }
                 if (keybind.match("app_exit", e)) {
@@ -980,6 +1673,7 @@ export function Prompt(props: PromptProps) {
                 const lineCount = (pastedContent.match(/\n/g)?.length ?? 0) + 1
                 if (
                   (lineCount >= 3 || pastedContent.length > 150) &&
+                  kv.get("paste_collapse_default", true) &&
                   !sync.data.config.experimental?.disable_paste_summary
                 ) {
                   event.preventDefault()
@@ -1005,6 +1699,11 @@ export function Prompt(props: PromptProps) {
               cursorColor={theme.text}
               syntaxStyle={syntax()}
             />
+            <Show when={store.pasteFocus}>
+              <box flexShrink={0} paddingTop={1}>
+                <text fg={theme.textMuted}>{pasteHint()}</text>
+              </box>
+            </Show>
             <Show when={tall()}>
               <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
                 <text fg={highlight()}>
@@ -1137,6 +1836,7 @@ export function Prompt(props: PromptProps) {
 
                       return (
                         <Show when={retry()}>
+                          {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
                           <box onMouseUp={handleMessageClick}>
                             <text fg={theme.error}>{retryText()}</text>
                           </box>
