@@ -71,15 +71,16 @@ test("session tool overrides affect LLM tool filtering", async () => {
 
       const agent = {
         name: "test",
-        tools: {
-          heavy: false,
-          "chrome_devtools_*": false,
-        },
         options: {},
+        permission: [],
       } as any
 
       const user = {
         id: "msg_1",
+        tools: {
+          heavy: false,
+          "chrome_devtools_*": false,
+        },
       } as any
 
       const tools = () => ({

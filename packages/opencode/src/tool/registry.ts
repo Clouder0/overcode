@@ -126,6 +126,11 @@ export namespace ToolRegistry {
     return all().then((x) => x.map((t) => t.id))
   }
 
+  export async function enabled(_agent?: Agent.Info): Promise<Record<string, boolean>> {
+    const cfg = await Config.get()
+    return cfg.tools ?? {}
+  }
+
   export async function tools(providerID: string, agent?: Agent.Info) {
     const tools = await all()
     const result = await Promise.all(

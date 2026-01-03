@@ -221,9 +221,10 @@ export namespace LLM {
       }
 
       const override = Wildcard.all(tool, overrides)
-      if (input.user.tools?.[tool] === false && override !== true) {
-        delete input.tools[tool]
-      }
+      const allowed = input.user.tools ? Wildcard.all(tool, input.user.tools) !== false : true
+      if (allowed) continue
+      if (override === true) continue
+      delete input.tools[tool]
     }
 
     return input.tools

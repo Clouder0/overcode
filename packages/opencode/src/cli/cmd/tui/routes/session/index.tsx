@@ -120,10 +120,7 @@ export function Session() {
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
-  const permissions = createMemo(() => {
-    if (session().parentID) return sync.data.permission[route.sessionID] ?? []
-    return children().flatMap((x) => sync.data.permission[x.id] ?? [])
-  })
+  const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
 
   // Get task prompt for current session
   const currentTaskPrompt = createMemo((): string | undefined => {
@@ -1116,7 +1113,7 @@ export function Session() {
                 <PermissionPrompt request={permissions()[0]} />
               </Show>
               <Prompt
-                visible={!session().parentID && permissions().length === 0}
+                visible={permissions().length === 0}
                 ref={(r) => {
                   prompt = r
                   promptRef.set(r)

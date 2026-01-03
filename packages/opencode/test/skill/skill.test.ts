@@ -244,28 +244,24 @@ Use the heavy tool.
       expect(ids).toContain("heavy")
 
       const before = {
-        ...agent.tools,
-        ...(await SessionToolOverrides.get(sessionID)),
         ...(await ToolRegistry.enabled(agent)),
+        ...(await SessionToolOverrides.get(sessionID)),
       }
       expect(Wildcard.all("heavy", before)).toBe(false)
 
       const skillTool = await SkillTool.init({ agent })
-      await skillTool.execute(
-        { name: "webdev" },
-        {
-          sessionID,
-          messageID: "message_test",
-          agent: agent.name,
-          abort: new AbortController().signal,
-          metadata() {},
-        },
-      )
+      await skillTool.execute({ name: "webdev" }, {
+        sessionID,
+        messageID: "message_test",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+      } as any)
 
       const after = {
-        ...agent.tools,
-        ...(await SessionToolOverrides.get(sessionID)),
         ...(await ToolRegistry.enabled(agent)),
+        ...(await SessionToolOverrides.get(sessionID)),
       }
       expect(Wildcard.all("heavy", after)).toBe(true)
 

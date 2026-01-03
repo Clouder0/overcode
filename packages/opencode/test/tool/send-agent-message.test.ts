@@ -12,6 +12,7 @@ const ctxBase = {
   agent: "test",
   abort: AbortSignal.any([]),
   metadata: () => {},
+  ask: async () => {},
 }
 
 describe("tool.send_agent_message validation", () => {

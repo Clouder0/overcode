@@ -166,6 +166,7 @@ export namespace SessionCompaction {
               extra: { model },
               agent: agent.name,
               metadata: () => {},
+              ask: async () => {},
             })
           },
           toModelOutput(result) {

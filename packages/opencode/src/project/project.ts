@@ -52,10 +52,20 @@ export namespace Project {
       await matches.return()
       if (git) {
         let worktree = path.dirname(git)
-        let id = await Bun.file(path.join(git, "opencode"))
+
+        const commonDir = await $`git rev-parse --git-common-dir`
+          .quiet()
+          .nothrow()
+          .cwd(worktree)
+          .text()
+          .then((x) => path.resolve(worktree, x.trim()))
+
+        const opencodeFile = path.join(commonDir, "opencode")
+        let id = await Bun.file(opencodeFile)
           .text()
           .then((x) => x.trim())
           .catch(() => {})
+
         if (!id) {
           const roots = await $`git rev-list --max-parents=0 --all`
             .quiet()
@@ -70,24 +80,26 @@ export namespace Project {
                 .toSorted(),
             )
           id = roots[0]
-          if (id) Bun.file(path.join(git, "opencode")).write(id)
+          if (id) await Bun.file(opencodeFile).write(id)
         }
-        if (!id)
+
+        if (!id) {
           return {
             id: "global",
             worktree,
             vcs: "git",
           }
-        worktree = await $`git rev-parse --git-common-dir`
+        }
+
+        const top = await $`git rev-parse --show-toplevel`
           .quiet()
           .nothrow()
           .cwd(worktree)
           .text()
-          .then((x) => {
-            const dirname = path.dirname(x.trim())
-            if (dirname === ".") return worktree
-            return dirname
-          })
+          .then((x) => x.trim())
+
+        if (top) worktree = top
+
         return { id, worktree, vcs: "git" }
       }
 

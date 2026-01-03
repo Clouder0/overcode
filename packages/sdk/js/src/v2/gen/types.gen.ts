@@ -211,6 +211,7 @@ export type ReasoningPart = {
   messageID: string
   type: "reasoning"
   text: string
+  ignored?: boolean
   metadata?: {
     [key: string]: unknown
   }
@@ -412,6 +413,38 @@ export type CompactionPart = {
   auto: boolean
 }
 
+export type MessagePart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "message"
+  direction: "outgoing" | "incoming"
+  peer: string
+  peerType: "human" | "agent"
+  text: string
+  timeout?: number
+  timeoutOccurred?: boolean
+  time: {
+    created: number
+  }
+}
+
+export type WaitPart = {
+  id: string
+  sessionID: string
+  messageID: string
+  type: "wait"
+  sources: Array<string>
+  timeout: number
+  mode: "all" | "any"
+  status: "waiting" | "resolved" | "timedOut"
+  respondedSources?: Array<string>
+  time: {
+    created: number
+    resolved?: number
+  }
+}
+
 export type Part =
   | TextPart
   | {
@@ -434,6 +467,8 @@ export type Part =
   | AgentPart
   | RetryPart
   | CompactionPart
+  | MessagePart
+  | WaitPart
 
 export type EventMessagePartUpdated = {
   type: "message.part.updated"
@@ -449,6 +484,20 @@ export type EventMessagePartRemoved = {
     sessionID: string
     messageID: string
     partID: string
+  }
+}
+
+export type EventSessionMessageDelivered = {
+  type: "session.message.delivered"
+  properties: {
+    message: {
+      id: string
+      from: string
+      to: string
+      text: string
+      time: number
+      messageType?: "normal" | "timeout" | "error"
+    }
   }
 }
 
@@ -493,6 +542,16 @@ export type SessionStatus =
     }
   | {
       type: "busy"
+    }
+  | {
+      type: "waiting"
+      sources: Array<string>
+      timeout: number
+      mode: "all" | "any"
+      time: {
+        created: number
+        deadline?: number
+      }
     }
 
 export type EventSessionStatus = {
@@ -635,6 +694,10 @@ export type Session = {
   projectID: string
   directory: string
   parentID?: string
+  sessionType?: "primary" | "subagent"
+  agentName?: string
+  subagentPrompt?: string
+  childrenIDs?: Array<string>
   summary?: {
     additions: number
     deletions: number
@@ -777,6 +840,7 @@ export type Event =
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
+  | EventSessionMessageDelivered
   | EventPermissionAsked
   | EventPermissionReplied
   | EventSessionStatus
@@ -809,12 +873,12 @@ export type GlobalEvent = {
   payload: Event
 }
 
-export type BadRequestError = {
-  data: unknown
-  errors: Array<{
-    [key: string]: unknown
-  }>
-  success: false
+export type StorageInvalidKeyError = {
+  name: "StorageInvalidKeyError"
+  data: {
+    key: Array<string>
+    reason: string
+  }
 }
 
 export type NotFoundError = {
@@ -823,6 +887,16 @@ export type NotFoundError = {
     message: string
   }
 }
+
+export type BadRequestError = {
+  data: unknown
+  errors: Array<{
+    [key: string]: unknown
+  }>
+  success: false
+}
+
+export type BadRequest = StorageInvalidKeyError | NotFoundError | BadRequestError
 
 /**
  * Custom keybind configurations
@@ -1152,6 +1226,10 @@ export type KeybindsConfig = {
    * Next history item
    */
   history_next?: string
+  /**
+   * List child/subagent sessions
+   */
+  session_child_list?: string
   /**
    * Next child session
    */
@@ -1668,6 +1746,10 @@ export type Config = {
      */
     continue_loop_on_deny?: boolean
     /**
+     * Allow @file references to paths outside the worktree (e.g., ~/foo or /abs/path). Default is false for security.
+     */
+    allowFileRefsOutsideWorktree?: boolean
+    /**
      * Timeout in milliseconds for model context protocol (MCP) requests
      */
     mcp_timeout?: number
@@ -2009,9 +2091,20 @@ export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthRespo
 export type GlobalEventData = {
   body?: never
   path?: never
-  query?: never
+  query: {
+    directory: string
+  }
   url: "/global/event"
 }
+
+export type GlobalEventErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+}
+
+export type GlobalEventError = GlobalEventErrors[keyof GlobalEventErrors]
 
 export type GlobalEventResponses = {
   /**
@@ -2095,7 +2188,7 @@ export type ProjectUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2152,7 +2245,7 @@ export type PtyCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type PtyCreateError = PtyCreateErrors[keyof PtyCreateErrors]
@@ -2245,7 +2338,7 @@ export type PtyUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type PtyUpdateError = PtyUpdateErrors[keyof PtyUpdateErrors]
@@ -2319,7 +2412,7 @@ export type ConfigUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ConfigUpdateError = ConfigUpdateErrors[keyof ConfigUpdateErrors]
@@ -2346,7 +2439,7 @@ export type ToolIdsErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ToolIdsError = ToolIdsErrors[keyof ToolIdsErrors]
@@ -2375,7 +2468,7 @@ export type ToolListErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ToolListError = ToolListErrors[keyof ToolListErrors]
@@ -2456,7 +2549,7 @@ export type WorktreeCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type WorktreeCreateError = WorktreeCreateErrors[keyof WorktreeCreateErrors]
@@ -2523,7 +2616,7 @@ export type SessionCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type SessionCreateError = SessionCreateErrors[keyof SessionCreateErrors]
@@ -2550,7 +2643,7 @@ export type SessionStatusErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type SessionStatusError = SessionStatusErrors[keyof SessionStatusErrors]
@@ -2581,7 +2674,7 @@ export type SessionDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2614,7 +2707,7 @@ export type SessionGetErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2652,7 +2745,7 @@ export type SessionUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2685,7 +2778,7 @@ export type SessionChildrenErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2721,7 +2814,7 @@ export type SessionTodoErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2761,7 +2854,7 @@ export type SessionInitErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2816,7 +2909,7 @@ export type SessionAbortErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2849,7 +2942,7 @@ export type SessionUnshareErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2882,7 +2975,7 @@ export type SessionShareErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2919,7 +3012,7 @@ export type SessionDiffErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2959,7 +3052,7 @@ export type SessionSummarizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -2996,7 +3089,7 @@ export type SessionMessagesErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3052,7 +3145,7 @@ export type SessionPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3095,7 +3188,7 @@ export type SessionMessageErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3142,7 +3235,7 @@ export type PartDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3186,7 +3279,7 @@ export type PartUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3239,7 +3332,7 @@ export type SessionPromptAsyncErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3282,7 +3375,7 @@ export type SessionCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3328,7 +3421,7 @@ export type SessionShellErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3364,7 +3457,7 @@ export type SessionRevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3397,7 +3490,7 @@ export type SessionUnrevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3433,7 +3526,7 @@ export type PermissionRespondErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3469,7 +3562,7 @@ export type PermissionReplyErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -3672,7 +3765,7 @@ export type ProviderOauthAuthorizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ProviderOauthAuthorizeError = ProviderOauthAuthorizeErrors[keyof ProviderOauthAuthorizeErrors]
@@ -3713,7 +3806,7 @@ export type ProviderOauthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type ProviderOauthCallbackError = ProviderOauthCallbackErrors[keyof ProviderOauthCallbackErrors]
@@ -3891,7 +3984,7 @@ export type AppLogErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type AppLogError = AppLogErrors[keyof AppLogErrors]
@@ -3959,7 +4052,7 @@ export type McpAddErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type McpAddError = McpAddErrors[keyof McpAddErrors]
@@ -4021,7 +4114,7 @@ export type McpAuthStartErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -4064,7 +4157,7 @@ export type McpAuthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -4097,7 +4190,7 @@ export type McpAuthAuthenticateErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -4206,7 +4299,7 @@ export type TuiAppendPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type TuiAppendPromptError = TuiAppendPromptErrors[keyof TuiAppendPromptErrors]
@@ -4343,7 +4436,7 @@ export type TuiExecuteCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type TuiExecuteCommandError = TuiExecuteCommandErrors[keyof TuiExecuteCommandErrors]
@@ -4396,7 +4489,7 @@ export type TuiPublishErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type TuiPublishError = TuiPublishErrors[keyof TuiPublishErrors]
@@ -4428,7 +4521,7 @@ export type TuiSelectSessionErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
   /**
    * Not found
    */
@@ -4500,7 +4593,7 @@ export type AuthSetErrors = {
   /**
    * Bad request
    */
-  400: BadRequestError
+  400: BadRequest
 }
 
 export type AuthSetError = AuthSetErrors[keyof AuthSetErrors]
