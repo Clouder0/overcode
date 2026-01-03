@@ -46,7 +46,7 @@ export namespace SystemPrompt {
         `<files>`,
         `  (File tree snapshot; may be outdated. Use tools to verify current files.)`,
         `  ${
-          project.vcs === "git"
+          project.vcs === "git" && false
             ? await Ripgrep.tree({
                 cwd: Instance.directory,
                 limit: 200,

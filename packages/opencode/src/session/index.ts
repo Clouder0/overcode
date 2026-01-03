@@ -21,6 +21,7 @@ import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
 
 import type { Provider } from "@/provider/provider"
+import { PermissionNext } from "@/permission/next"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -69,6 +70,7 @@ export namespace Session {
         compacting: z.number().optional(),
         archived: z.number().optional(),
       }),
+      permission: PermissionNext.Ruleset.optional(),
       revert: z
         .object({
           messageID: z.string(),
@@ -133,6 +135,7 @@ export namespace Session {
       .object({
         parentID: Identifier.schema("session").optional(),
         title: z.string().optional(),
+        permission: Info.shape.permission,
       })
       .optional(),
     async (input) => {
@@ -140,6 +143,7 @@ export namespace Session {
         parentID: input?.parentID,
         directory: Instance.directory,
         title: input?.title,
+        permission: input?.permission,
       })
     },
   )
@@ -189,12 +193,12 @@ export namespace Session {
     sessionType?: "primary" | "subagent"
     agentName?: string
     subagentPrompt?: string
+    permission?: PermissionNext.Ruleset
   }) {
     // Subagent sessions must have a parentID
     if (input.sessionType === "subagent" && !input.parentID) {
       throw new Error("parentID is required for subagent sessions")
     }
-
     const result: Info = {
       id: Identifier.descending("session", input.id),
       version: Installation.VERSION,
@@ -206,6 +210,7 @@ export namespace Session {
       subagentPrompt: input.subagentPrompt,
       childrenIDs: [],
       title: input.title ?? createDefaultTitle(!!input.parentID),
+      permission: input.permission,
       time: {
         created: Date.now(),
         updated: Date.now(),

@@ -32,6 +32,7 @@ export type Project = {
     updated: number
     initialized?: number
   }
+  sandboxes?: Array<string>
 }
 
 export type EventProjectUpdated = {
@@ -210,7 +211,6 @@ export type ReasoningPart = {
   messageID: string
   type: "reasoning"
   text: string
-  ignored?: boolean
   metadata?: {
     [key: string]: unknown
   }
@@ -412,38 +412,6 @@ export type CompactionPart = {
   auto: boolean
 }
 
-export type MessagePart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "message"
-  direction: "outgoing" | "incoming"
-  peer: string
-  peerType: "human" | "agent"
-  text: string
-  timeout?: number
-  timeoutOccurred?: boolean
-  time: {
-    created: number
-  }
-}
-
-export type WaitPart = {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "wait"
-  sources: Array<string>
-  timeout: number
-  mode: "all" | "any"
-  status: "waiting" | "resolved" | "timedOut"
-  respondedSources?: Array<string>
-  time: {
-    created: number
-    resolved?: number
-  }
-}
-
 export type Part =
   | TextPart
   | {
@@ -466,8 +434,6 @@ export type Part =
   | AgentPart
   | RetryPart
   | CompactionPart
-  | MessagePart
-  | WaitPart
 
 export type EventMessagePartUpdated = {
   type: "message.part.updated"
@@ -486,47 +452,68 @@ export type EventMessagePartRemoved = {
   }
 }
 
-export type EventSessionMessageDelivered = {
-  type: "session.message.delivered"
-  properties: {
-    message: {
-      id: string
-      from: string
-      to: string
-      text: string
-      time: number
-      messageType?: "normal" | "timeout" | "error"
-    }
-  }
-}
-
-export type Permission = {
+export type PermissionRequest = {
   id: string
-  type: string
-  pattern?: string | Array<string>
   sessionID: string
-  messageID: string
-  callID?: string
-  title: string
+  permission: string
+  patterns: Array<string>
   metadata: {
     [key: string]: unknown
   }
-  time: {
-    created: number
+  always: Array<string>
+  tool?: {
+    messageID: string
+    callID: string
   }
 }
 
-export type EventPermissionUpdated = {
-  type: "permission.updated"
-  properties: Permission
+export type EventPermissionAsked = {
+  type: "permission.asked"
+  properties: PermissionRequest
 }
 
 export type EventPermissionReplied = {
   type: "permission.replied"
   properties: {
     sessionID: string
-    permissionID: string
-    response: string
+    requestID: string
+    reply: "once" | "always" | "reject"
+  }
+}
+
+export type SessionStatus =
+  | {
+      type: "idle"
+    }
+  | {
+      type: "retry"
+      attempt: number
+      message: string
+      next: number
+    }
+  | {
+      type: "busy"
+    }
+
+export type EventSessionStatus = {
+  type: "session.status"
+  properties: {
+    sessionID: string
+    status: SessionStatus
+  }
+}
+
+export type EventSessionIdle = {
+  type: "session.idle"
+  properties: {
+    sessionID: string
+  }
+}
+
+export type EventSessionCompacted = {
+  type: "session.compacted"
+  properties: {
+    sessionID: string
   }
 }
 
@@ -561,52 +548,6 @@ export type EventTodoUpdated = {
   properties: {
     sessionID: string
     todos: Array<Todo>
-  }
-}
-
-export type SessionStatus =
-  | {
-      type: "idle"
-    }
-  | {
-      type: "retry"
-      attempt: number
-      message: string
-      next: number
-    }
-  | {
-      type: "busy"
-    }
-  | {
-      type: "waiting"
-      sources: Array<string>
-      timeout: number
-      mode: "all" | "any"
-      time: {
-        created: number
-        deadline?: number
-      }
-    }
-
-export type EventSessionStatus = {
-  type: "session.status"
-  properties: {
-    sessionID: string
-    status: SessionStatus
-  }
-}
-
-export type EventSessionIdle = {
-  type: "session.idle"
-  properties: {
-    sessionID: string
-  }
-}
-
-export type EventSessionCompacted = {
-  type: "session.compacted"
-  properties: {
-    sessionID: string
   }
 }
 
@@ -652,6 +593,16 @@ export type EventTuiToastShow = {
   }
 }
 
+export type EventTuiSessionSelect = {
+  type: "tui.session.select"
+  properties: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+}
+
 export type EventMcpToolsChanged = {
   type: "mcp.tools.changed"
   properties: {
@@ -669,15 +620,21 @@ export type EventCommandExecuted = {
   }
 }
 
+export type PermissionAction = "allow" | "deny" | "ask"
+
+export type PermissionRule = {
+  permission: string
+  pattern: string
+  action: PermissionAction
+}
+
+export type PermissionRuleset = Array<PermissionRule>
+
 export type Session = {
   id: string
   projectID: string
   directory: string
   parentID?: string
-  sessionType?: "primary" | "subagent"
-  agentName?: string
-  subagentPrompt?: string
-  childrenIDs?: Array<string>
   summary?: {
     additions: number
     deletions: number
@@ -695,6 +652,7 @@ export type Session = {
     compacting?: number
     archived?: number
   }
+  permission?: PermissionRuleset
   revert?: {
     messageID: string
     partID?: string
@@ -819,17 +777,17 @@ export type Event =
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
-  | EventSessionMessageDelivered
-  | EventPermissionUpdated
+  | EventPermissionAsked
   | EventPermissionReplied
-  | EventFileEdited
-  | EventTodoUpdated
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionCompacted
+  | EventFileEdited
+  | EventTodoUpdated
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
+  | EventTuiSessionSelect
   | EventMcpToolsChanged
   | EventCommandExecuted
   | EventSessionCreated
@@ -851,21 +809,6 @@ export type GlobalEvent = {
   payload: Event
 }
 
-export type StorageInvalidKeyError = {
-  name: "StorageInvalidKeyError"
-  data: {
-    key: Array<string>
-    reason: string
-  }
-}
-
-export type NotFoundError = {
-  name: "NotFoundError"
-  data: {
-    message: string
-  }
-}
-
 export type BadRequestError = {
   data: unknown
   errors: Array<{
@@ -874,7 +817,12 @@ export type BadRequestError = {
   success: false
 }
 
-export type BadRequest = StorageInvalidKeyError | NotFoundError | BadRequestError
+export type NotFoundError = {
+  name: "NotFoundError"
+  data: {
+    message: string
+  }
+}
 
 /**
  * Custom keybind configurations
@@ -1205,10 +1153,6 @@ export type KeybindsConfig = {
    */
   history_next?: string
   /**
-   * List child/subagent sessions
-   */
-  session_child_list?: string
-  /**
    * Next child session
    */
   session_child_cycle?: string
@@ -1255,13 +1199,49 @@ export type ServerConfig = {
    * Enable mDNS service discovery
    */
   mdns?: boolean
+  /**
+   * Additional domains to allow for CORS
+   */
+  cors?: Array<string>
 }
+
+export type PermissionActionConfig = "ask" | "allow" | "deny"
+
+export type PermissionObjectConfig = {
+  [key: string]: PermissionActionConfig
+}
+
+export type PermissionRuleConfig = PermissionActionConfig | PermissionObjectConfig
+
+export type PermissionConfig =
+  | {
+      read?: PermissionRuleConfig
+      edit?: PermissionRuleConfig
+      glob?: PermissionRuleConfig
+      grep?: PermissionRuleConfig
+      list?: PermissionRuleConfig
+      bash?: PermissionRuleConfig
+      task?: PermissionRuleConfig
+      external_directory?: PermissionRuleConfig
+      todowrite?: PermissionActionConfig
+      todoread?: PermissionActionConfig
+      webfetch?: PermissionActionConfig
+      websearch?: PermissionActionConfig
+      codesearch?: PermissionActionConfig
+      lsp?: PermissionRuleConfig
+      doom_loop?: PermissionActionConfig
+      [key: string]: PermissionRuleConfig | PermissionActionConfig | undefined
+    }
+  | PermissionActionConfig
 
 export type AgentConfig = {
   model?: string
   temperature?: number
   top_p?: number
   prompt?: string
+  /**
+   * @deprecated Use 'permission' field instead
+   */
   tools?: {
     [key: string]: boolean
   }
@@ -1271,6 +1251,9 @@ export type AgentConfig = {
    */
   description?: string
   mode?: "subagent" | "primary" | "all"
+  options?: {
+    [key: string]: unknown
+  }
   /**
    * Hex color code for the agent (e.g., #FF5733)
    */
@@ -1278,27 +1261,12 @@ export type AgentConfig = {
   /**
    * Maximum number of agentic iterations before forcing text-only response
    */
+  steps?: number
+  /**
+   * @deprecated Use 'steps' field instead.
+   */
   maxSteps?: number
-  permission?: {
-    edit?: "ask" | "allow" | "deny"
-    bash?:
-      | "ask"
-      | "allow"
-      | "deny"
-      | {
-          [key: string]: "ask" | "allow" | "deny"
-        }
-    skill?:
-      | "ask"
-      | "allow"
-      | "deny"
-      | {
-          [key: string]: "ask" | "allow" | "deny"
-        }
-    webfetch?: "ask" | "allow" | "deny"
-    doom_loop?: "ask" | "allow" | "deny"
-    external_directory?: "ask" | "allow" | "deny"
-  }
+  permission?: PermissionConfig
   [key: string]:
     | unknown
     | string
@@ -1310,28 +1278,12 @@ export type AgentConfig = {
     | "subagent"
     | "primary"
     | "all"
+    | {
+        [key: string]: unknown
+      }
     | string
     | number
-    | {
-        edit?: "ask" | "allow" | "deny"
-        bash?:
-          | "ask"
-          | "allow"
-          | "deny"
-          | {
-              [key: string]: "ask" | "allow" | "deny"
-            }
-        skill?:
-          | "ask"
-          | "allow"
-          | "deny"
-          | {
-              [key: string]: "ask" | "allow" | "deny"
-            }
-        webfetch?: "ask" | "allow" | "deny"
-        doom_loop?: "ask" | "allow" | "deny"
-        external_directory?: "ask" | "allow" | "deny"
-      }
+    | PermissionConfig
     | undefined
 }
 
@@ -1386,6 +1338,18 @@ export type ProviderConfig = {
       }
       provider?: {
         npm: string
+      }
+      /**
+       * Variant-specific configuration
+       */
+      variants?: {
+        [key: string]: {
+          /**
+           * Disable this variant for the model
+           */
+          disabled?: boolean
+          [key: string]: unknown | boolean | undefined
+        }
       }
     }
   }
@@ -1602,7 +1566,12 @@ export type Config = {
    * MCP (Model Context Protocol) server configurations
    */
   mcp?: {
-    [key: string]: McpLocalConfig | McpRemoteConfig
+    [key: string]:
+      | McpLocalConfig
+      | McpRemoteConfig
+      | {
+          enabled: boolean
+        }
   }
   formatter?:
     | false
@@ -1640,26 +1609,7 @@ export type Config = {
    */
   instructions?: Array<string>
   layout?: LayoutConfig
-  permission?: {
-    edit?: "ask" | "allow" | "deny"
-    bash?:
-      | "ask"
-      | "allow"
-      | "deny"
-      | {
-          [key: string]: "ask" | "allow" | "deny"
-        }
-    skill?:
-      | "ask"
-      | "allow"
-      | "deny"
-      | {
-          [key: string]: "ask" | "allow" | "deny"
-        }
-    webfetch?: "ask" | "allow" | "deny"
-    doom_loop?: "ask" | "allow" | "deny"
-    external_directory?: "ask" | "allow" | "deny"
-  }
+  permission?: PermissionConfig
   tools?: {
     [key: string]: boolean
   }
@@ -1718,9 +1668,9 @@ export type Config = {
      */
     continue_loop_on_deny?: boolean
     /**
-     * Allow @file references to paths outside the worktree (e.g., ~/foo or /abs/path). Default is false for security.
+     * Timeout in milliseconds for model context protocol (MCP) requests
      */
-    allowFileRefsOutsideWorktree?: boolean
+    mcp_timeout?: number
   }
 }
 
@@ -1740,6 +1690,17 @@ export type Path = {
   config: string
   worktree: string
   directory: string
+}
+
+export type Worktree = {
+  name: string
+  branch: string
+  directory: string
+}
+
+export type WorktreeCreateInput = {
+  name?: string
+  startCommand?: string
 }
 
 export type VcsInfo = {
@@ -1795,13 +1756,10 @@ export type Command = {
   description?: string
   agent?: string
   model?: string
+  mcp?: boolean
   template: string
   subtask?: boolean
-}
-
-export type Variant = {
-  disabled: boolean
-  [key: string]: unknown | boolean
+  hints: Array<string>
 }
 
 export type Model = {
@@ -1868,7 +1826,9 @@ export type Model = {
   }
   release_date: string
   variants?: {
-    [key: string]: Variant
+    [key: string]: {
+      [key: string]: unknown
+    }
   }
 }
 
@@ -1949,34 +1909,19 @@ export type Agent = {
   mode: "subagent" | "primary" | "all"
   native?: boolean
   hidden?: boolean
-  default?: boolean
   topP?: number
   temperature?: number
   color?: string
-  permission: {
-    edit: "ask" | "allow" | "deny"
-    bash: {
-      [key: string]: "ask" | "allow" | "deny"
-    }
-    skill: {
-      [key: string]: "ask" | "allow" | "deny"
-    }
-    webfetch?: "ask" | "allow" | "deny"
-    doom_loop?: "ask" | "allow" | "deny"
-    external_directory?: "ask" | "allow" | "deny"
-  }
+  permission: PermissionRuleset
   model?: {
     modelID: string
     providerID: string
   }
   prompt?: string
-  tools: {
-    [key: string]: boolean
-  }
   options: {
     [key: string]: unknown
   }
-  maxSteps?: number
+  steps?: number
 }
 
 export type McpStatusConnected = {
@@ -2064,20 +2009,9 @@ export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthRespo
 export type GlobalEventData = {
   body?: never
   path?: never
-  query: {
-    directory: string
-  }
+  query?: never
   url: "/global/event"
 }
-
-export type GlobalEventErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-}
-
-export type GlobalEventError = GlobalEventErrors[keyof GlobalEventErrors]
 
 export type GlobalEventResponses = {
   /**
@@ -2161,7 +2095,7 @@ export type ProjectUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2218,7 +2152,7 @@ export type PtyCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type PtyCreateError = PtyCreateErrors[keyof PtyCreateErrors]
@@ -2311,7 +2245,7 @@ export type PtyUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type PtyUpdateError = PtyUpdateErrors[keyof PtyUpdateErrors]
@@ -2385,7 +2319,7 @@ export type ConfigUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type ConfigUpdateError = ConfigUpdateErrors[keyof ConfigUpdateErrors]
@@ -2412,7 +2346,7 @@ export type ToolIdsErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type ToolIdsError = ToolIdsErrors[keyof ToolIdsErrors]
@@ -2441,7 +2375,7 @@ export type ToolListErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type ToolListError = ToolListErrors[keyof ToolListErrors]
@@ -2491,6 +2425,51 @@ export type PathGetResponses = {
 
 export type PathGetResponse = PathGetResponses[keyof PathGetResponses]
 
+export type WorktreeListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/experimental/worktree"
+}
+
+export type WorktreeListResponses = {
+  /**
+   * List of worktree directories
+   */
+  200: Array<string>
+}
+
+export type WorktreeListResponse = WorktreeListResponses[keyof WorktreeListResponses]
+
+export type WorktreeCreateData = {
+  body?: WorktreeCreateInput
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/experimental/worktree"
+}
+
+export type WorktreeCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type WorktreeCreateError = WorktreeCreateErrors[keyof WorktreeCreateErrors]
+
+export type WorktreeCreateResponses = {
+  /**
+   * Worktree created
+   */
+  200: Worktree
+}
+
+export type WorktreeCreateResponse = WorktreeCreateResponses[keyof WorktreeCreateResponses]
+
 export type VcsGetData = {
   body?: never
   path?: never
@@ -2531,6 +2510,7 @@ export type SessionCreateData = {
   body?: {
     parentID?: string
     title?: string
+    permission?: PermissionRuleset
   }
   path?: never
   query?: {
@@ -2543,7 +2523,7 @@ export type SessionCreateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type SessionCreateError = SessionCreateErrors[keyof SessionCreateErrors]
@@ -2570,7 +2550,7 @@ export type SessionStatusErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type SessionStatusError = SessionStatusErrors[keyof SessionStatusErrors]
@@ -2601,7 +2581,7 @@ export type SessionDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2634,7 +2614,7 @@ export type SessionGetErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2672,7 +2652,7 @@ export type SessionUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2705,7 +2685,7 @@ export type SessionChildrenErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2741,7 +2721,7 @@ export type SessionTodoErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2781,7 +2761,7 @@ export type SessionInitErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2836,7 +2816,7 @@ export type SessionAbortErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2869,7 +2849,7 @@ export type SessionUnshareErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2902,7 +2882,7 @@ export type SessionShareErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2939,7 +2919,7 @@ export type SessionDiffErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -2979,7 +2959,7 @@ export type SessionSummarizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3016,7 +2996,7 @@ export type SessionMessagesErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3046,6 +3026,9 @@ export type SessionPromptData = {
     }
     agent?: string
     noReply?: boolean
+    /**
+     * @deprecated tools and permissions have been merged, you can set permissions on the session itself now
+     */
     tools?: {
       [key: string]: boolean
     }
@@ -3069,7 +3052,7 @@ export type SessionPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3112,7 +3095,7 @@ export type SessionMessageErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3159,7 +3142,7 @@ export type PartDeleteErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3203,7 +3186,7 @@ export type PartUpdateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3230,6 +3213,9 @@ export type SessionPromptAsyncData = {
     }
     agent?: string
     noReply?: boolean
+    /**
+     * @deprecated tools and permissions have been merged, you can set permissions on the session itself now
+     */
     tools?: {
       [key: string]: boolean
     }
@@ -3253,7 +3239,7 @@ export type SessionPromptAsyncErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3296,7 +3282,7 @@ export type SessionCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3342,7 +3328,7 @@ export type SessionShellErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3378,7 +3364,7 @@ export type SessionRevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3411,7 +3397,7 @@ export type SessionUnrevertErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3447,7 +3433,7 @@ export type PermissionRespondErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -3465,6 +3451,42 @@ export type PermissionRespondResponses = {
 
 export type PermissionRespondResponse = PermissionRespondResponses[keyof PermissionRespondResponses]
 
+export type PermissionReplyData = {
+  body?: {
+    reply: "once" | "always" | "reject"
+    message?: string
+  }
+  path: {
+    requestID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/permission/{requestID}/reply"
+}
+
+export type PermissionReplyErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PermissionReplyError = PermissionReplyErrors[keyof PermissionReplyErrors]
+
+export type PermissionReplyResponses = {
+  /**
+   * Permission processed successfully
+   */
+  200: boolean
+}
+
+export type PermissionReplyResponse = PermissionReplyResponses[keyof PermissionReplyResponses]
+
 export type PermissionListData = {
   body?: never
   path?: never
@@ -3478,7 +3500,7 @@ export type PermissionListResponses = {
   /**
    * List of pending permissions
    */
-  200: Array<Permission>
+  200: Array<PermissionRequest>
 }
 
 export type PermissionListResponse = PermissionListResponses[keyof PermissionListResponses]
@@ -3590,6 +3612,11 @@ export type ProviderListResponses = {
           provider?: {
             npm: string
           }
+          variants?: {
+            [key: string]: {
+              [key: string]: unknown
+            }
+          }
         }
       }
     }>
@@ -3645,7 +3672,7 @@ export type ProviderOauthAuthorizeErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type ProviderOauthAuthorizeError = ProviderOauthAuthorizeErrors[keyof ProviderOauthAuthorizeErrors]
@@ -3686,7 +3713,7 @@ export type ProviderOauthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type ProviderOauthCallbackError = ProviderOauthCallbackErrors[keyof ProviderOauthCallbackErrors]
@@ -3742,6 +3769,8 @@ export type FindFilesData = {
     directory?: string
     query: string
     dirs?: "true" | "false"
+    type?: "file" | "directory"
+    limit?: number
   }
   url: "/find/file"
 }
@@ -3862,7 +3891,7 @@ export type AppLogErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type AppLogError = AppLogErrors[keyof AppLogErrors]
@@ -3930,7 +3959,7 @@ export type McpAddErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type McpAddError = McpAddErrors[keyof McpAddErrors]
@@ -3992,7 +4021,7 @@ export type McpAuthStartErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -4035,7 +4064,7 @@ export type McpAuthCallbackErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -4068,7 +4097,7 @@ export type McpAuthAuthenticateErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
   /**
    * Not found
    */
@@ -4177,7 +4206,7 @@ export type TuiAppendPromptErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type TuiAppendPromptError = TuiAppendPromptErrors[keyof TuiAppendPromptErrors]
@@ -4314,7 +4343,7 @@ export type TuiExecuteCommandErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type TuiExecuteCommandError = TuiExecuteCommandErrors[keyof TuiExecuteCommandErrors]
@@ -4355,7 +4384,7 @@ export type TuiShowToastResponses = {
 export type TuiShowToastResponse = TuiShowToastResponses[keyof TuiShowToastResponses]
 
 export type TuiPublishData = {
-  body?: EventTuiPromptAppend | EventTuiCommandExecute | EventTuiToastShow
+  body?: EventTuiPromptAppend | EventTuiCommandExecute | EventTuiToastShow | EventTuiSessionSelect
   path?: never
   query?: {
     directory?: string
@@ -4367,7 +4396,7 @@ export type TuiPublishErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type TuiPublishError = TuiPublishErrors[keyof TuiPublishErrors]
@@ -4380,6 +4409,42 @@ export type TuiPublishResponses = {
 }
 
 export type TuiPublishResponse = TuiPublishResponses[keyof TuiPublishResponses]
+
+export type TuiSelectSessionData = {
+  body?: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/tui/select-session"
+}
+
+export type TuiSelectSessionErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type TuiSelectSessionError = TuiSelectSessionErrors[keyof TuiSelectSessionErrors]
+
+export type TuiSelectSessionResponses = {
+  /**
+   * Session selected successfully
+   */
+  200: boolean
+}
+
+export type TuiSelectSessionResponse = TuiSelectSessionResponses[keyof TuiSelectSessionResponses]
 
 export type TuiControlNextData = {
   body?: never
@@ -4435,7 +4500,7 @@ export type AuthSetErrors = {
   /**
    * Bad request
    */
-  400: BadRequest
+  400: BadRequestError
 }
 
 export type AuthSetError = AuthSetErrors[keyof AuthSetErrors]

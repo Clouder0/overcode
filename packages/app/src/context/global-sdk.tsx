@@ -3,18 +3,20 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { onCleanup } from "solid-js"
 import { usePlatform } from "./platform"
+import { useServer } from "./server"
 
 export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleContext({
   name: "GlobalSDK",
-  init: (props: { url: string }) => {
+  init: () => {
     const platform = usePlatform()
+    const server = useServer()
 
     const emitter = createGlobalEmitter<{
       [key: string]: Event
     }>()
 
     const eventSdk = createOpencodeClient({
-      baseUrl: props.url,
+      baseUrl: server.url,
       fetch: platform.fetch,
       throwOnError: true,
     })
@@ -48,12 +50,11 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     })
 
     const sdk = createOpencodeClient({
-      baseUrl: props.url,
-      signal: AbortSignal.timeout(1000 * 60 * 10),
+      baseUrl: server.url,
       fetch: platform.fetch,
       throwOnError: true,
     })
 
-    return { url: props.url, client: sdk, event: emitter, subscribe }
+    return { url: server.url, client: sdk, event: emitter, subscribe }
   },
 })

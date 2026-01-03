@@ -8,6 +8,7 @@ import {
   type StreamTextResult,
   type Tool,
   type ToolSet,
+  extractReasoningMiddleware,
 } from "ai"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ProviderTransform } from "@/provider/transform"
@@ -17,10 +18,10 @@ import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
-import { ToolRegistry } from "@/tool/registry"
 import { Flag } from "@/flag/flag"
 import { Wildcard } from "@/util/wildcard"
 import { SessionToolOverrides } from "./tool-overrides"
+import { PermissionNext } from "@/permission/next"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -85,13 +86,14 @@ export namespace LLM {
     }
 
     const provider = await Provider.getProvider(input.model.providerID)
-    const variant = input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : undefined
+    const small = input.small ? ProviderTransform.smallOptions(input.model) : {}
+    const variant = input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
     const options = pipe(
       ProviderTransform.options(input.model, input.sessionID, provider.options),
-      mergeDeep(input.small ? ProviderTransform.smallOptions(input.model) : {}),
+      mergeDeep(small),
       mergeDeep(input.model.options),
       mergeDeep(input.agent.options),
-      mergeDeep(variant && !variant.disabled ? variant : {}),
+      mergeDeep(variant),
     )
 
     const params = await Plugin.trigger(
@@ -200,6 +202,7 @@ export namespace LLM {
               return args.params
             },
           },
+          extractReasoningMiddleware({ tagName: "think", startWithReasoning: false }),
         ],
       }),
       experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
@@ -207,16 +210,20 @@ export namespace LLM {
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user" | "sessionID">) {
-    const enabled = pipe(
-      input.agent.tools,
-      mergeDeep(await SessionToolOverrides.get(input.sessionID)),
-      mergeDeep(await ToolRegistry.enabled(input.agent)),
-      mergeDeep(input.user.tools ?? {}),
-    )
+    const overrides = await SessionToolOverrides.get(input.sessionID)
+    const denied = PermissionNext.disabled(Object.keys(input.tools), input.agent.permission)
 
-    for (const key of Object.keys(input.tools)) {
-      if (key === "invalid") continue
-      if (Wildcard.all(key, enabled) === false) delete input.tools[key]
+    for (const tool of Object.keys(input.tools)) {
+      if (tool === "invalid") continue
+      if (denied.has(tool)) {
+        delete input.tools[tool]
+        continue
+      }
+
+      const override = Wildcard.all(tool, overrides)
+      if (input.user.tools?.[tool] === false && override !== true) {
+        delete input.tools[tool]
+      }
     }
 
     return input.tools

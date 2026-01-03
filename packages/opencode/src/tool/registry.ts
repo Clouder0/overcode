@@ -2,7 +2,7 @@ import { BashTool } from "./bash"
 import { EditTool } from "./edit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
-import { ListTool } from "./ls"
+import { BatchTool } from "./batch"
 import { ReadTool } from "./read"
 import { TodoWriteTool, TodoReadTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
@@ -97,6 +97,7 @@ export namespace ToolRegistry {
 
   async function all(): Promise<Tool.Info[]> {
     const custom = await state().then((x) => x.custom)
+    const config = await Config.get()
 
     return [
       InvalidTool,
@@ -116,6 +117,7 @@ export namespace ToolRegistry {
       CodeSearchTool,
       SkillTool,
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
+      ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...custom,
     ]
   }
@@ -143,29 +145,6 @@ export namespace ToolRegistry {
           }
         }),
     )
-    return result
-  }
-
-  export async function enabled(agent: Agent.Info): Promise<Record<string, boolean>> {
-    const result: Record<string, boolean> = {}
-
-    if (agent.permission.edit === "deny") {
-      result["edit"] = false
-      result["write"] = false
-    }
-    if (agent.permission.bash["*"] === "deny" && Object.keys(agent.permission.bash).length === 1) {
-      result["bash"] = false
-    }
-    if (agent.permission.webfetch === "deny") {
-      result["webfetch"] = false
-      result["codesearch"] = false
-      result["websearch"] = false
-    }
-    // Disable skill tool if all skills are denied
-    if (agent.permission.skill["*"] === "deny" && Object.keys(agent.permission.skill).length === 1) {
-      result["skill"] = false
-    }
-
     return result
   }
 }

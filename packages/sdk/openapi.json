@@ -56,29 +56,8 @@
                 }
               }
             }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
-                }
-              }
-            }
           }
         },
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true
-          }
-        ],
         "x-codeSamples": [
           {
             "lang": "js",
@@ -221,7 +200,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -335,7 +314,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -472,7 +451,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -676,7 +655,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -729,7 +708,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -789,7 +768,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -867,6 +846,94 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.path.get({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/experimental/worktree": {
+      "post": {
+        "operationId": "worktree.create",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Create worktree",
+        "description": "Create a new git worktree for the current project.",
+        "responses": {
+          "200": {
+            "description": "Worktree created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Worktree"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorktreeCreateInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.create({\n  ...\n})"
+          }
+        ]
+      },
+      "get": {
+        "operationId": "worktree.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List worktrees",
+        "description": "List all sandbox worktrees for the current project.",
+        "responses": {
+          "200": {
+            "description": "List of worktree directories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.list({\n  ...\n})"
           }
         ]
       }
@@ -970,7 +1037,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -988,6 +1055,9 @@
                   },
                   "title": {
                     "type": "string"
+                  },
+                  "permission": {
+                    "$ref": "#/components/schemas/PermissionRuleset"
                   }
                 }
               }
@@ -1038,7 +1108,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1092,7 +1162,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1153,7 +1223,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1213,7 +1283,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1302,7 +1372,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1368,7 +1438,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1431,7 +1501,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1573,7 +1643,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1635,7 +1705,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1696,7 +1766,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1770,7 +1840,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1833,7 +1903,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -1940,7 +2010,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2013,7 +2083,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2058,6 +2128,7 @@
                     "type": "boolean"
                   },
                   "tools": {
+                    "description": "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -2165,7 +2236,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2245,7 +2316,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2323,7 +2394,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2388,7 +2459,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2433,6 +2504,7 @@
                     "type": "boolean"
                   },
                   "tools": {
+                    "description": "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -2531,7 +2603,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2625,7 +2697,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2717,7 +2789,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2799,7 +2871,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2852,6 +2924,7 @@
           }
         ],
         "summary": "Respond to permission",
+        "deprecated": true,
         "description": "Approve or deny a permission request from the AI assistant.",
         "responses": {
           "200": {
@@ -2869,7 +2942,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -2909,6 +2982,87 @@
         ]
       }
     },
+    "/permission/{requestID}/reply": {
+      "post": {
+        "operationId": "permission.reply",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Respond to permission request",
+        "description": "Approve or deny a permission request from the AI assistant.",
+        "responses": {
+          "200": {
+            "description": "Permission processed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reply": {
+                    "type": "string",
+                    "enum": ["once", "always", "reject"]
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": ["reply"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.reply({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/permission": {
       "get": {
         "operationId": "permission.list",
@@ -2931,7 +3085,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Permission"
+                    "$ref": "#/components/schemas/PermissionRequest"
                   }
                 }
               }
@@ -3230,6 +3384,19 @@
                                     }
                                   },
                                   "required": ["npm"]
+                                },
+                                "variants": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {}
+                                  }
                                 }
                               },
                               "required": [
@@ -3361,7 +3528,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -3430,7 +3597,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -3586,10 +3753,27 @@
               "type": "string",
               "enum": ["true", "false"]
             }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "type": "string",
+              "enum": ["file", "directory"]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
           }
         ],
         "summary": "Find files",
-        "description": "Search for files by name or pattern in the project directory.",
+        "description": "Search for files or directories by name or pattern in the project directory.",
         "responses": {
           "200": {
             "description": "File paths",
@@ -3812,7 +3996,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -3970,7 +4154,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -4054,7 +4238,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -4173,7 +4357,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -4251,7 +4435,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -4461,7 +4645,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -4724,7 +4908,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -4844,7 +5028,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -4863,6 +5047,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/Event.tui.toast.show"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Event.tui.session.select"
                   }
                 ]
               }
@@ -4873,6 +5060,77 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.publish({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/tui/select-session": {
+      "post": {
+        "operationId": "tui.selectSession",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Select session",
+        "description": "Navigate the TUI to display the specified session.",
+        "responses": {
+          "200": {
+            "description": "Session selected successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionID": {
+                    "description": "Session ID to navigate to",
+                    "type": "string",
+                    "pattern": "^ses"
+                  }
+                },
+                "required": ["sessionID"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.selectSession({\n  ...\n})"
           }
         ]
       }
@@ -4997,7 +5255,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BadRequest"
+                  "$ref": "#/components/schemas/BadRequestError"
                 }
               }
             }
@@ -5136,6 +5394,12 @@
               }
             },
             "required": ["created", "updated"]
+          },
+          "sandboxes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": ["id", "worktree", "time"]
@@ -5661,9 +5925,6 @@
           },
           "text": {
             "type": "string"
-          },
-          "ignored": {
-            "type": "boolean"
           },
           "metadata": {
             "type": "object",
@@ -6241,109 +6502,6 @@
         },
         "required": ["id", "sessionID", "messageID", "type", "auto"]
       },
-      "MessagePart": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "sessionID": {
-            "type": "string"
-          },
-          "messageID": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "const": "message"
-          },
-          "direction": {
-            "type": "string",
-            "enum": ["outgoing", "incoming"]
-          },
-          "peer": {
-            "type": "string"
-          },
-          "peerType": {
-            "type": "string",
-            "enum": ["human", "agent"]
-          },
-          "text": {
-            "type": "string"
-          },
-          "timeout": {
-            "type": "number"
-          },
-          "timeoutOccurred": {
-            "type": "boolean"
-          },
-          "time": {
-            "type": "object",
-            "properties": {
-              "created": {
-                "type": "number"
-              }
-            },
-            "required": ["created"]
-          }
-        },
-        "required": ["id", "sessionID", "messageID", "type", "direction", "peer", "peerType", "text", "time"]
-      },
-      "WaitPart": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "sessionID": {
-            "type": "string"
-          },
-          "messageID": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "const": "wait"
-          },
-          "sources": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "timeout": {
-            "type": "number"
-          },
-          "mode": {
-            "type": "string",
-            "enum": ["all", "any"]
-          },
-          "status": {
-            "type": "string",
-            "enum": ["waiting", "resolved", "timedOut"]
-          },
-          "respondedSources": {
-            "default": [],
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "time": {
-            "type": "object",
-            "properties": {
-              "created": {
-                "type": "number"
-              },
-              "resolved": {
-                "type": "number"
-              }
-            },
-            "required": ["created"]
-          }
-        },
-        "required": ["id", "sessionID", "messageID", "type", "sources", "timeout", "mode", "status", "time"]
-      },
       "Part": {
         "anyOf": [
           {
@@ -6409,12 +6567,6 @@
           },
           {
             "$ref": "#/components/schemas/CompactionPart"
-          },
-          {
-            "$ref": "#/components/schemas/MessagePart"
-          },
-          {
-            "$ref": "#/components/schemas/WaitPart"
           }
         ]
       },
@@ -6465,81 +6617,25 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.session.message.delivered": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.message.delivered"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  },
-                  "from": {
-                    "type": "string"
-                  },
-                  "to": {
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "time": {
-                    "type": "number"
-                  },
-                  "messageType": {
-                    "default": "normal",
-                    "type": "string",
-                    "enum": ["normal", "timeout", "error"]
-                  }
-                },
-                "required": ["id", "from", "to", "text", "time"]
-              }
-            },
-            "required": ["message"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Permission": {
+      "PermissionRequest": {
         "type": "object",
         "properties": {
           "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "pattern": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            ]
+            "type": "string",
+            "pattern": "^per.*"
           },
           "sessionID": {
+            "type": "string",
+            "pattern": "^ses.*"
+          },
+          "permission": {
             "type": "string"
           },
-          "messageID": {
-            "type": "string"
-          },
-          "callID": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
+          "patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "metadata": {
             "type": "object",
@@ -6548,27 +6644,36 @@
             },
             "additionalProperties": {}
           },
-          "time": {
+          "always": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tool": {
             "type": "object",
             "properties": {
-              "created": {
-                "type": "number"
+              "messageID": {
+                "type": "string"
+              },
+              "callID": {
+                "type": "string"
               }
             },
-            "required": ["created"]
+            "required": ["messageID", "callID"]
           }
         },
-        "required": ["id", "type", "sessionID", "messageID", "title", "metadata", "time"]
+        "required": ["id", "sessionID", "permission", "patterns", "metadata", "always"]
       },
-      "Event.permission.updated": {
+      "Event.permission.asked": {
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
-            "const": "permission.updated"
+            "const": "permission.asked"
           },
           "properties": {
-            "$ref": "#/components/schemas/Permission"
+            "$ref": "#/components/schemas/PermissionRequest"
           }
         },
         "required": ["type", "properties"]
@@ -6586,14 +6691,118 @@
               "sessionID": {
                 "type": "string"
               },
-              "permissionID": {
+              "requestID": {
                 "type": "string"
               },
-              "response": {
+              "reply": {
+                "type": "string",
+                "enum": ["once", "always", "reject"]
+              }
+            },
+            "required": ["sessionID", "requestID", "reply"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "SessionStatus": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "idle"
+              }
+            },
+            "required": ["type"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "retry"
+              },
+              "attempt": {
+                "type": "number"
+              },
+              "message": {
+                "type": "string"
+              },
+              "next": {
+                "type": "number"
+              }
+            },
+            "required": ["type", "attempt", "message", "next"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "busy"
+              }
+            },
+            "required": ["type"]
+          }
+        ]
+      },
+      "Event.session.status": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.status"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/SessionStatus"
+              }
+            },
+            "required": ["sessionID", "status"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.session.idle": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.idle"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
                 "type": "string"
               }
             },
-            "required": ["sessionID", "permissionID", "response"]
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.session.compacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.compacted"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID"]
           }
         },
         "required": ["type", "properties"]
@@ -6660,144 +6869,6 @@
               }
             },
             "required": ["sessionID", "todos"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "SessionStatus": {
-        "anyOf": [
-          {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "const": "idle"
-              }
-            },
-            "required": ["type"]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "const": "retry"
-              },
-              "attempt": {
-                "type": "number"
-              },
-              "message": {
-                "type": "string"
-              },
-              "next": {
-                "type": "number"
-              }
-            },
-            "required": ["type", "attempt", "message", "next"]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "const": "busy"
-              }
-            },
-            "required": ["type"]
-          },
-          {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "const": "waiting"
-              },
-              "sources": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "timeout": {
-                "type": "number"
-              },
-              "mode": {
-                "type": "string",
-                "enum": ["all", "any"]
-              },
-              "time": {
-                "type": "object",
-                "properties": {
-                  "created": {
-                    "type": "number"
-                  },
-                  "deadline": {
-                    "type": "number"
-                  }
-                },
-                "required": ["created"]
-              }
-            },
-            "required": ["type", "sources", "timeout", "mode", "time"]
-          }
-        ]
-      },
-      "Event.session.status": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.status"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "status": {
-                "$ref": "#/components/schemas/SessionStatus"
-              }
-            },
-            "required": ["sessionID", "status"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.session.idle": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.idle"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.session.compacted": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.compacted"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID"]
           }
         },
         "required": ["type", "properties"]
@@ -6894,6 +6965,27 @@
         },
         "required": ["type", "properties"]
       },
+      "Event.tui.session.select": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.session.select"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "description": "Session ID to navigate to",
+                "type": "string",
+                "pattern": "^ses"
+              }
+            },
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "Event.mcp.tools.changed": {
         "type": "object",
         "properties": {
@@ -6943,6 +7035,31 @@
         },
         "required": ["type", "properties"]
       },
+      "PermissionAction": {
+        "type": "string",
+        "enum": ["allow", "deny", "ask"]
+      },
+      "PermissionRule": {
+        "type": "object",
+        "properties": {
+          "permission": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/PermissionAction"
+          }
+        },
+        "required": ["permission", "pattern", "action"]
+      },
+      "PermissionRuleset": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/PermissionRule"
+        }
+      },
       "Session": {
         "type": "object",
         "properties": {
@@ -6959,25 +7076,6 @@
           "parentID": {
             "type": "string",
             "pattern": "^ses.*"
-          },
-          "sessionType": {
-            "default": "primary",
-            "type": "string",
-            "enum": ["primary", "subagent"]
-          },
-          "agentName": {
-            "type": "string"
-          },
-          "subagentPrompt": {
-            "type": "string"
-          },
-          "childrenIDs": {
-            "default": [],
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^ses.*"
-            }
           },
           "summary": {
             "type": "object",
@@ -7032,6 +7130,9 @@
               }
             },
             "required": ["created", "updated"]
+          },
+          "permission": {
+            "$ref": "#/components/schemas/PermissionRuleset"
           },
           "revert": {
             "type": "object",
@@ -7400,19 +7501,10 @@
             "$ref": "#/components/schemas/Event.message.part.removed"
           },
           {
-            "$ref": "#/components/schemas/Event.session.message.delivered"
-          },
-          {
-            "$ref": "#/components/schemas/Event.permission.updated"
+            "$ref": "#/components/schemas/Event.permission.asked"
           },
           {
             "$ref": "#/components/schemas/Event.permission.replied"
-          },
-          {
-            "$ref": "#/components/schemas/Event.file.edited"
-          },
-          {
-            "$ref": "#/components/schemas/Event.todo.updated"
           },
           {
             "$ref": "#/components/schemas/Event.session.status"
@@ -7424,6 +7516,12 @@
             "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
+            "$ref": "#/components/schemas/Event.file.edited"
+          },
+          {
+            "$ref": "#/components/schemas/Event.todo.updated"
+          },
+          {
             "$ref": "#/components/schemas/Event.tui.prompt.append"
           },
           {
@@ -7431,6 +7529,9 @@
           },
           {
             "$ref": "#/components/schemas/Event.tui.toast.show"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.session.select"
           },
           {
             "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -7491,50 +7592,6 @@
         },
         "required": ["directory", "payload"]
       },
-      "StorageInvalidKeyError": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "const": "StorageInvalidKeyError"
-          },
-          "data": {
-            "type": "object",
-            "properties": {
-              "key": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": ["key", "reason"]
-          }
-        },
-        "required": ["name", "data"]
-      },
-      "NotFoundError": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "const": "NotFoundError"
-          },
-          "data": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": ["message"]
-          }
-        },
-        "required": ["name", "data"]
-      },
       "BadRequestError": {
         "type": "object",
         "properties": {
@@ -7556,22 +7613,24 @@
         },
         "required": ["data", "errors", "success"]
       },
-      "BadRequest": {
-        "anyOf": [
-          {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/StorageInvalidKeyError"
-              },
-              {
-                "$ref": "#/components/schemas/NotFoundError"
-              }
-            ]
+      "NotFoundError": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "const": "NotFoundError"
           },
-          {
-            "$ref": "#/components/schemas/BadRequestError"
+          "data": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["message"]
           }
-        ]
+        },
+        "required": ["name", "data"]
       },
       "KeybindsConfig": {
         "description": "Custom keybind configurations",
@@ -7982,11 +8041,6 @@
             "default": "down",
             "type": "string"
           },
-          "session_child_list": {
-            "description": "List child/subagent sessions",
-            "default": "<leader>j",
-            "type": "string"
-          },
           "session_child_cycle": {
             "description": "Next child session",
             "default": "<leader>right",
@@ -8042,9 +8096,99 @@
           "mdns": {
             "description": "Enable mDNS service discovery",
             "type": "boolean"
+          },
+          "cors": {
+            "description": "Additional domains to allow for CORS",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
+      },
+      "PermissionActionConfig": {
+        "type": "string",
+        "enum": ["ask", "allow", "deny"]
+      },
+      "PermissionObjectConfig": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "$ref": "#/components/schemas/PermissionActionConfig"
+        }
+      },
+      "PermissionRuleConfig": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/PermissionActionConfig"
+          },
+          {
+            "$ref": "#/components/schemas/PermissionObjectConfig"
+          }
+        ]
+      },
+      "PermissionConfig": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "read": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "edit": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "glob": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "grep": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "list": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "bash": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "task": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "external_directory": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "todowrite": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "todoread": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "webfetch": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "websearch": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "codesearch": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              },
+              "lsp": {
+                "$ref": "#/components/schemas/PermissionRuleConfig"
+              },
+              "doom_loop": {
+                "$ref": "#/components/schemas/PermissionActionConfig"
+              }
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PermissionRuleConfig"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/PermissionActionConfig"
+          }
+        ]
       },
       "AgentConfig": {
         "type": "object",
@@ -8062,6 +8206,7 @@
             "type": "string"
           },
           "tools": {
+            "description": "@deprecated Use 'permission' field instead",
             "type": "object",
             "propertyNames": {
               "type": "string"
@@ -8081,73 +8226,32 @@
             "type": "string",
             "enum": ["subagent", "primary", "all"]
           },
+          "options": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
           "color": {
             "description": "Hex color code for the agent (e.g., #FF5733)",
             "type": "string",
             "pattern": "^#[0-9a-fA-F]{6}$"
           },
-          "maxSteps": {
+          "steps": {
             "description": "Maximum number of agentic iterations before forcing text-only response",
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           },
+          "maxSteps": {
+            "description": "@deprecated Use 'steps' field instead.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
           "permission": {
-            "type": "object",
-            "properties": {
-              "edit": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "bash": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": ["ask", "allow", "deny"]
-                  },
-                  {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "type": "string",
-                      "enum": ["ask", "allow", "deny"]
-                    }
-                  }
-                ]
-              },
-              "skill": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": ["ask", "allow", "deny"]
-                  },
-                  {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "type": "string",
-                      "enum": ["ask", "allow", "deny"]
-                    }
-                  }
-                ]
-              },
-              "webfetch": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "doom_loop": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "external_directory": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              }
-            }
+            "$ref": "#/components/schemas/PermissionConfig"
           }
         },
         "additionalProperties": {}
@@ -8323,6 +8427,23 @@
                     }
                   },
                   "required": ["npm"]
+                },
+                "variants": {
+                  "description": "Variant-specific configuration",
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "disabled": {
+                        "description": "Disable this variant for the model",
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": {}
+                  }
                 }
               }
             }
@@ -8698,10 +8819,24 @@
             "additionalProperties": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/McpLocalConfig"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/McpLocalConfig"
+                    },
+                    {
+                      "$ref": "#/components/schemas/McpRemoteConfig"
+                    }
+                  ]
                 },
                 {
-                  "$ref": "#/components/schemas/McpRemoteConfig"
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": ["enabled"],
+                  "additionalProperties": false
                 }
               ]
             }
@@ -8825,61 +8960,7 @@
             "$ref": "#/components/schemas/LayoutConfig"
           },
           "permission": {
-            "type": "object",
-            "properties": {
-              "edit": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "bash": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": ["ask", "allow", "deny"]
-                  },
-                  {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "type": "string",
-                      "enum": ["ask", "allow", "deny"]
-                    }
-                  }
-                ]
-              },
-              "skill": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": ["ask", "allow", "deny"]
-                  },
-                  {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {
-                      "type": "string",
-                      "enum": ["ask", "allow", "deny"]
-                    }
-                  }
-                ]
-              },
-              "webfetch": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "doom_loop": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "external_directory": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              }
-            }
+            "$ref": "#/components/schemas/PermissionConfig"
           },
           "tools": {
             "type": "object",
@@ -9000,9 +9081,11 @@
                 "description": "Continue the agent loop when a tool call is denied",
                 "type": "boolean"
               },
-              "allowFileRefsOutsideWorktree": {
-                "description": "Allow @file references to paths outside the worktree (e.g., ~/foo or /abs/path). Default is false for security.",
-                "type": "boolean"
+              "mcp_timeout": {
+                "description": "Timeout in milliseconds for model context protocol (MCP) requests",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               }
             }
           }
@@ -9054,6 +9137,32 @@
           }
         },
         "required": ["home", "state", "config", "worktree", "directory"]
+      },
+      "Worktree": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          }
+        },
+        "required": ["name", "branch", "directory"]
+      },
+      "WorktreeCreateInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "startCommand": {
+            "type": "string"
+          }
+        }
       },
       "VcsInfo": {
         "type": "object",
@@ -9205,24 +9314,30 @@
           "model": {
             "type": "string"
           },
+          "mcp": {
+            "type": "boolean"
+          },
           "template": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ]
           },
           "subtask": {
             "type": "boolean"
+          },
+          "hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
-        "required": ["name", "template"]
-      },
-      "Variant": {
-        "type": "object",
-        "properties": {
-          "disabled": {
-            "type": "boolean"
-          }
-        },
-        "required": ["disabled"],
-        "additionalProperties": {}
+        "required": ["name", "template", "hints"]
       },
       "Model": {
         "type": "object",
@@ -9420,7 +9535,11 @@
               "type": "string"
             },
             "additionalProperties": {
-              "$ref": "#/components/schemas/Variant"
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {}
             }
           }
         },
@@ -9683,9 +9802,6 @@
           "hidden": {
             "type": "boolean"
           },
-          "default": {
-            "type": "boolean"
-          },
           "topP": {
             "type": "number"
           },
@@ -9696,46 +9812,7 @@
             "type": "string"
           },
           "permission": {
-            "type": "object",
-            "properties": {
-              "edit": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "bash": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "string",
-                  "enum": ["ask", "allow", "deny"]
-                }
-              },
-              "skill": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "string",
-                  "enum": ["ask", "allow", "deny"]
-                }
-              },
-              "webfetch": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "doom_loop": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              },
-              "external_directory": {
-                "type": "string",
-                "enum": ["ask", "allow", "deny"]
-              }
-            },
-            "required": ["edit", "bash", "skill"]
+            "$ref": "#/components/schemas/PermissionRuleset"
           },
           "model": {
             "type": "object",
@@ -9752,15 +9829,6 @@
           "prompt": {
             "type": "string"
           },
-          "tools": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "type": "boolean"
-            }
-          },
           "options": {
             "type": "object",
             "propertyNames": {
@@ -9768,13 +9836,13 @@
             },
             "additionalProperties": {}
           },
-          "maxSteps": {
+          "steps": {
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           }
         },
-        "required": ["name", "mode", "permission", "tools", "options"]
+        "required": ["name", "mode", "permission", "options"]
       },
       "MCPStatusConnected": {
         "type": "object",
