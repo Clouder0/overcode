@@ -150,6 +150,12 @@ cp dist/opencode-linux-x64/bin/opencode ~/.local/bin/
 cp dist/opencode-darwin-arm64/bin/opencode ~/.local/bin/
 ```
 
+### Configuration
+
+You can check https://gist.github.com/Clouder0/3323da04017e9aff25729032a55421ce for config showcase.
+
+Verified support by various third party providers.
+
 ---
 
 ## Relationship to Upstream
