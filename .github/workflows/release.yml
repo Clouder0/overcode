@@ -15,24 +15,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux-x64
-          - os: ubuntu-latest
-            target: linux-arm64
-          - os: macos-latest
-            target: darwin-arm64
-          - os: macos-latest
-            target: darwin-x64
-          - os: windows-latest
-            target: windows-x64
-
-    runs-on: ${{ matrix.os }}
-
+  release:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -45,56 +29,19 @@ jobs:
 
       - name: Build
         working-directory: packages/opencode
-        run: bun run build --single
+        run: bun run build
 
-      - name: Package (Linux)
-        if: runner.os == 'Linux'
+      - name: Package
         working-directory: packages/opencode/dist
         run: |
           for dir in opencode-*/; do
             name="${dir%/}"
-            (cd "${name}/bin" && tar -czf "../../${name}.tar.gz" *)
+            if [[ "$name" == *"linux"* ]]; then
+              (cd "${name}/bin" && tar -czf "../../${name}.tar.gz" *)
+            else
+              (cd "${name}/bin" && zip -r "../../${name}.zip" *)
+            fi
           done
-
-      - name: Package (macOS)
-        if: runner.os == 'macOS'
-        working-directory: packages/opencode/dist
-        run: |
-          for dir in opencode-*/; do
-            name="${dir%/}"
-            (cd "${name}/bin" && zip -r "../../${name}.zip" *)
-          done
-
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        working-directory: packages/opencode/dist
-        shell: pwsh
-        run: |
-          Get-ChildItem -Directory | ForEach-Object {
-            $name = $_.Name
-            $binPath = Join-Path $_.FullName "bin\*"
-            Compress-Archive -Path $binPath -DestinationPath "$name.zip"
-          }
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: opencode-${{ matrix.target }}
-          path: |
-            packages/opencode/dist/*.tar.gz
-            packages/opencode/dist/*.zip
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
 
       - name: Get version
         id: version
@@ -106,13 +53,11 @@ jobs:
           fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: false
-          files: artifacts/*
-          generate_release_notes: true
+        run: |
+          gh release create ${{ steps.version.outputs.version }} \
+            --title "${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            ./packages/opencode/dist/*.tar.gz \
+            ./packages/opencode/dist/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
