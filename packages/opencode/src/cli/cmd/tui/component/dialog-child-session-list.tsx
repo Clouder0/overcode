@@ -5,6 +5,7 @@ import { DialogSelect } from "@tui/ui/dialog-select"
 import { useTheme } from "@tui/context/theme"
 import { createMemo, onMount } from "solid-js"
 import { buildChildSessionPickerOptions } from "../lib/child-session-picker"
+import { sessionRunState } from "../lib/session-tree"
 import "opentui-spinner/solid"
 
 export function DialogChildSessionList(props: { sessionID: string }) {
@@ -24,7 +25,7 @@ export function DialogChildSessionList(props: { sessionID: string }) {
       id: s.id,
       title: s.title,
       parentID: s.parentID,
-      time: { updated: s.time.updated },
+      time: { created: s.time.created, updated: s.time.updated },
     }))
 
     const baseOptions = buildChildSessionPickerOptions({
@@ -35,26 +36,31 @@ export function DialogChildSessionList(props: { sessionID: string }) {
 
     // Enhance options with status indicators
     return baseOptions.map((opt) => {
-      const status = sync.data.session_status?.[opt.value]
-      const isWorking = status?.type === "busy" || status?.type === "retry"
+      const pending = sync.data.permission[opt.value]?.length ?? 0
+      const status = sync.data.session_status?.[opt.value] as { type?: string } | undefined
+      const state = sessionRunState(status)
+
       const session = sync.data.session.find((s) => s.id === opt.value)
       const isSubagent = session?.parentID !== undefined
 
+      const gutter = (() => {
+        if (pending > 0) return <text fg={theme.warning}>!</text>
+        if (!isSubagent) return
+        if (state === "working") return <spinner frames={spinnerFrames} interval={80} color={theme.warning} />
+        if (state === "waiting") return <text fg={theme.accent}>◎</text>
+        return <text fg={theme.success}>●</text>
+      })()
+
       return {
         ...opt,
-        title: isSubagent ? `${isWorking ? "◐" : "✓"} ${opt.title}` : opt.title,
-        gutter: isWorking ? (
-          <spinner frames={spinnerFrames} interval={80} color={theme.warning} />
-        ) : isSubagent ? (
-          <text fg={theme.success}>●</text>
-        ) : undefined,
+        gutter,
       }
     })
   })
 
   return (
     <DialogSelect
-      title="Subagent Sessions"
+      title="Session Tree"
       options={options()}
       current={props.sessionID}
       onSelect={(option) => {

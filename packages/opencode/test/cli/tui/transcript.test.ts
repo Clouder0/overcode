@@ -168,6 +168,24 @@ describe("transcript", () => {
       expect(result).toContain("**Error:**")
       expect(result).toContain("Command failed")
     })
+
+    test("formats message part", () => {
+      const part: Part = {
+        id: "part_1",
+        sessionID: "ses_123",
+        messageID: "msg_123",
+        type: "message",
+        direction: "incoming",
+        peer: "ses_child",
+        peerType: "agent",
+        text: "Hello from child",
+        time: { created: 1000 },
+      }
+
+      const result = formatPart(part, options)
+      expect(result).toContain("_Message from agent ses_child:_")
+      expect(result).toContain("Hello from child")
+    })
   })
 
   describe("formatMessage", () => {
@@ -258,6 +276,44 @@ describe("transcript", () => {
       expect(result).toContain("## Assistant (Build · claude-sonnet-4-20250514 · 0.5s)")
       expect(result).toContain("Hi!")
       expect(result).toContain("---")
+    })
+
+    test("includes message parts in transcript", () => {
+      const session = {
+        id: "ses_abc123",
+        title: "Test Session",
+        time: { created: 1000000000000, updated: 1000000001000 },
+      }
+      const messages = [
+        {
+          info: {
+            id: "msg_1",
+            sessionID: "ses_abc123",
+            role: "user" as const,
+            agent: "build",
+            model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
+            time: { created: 1000000000000 },
+          },
+          parts: [
+            {
+              id: "p1",
+              sessionID: "ses_abc123",
+              messageID: "msg_1",
+              type: "message" as const,
+              direction: "incoming" as const,
+              peer: "ses_child",
+              peerType: "agent" as const,
+              text: "Hello from child",
+              time: { created: 1000000000000 },
+            },
+          ],
+        },
+      ]
+      const options = { thinking: false, toolDetails: false, assistantMetadata: false }
+
+      const result = formatTranscript(session, messages, options)
+      expect(result).toContain("_Message from agent ses_child:_")
+      expect(result).toContain("Hello from child")
     })
 
     test("formats transcript without assistant metadata", () => {

@@ -550,6 +550,174 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("includes message parts in model context", () => {
+    const messageID = "m-user"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          {
+            ...basePart(messageID, "p1"),
+            type: "message",
+            direction: "incoming",
+            peer: "ses_child",
+            peerType: "agent",
+            text: "hello",
+            time: { created: 0 },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessage(input)).toStrictEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Sender Agent with session id ses_child sent a message:\n<content>\nhello\n</content>",
+          },
+        ],
+      },
+    ])
+  })
+
+  test("avoids duplicating legacy inbox synthetic text", () => {
+    const messageID = "m-user"
+
+    const inbox = "Sender Agent with session id ses_child sent a message:\n<content>\nhello\n</content>"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          {
+            ...basePart(messageID, "p1"),
+            type: "message",
+            direction: "incoming",
+            peer: "ses_child",
+            peerType: "agent",
+            text: "hello",
+            time: { created: 0 },
+          },
+          {
+            ...basePart(messageID, "p2"),
+            type: "text",
+            text: inbox,
+            synthetic: true,
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessage(input)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: inbox }],
+      },
+    ])
+  })
+
+  test("omits outgoing message parts from model context", () => {
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: assistantInfo(assistantID, "m-parent"),
+        parts: [
+          {
+            ...basePart(assistantID, "p1"),
+            type: "message",
+            direction: "outgoing",
+            peer: "ses_parent",
+            peerType: "agent",
+            text: "hi",
+            time: { created: 0 },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessage(input)).toStrictEqual([])
+  })
+
+  test("avoids duplicating send_agent_message via outgoing message parts", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "send",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "send_agent_message",
+            state: {
+              status: "completed",
+              input: { to: "ses_parent", text: "hi" },
+              output: "ok",
+              title: "Sent",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+          {
+            ...basePart(assistantID, "a2"),
+            type: "message",
+            direction: "outgoing",
+            peer: "ses_parent",
+            peerType: "agent",
+            text: "hi",
+            time: { created: 0 },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessage(input)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "send" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "send_agent_message",
+            input: { to: "ses_parent", text: "hi" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "send_agent_message",
+            output: { type: "text", value: "ok" },
+          },
+        ],
+      },
+    ])
+  })
+
   test("drops messages that only contain step-start parts", () => {
     const assistantID = "m-assistant"
 

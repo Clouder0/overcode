@@ -1,11 +1,13 @@
 import type { DialogSelectOption } from "@tui/ui/dialog-select"
 import { Locale } from "@/util/locale"
+import { buildSessionTree } from "./session-tree"
 
 export type ChildSessionPickerSession = {
   id: string
   title: string
   parentID?: string
   time: {
+    created: number
     updated: number
   }
 }
@@ -13,7 +15,8 @@ export type ChildSessionPickerSession = {
 type PermissionBySession = Record<string, Array<unknown> | undefined>
 
 function isDefaultSessionTitle(title: string): boolean {
-  const prefix = title.startsWith("New session - ") || title.startsWith("Child session - ")
+  const prefix =
+    title.startsWith("New session - ") || title.startsWith("Child session - ") || title.startsWith("Subagent - ")
   if (!prefix) return false
   return /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(title)
 }
@@ -30,22 +33,6 @@ function permissionCount(permissions: PermissionBySession, sessionID: string): n
   return Array.isArray(list) ? list.length : 0
 }
 
-function categoryFor(input: { rootID: string; sessionID: string; permissions: PermissionBySession }): string {
-  if (input.sessionID === input.rootID) return "Parent"
-  if (permissionCount(input.permissions, input.sessionID) > 0) return "Needs input"
-  return "Child sessions"
-}
-
-function sortRank(category: string): number {
-  return (
-    {
-      "Needs input": 0,
-      "Child sessions": 1,
-      Parent: 2,
-    }[category] ?? 99
-  )
-}
-
 export function buildChildSessionPickerOptions(input: {
   currentSessionID: string
   sessions: ChildSessionPickerSession[]
@@ -54,62 +41,60 @@ export function buildChildSessionPickerOptions(input: {
   rootID: string
   options: DialogSelectOption<string>[]
 } {
-  const sessionByID = new Map(input.sessions.map((s) => [s.id, s]))
-  const current = sessionByID.get(input.currentSessionID)
-  const rootID = current?.parentID ?? current?.id ?? input.currentSessionID
+  const tree = buildSessionTree({
+    currentSessionID: input.currentSessionID,
+    sessions: input.sessions,
+    sort: "created",
+  })
 
-  const directChildren = input.sessions.filter((s) => s.parentID === rootID).map((s) => s.id)
-  const sessionIDs = new Set<string>([rootID, ...directChildren])
+  const options = tree.list.map((item) => {
+    const sessionID = item.id
+    const session = tree.sessionByID.get(sessionID)
+    const sid = shortID(sessionID)
 
-  const options = Array.from(sessionIDs)
-    .map((sessionID) => {
-      const session = sessionByID.get(sessionID)
-      const sid = shortID(sessionID)
+    const indent = item.depth > 0 ? `${"  ".repeat(item.depth - 1)}↳ ` : ""
 
-      const title = (() => {
-        if (sessionID === rootID) return `Parent session · ${sid}`
-        if (session && !isDefaultSessionTitle(session.title)) return `${session.title} · ${sid}`
-        return `Child session · ${sid}`
-      })()
+    const title = (() => {
+      if (sessionID === tree.rootID) {
+        const name = session?.title ?? "Root session"
+        return `Root · ${name} · ${sid}`
+      }
 
-      const description = (() => {
-        if (!session) return
+      const name = (() => {
+        if (!session) return "Subagent session"
         if (!isDefaultSessionTitle(session.title)) return session.title
+        return "Subagent session"
       })()
 
-      const category = categoryFor({
-        rootID,
-        sessionID,
-        permissions: input.permissionsBySession,
-      })
+      return `${indent}${name} · ${sid}`
+    })()
 
-      const footer = (() => {
-        const permissionTotal = permissionCount(input.permissionsBySession, sessionID)
-        if (permissionTotal > 0) return `${permissionTotal} pending`
-        if (session) return Locale.todayTimeOrDateTime(session.time.updated)
-      })()
+    const description = (() => {
+      const pending = permissionCount(input.permissionsBySession, sessionID)
+      if (pending > 0) return "Needs input"
 
-      return {
-        title,
-        value: sessionID,
-        description,
-        category,
-        footer,
-      } satisfies DialogSelectOption<string>
-    })
-    .toSorted((a, b) => {
-      const rank = sortRank(a.category ?? "") - sortRank(b.category ?? "")
-      if (rank !== 0) return rank
+      if (!session) return
+      if (sessionID === tree.rootID) return
+      if (!isDefaultSessionTitle(session.title)) return
+      return session.title
+    })()
 
-      const aUpdated = sessionByID.get(a.value)?.time.updated ?? 0
-      const bUpdated = sessionByID.get(b.value)?.time.updated ?? 0
-      if (aUpdated !== bUpdated) return bUpdated - aUpdated
+    const footer = (() => {
+      const pending = permissionCount(input.permissionsBySession, sessionID)
+      if (pending > 0) return `${pending} pending`
+      if (session) return Locale.todayTimeOrDateTime(session.time.updated)
+    })()
 
-      return a.value.localeCompare(b.value)
-    })
+    return {
+      title,
+      value: sessionID,
+      description,
+      footer,
+    } satisfies DialogSelectOption<string>
+  })
 
   return {
-    rootID,
+    rootID: tree.rootID,
     options,
   }
 }

@@ -31,6 +31,7 @@ import { Prompt, type PromptRef } from "@tui/component/prompt"
 import type { AssistantMessage, Part, ToolPart, UserMessage, TextPart, ReasoningPart } from "@opencode-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
+import { buildSessionTree } from "../../lib/session-tree"
 import type { Tool } from "@/tool/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
@@ -113,12 +114,15 @@ export function Session() {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
   const session = createMemo(() => sync.session.get(route.sessionID)!)
-  const children = createMemo(() => {
-    const parentID = session()?.parentID ?? session()?.id
-    return sync.data.session
-      .filter((x) => x.parentID === parentID || x.id === parentID)
-      .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-  })
+
+  const thread = createMemo(() =>
+    buildSessionTree({
+      currentSessionID: route.sessionID,
+      sessions: sync.data.session,
+      sort: "created",
+    }),
+  )
+
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
 
@@ -155,7 +159,6 @@ export function Session() {
   const wide = createMemo(() => dimensions().width > 120)
   const tall = createMemo(() => dimensions().height > 40)
   const sidebarVisible = createMemo(() => {
-    if (session()?.parentID) return false
     if (sidebar() === "show") return true
     if (sidebar() === "auto" && wide()) return true
     return false
@@ -274,16 +277,20 @@ export function Session() {
   const local = useLocal()
 
   function moveChild(direction: number) {
-    if (children().length === 1) return
-    let next = children().findIndex((x) => x.id === session()?.id) + direction
-    if (next >= children().length) next = 0
-    if (next < 0) next = children().length - 1
-    if (children()[next]) {
-      navigate({
-        type: "session",
-        sessionID: children()[next].id,
-      })
-    }
+    const t = thread()
+    if (t.list.length <= 1) return
+
+    const index = t.list.findIndex((x) => x.id === route.sessionID)
+    const current = index >= 0 ? index : 0
+
+    const next = (current + direction + t.list.length) % t.list.length
+    const target = t.list[next]?.id
+    if (!target) return
+
+    navigate({
+      type: "session",
+      sessionID: target,
+    })
   }
 
   const command = useCommandDialog()
@@ -834,15 +841,18 @@ export function Session() {
       keybind: "session_child_list",
       category: "Session",
       onSelect: (dialog) => {
-        const current = session()
-        if (!current) return
-        const rootID = current.parentID ?? current.id
-        const directChildren = sync.data.session.filter((s) => s.parentID === rootID)
-        if (directChildren.length === 0) {
+        const t = buildSessionTree({
+          currentSessionID: route.sessionID,
+          sessions: sync.data.session,
+          sort: "created",
+        })
+
+        if (t.list.length <= 1) {
           toast.show({ variant: "warning", message: "No subagent sessions found", duration: 2000 })
           dialog.clear()
           return
         }
+
         dialog.replace(() => <DialogChildSessionList sessionID={route.sessionID} />)
       },
     },
@@ -967,7 +977,7 @@ export function Session() {
               </box>
             }
           >
-            <Show when={!sidebarVisible() || sidebarOverlay()}>
+            <Show when={!sidebarVisible() || sidebarOverlay() || !!session()?.parentID}>
               <Header />
             </Show>
             <For each={[route.sessionID]}>

@@ -10,6 +10,7 @@ import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
 import { computeCacheStats, updateCacheStatsState, type CacheStatsState } from "../../lib/cache-stats"
+import { buildSessionTree, sessionRunState } from "../../lib/session-tree"
 import { useRoute } from "../../context/route"
 import "opentui-spinner/solid"
 
@@ -30,25 +31,31 @@ export function Sidebar(props: { sessionID: string }) {
     subagents: true,
   })
 
-  // Get the root session (parent if we're in a subagent, or current if we're in primary)
-  const rootSessionID = createMemo(() => {
-    const current = session()
-    if (!current) return props.sessionID
-    return current.parentID ?? current.id
-  })
+  const tree = createMemo(() =>
+    buildSessionTree({
+      currentSessionID: props.sessionID,
+      sessions: sync.data.session,
+      sort: "created",
+    }),
+  )
 
-  // Get all subagent sessions for the root session
   const subagentSessions = createMemo(() => {
-    const rootID = rootSessionID()
-    return sync.data.session.filter((s) => s.parentID === rootID).toSorted((a, b) => a.time.created - b.time.created)
+    const t = tree()
+    const out: Array<{ session: (typeof sync.data.session)[number]; depth: number }> = []
+
+    for (const item of t.list) {
+      if (item.id === t.rootID) continue
+      const s = t.sessionByID.get(item.id)
+      if (!s) continue
+      out.push({ session: s, depth: item.depth })
+    }
+
+    return out
   })
 
-  // Get status for a session
   const getSessionStatus = (sessionID: string) => {
-    const status = sync.data.session_status?.[sessionID]
-    if (status?.type === "busy" || status?.type === "retry") return "working"
-    if ((status as any)?.type === "waiting") return "waiting"
-    return "done"
+    const status = sync.data.session_status?.[sessionID] as { type?: string } | undefined
+    return sessionRunState(status)
   }
 
   const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -281,7 +288,8 @@ export function Sidebar(props: { sessionID: string }) {
                     </box>
                   </Show>
                   <For each={subagentSessions()}>
-                    {(sub) => {
+                    {(item) => {
+                      const sub = item.session
                       const status = createMemo(() => getSessionStatus(sub.id))
                       const isCurrent = sub.id === props.sessionID
                       const statusColor = createMemo(() => {
@@ -294,6 +302,11 @@ export function Sidebar(props: { sessionID: string }) {
                         if (status() === "waiting") return "◎"
                         return "•"
                       })
+                      const label = createMemo(() => {
+                        const indent = item.depth > 0 ? `${"  ".repeat(item.depth - 1)}↳ ` : ""
+                        const title = sub.title ?? sub.id.slice(0, 16)
+                        return indent + title
+                      })
                       return (
                         <box
                           flexDirection="row"
@@ -303,9 +316,8 @@ export function Sidebar(props: { sessionID: string }) {
                           <text flexShrink={0} fg={statusColor()}>
                             {statusIcon()}
                           </text>
-                          <text fg={isCurrent ? theme.text : theme.textMuted} wrapMode="word">
-                            {sub.title ?? sub.id.slice(0, 16)}
-                            {isCurrent && <span style={{ fg: theme.accent }}> (current)</span>}
+                          <text fg={isCurrent ? theme.primary : theme.textMuted} wrapMode="word">
+                            {isCurrent ? <span style={{ bold: true }}>{label()}</span> : label()}
                             {status() === "waiting" && <span style={{ fg: theme.accent }}> (waiting)</span>}
                           </text>
                         </box>

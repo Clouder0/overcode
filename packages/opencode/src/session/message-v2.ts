@@ -11,6 +11,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
 import { type SystemError } from "bun"
+import { MessageParser } from "./message-parser"
 
 export namespace MessageV2 {
   export const OutputLengthError = NamedError.create("MessageOutputLengthError", z.object({}))
@@ -481,6 +482,38 @@ export namespace MessageV2 {
               filename: part.filename,
             })
 
+          if (part.type === "message") {
+            if (part.direction === "outgoing") continue
+
+            const legacyInbox = msg.parts.some(
+              (p) => p.type === "text" && p.synthetic && p.text.startsWith("Sender Agent with session id"),
+            )
+
+            if (legacyInbox && part.direction === "incoming" && part.peerType === "agent") continue
+
+            const text = (() => {
+              if (part.direction === "incoming" && part.peerType === "agent") {
+                return MessageParser.formatInbox([
+                  {
+                    from: part.peer,
+                    text: part.text,
+                    messageType: part.timeoutOccurred ? "timeout" : "normal",
+                  },
+                ])
+              }
+
+              const dir = part.direction === "incoming" ? "from" : "to"
+              const who = part.peerType === "agent" ? `Agent with session id ${part.peer}` : part.peer
+              const suffix = part.timeoutOccurred ? " (timed out)" : ""
+              return [`Message ${dir} ${who}${suffix}:`, "<content>", part.text, "</content>"].join("\n")
+            })()
+
+            userMessage.parts.push({
+              type: "text",
+              text,
+            })
+          }
+
           if (part.type === "compaction") {
             userMessage.parts.push({
               type: "text",
@@ -518,6 +551,32 @@ export namespace MessageV2 {
               text: part.text,
               providerMetadata: part.metadata,
             })
+
+          if (part.type === "message") {
+            if (part.direction === "outgoing") continue
+
+            const text = (() => {
+              if (part.direction === "incoming" && part.peerType === "agent") {
+                return MessageParser.formatInbox([
+                  {
+                    from: part.peer,
+                    text: part.text,
+                    messageType: part.timeoutOccurred ? "timeout" : "normal",
+                  },
+                ])
+              }
+
+              const dir = part.direction === "incoming" ? "from" : "to"
+              const who = part.peerType === "agent" ? `Agent with session id ${part.peer}` : part.peer
+              const suffix = part.timeoutOccurred ? " (timed out)" : ""
+              return [`Message ${dir} ${who}${suffix}:`, "<content>", part.text, "</content>"].join("\n")
+            })()
+
+            assistantMessage.parts.push({
+              type: "text",
+              text,
+            })
+          }
           if (part.type === "step-start")
             assistantMessage.parts.push({
               type: "step-start",

@@ -11,6 +11,7 @@ import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions } from "ai"
 import { SessionCompaction } from "./compaction"
+import { SessionRetry } from "./retry"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
 import { ProviderTransform } from "../provider/transform"
@@ -65,6 +66,8 @@ export namespace SessionPrompt {
             resolve(input: MessageV2.WithParts): void
             reject(): void
           }[]
+          done: Promise<void>
+          doneResolve: () => void
         }
       > = {}
       return data
@@ -72,6 +75,7 @@ export namespace SessionPrompt {
     async (current) => {
       for (const item of Object.values(current)) {
         item.abort.abort()
+        item.doneResolve()
         for (const callback of item.callbacks) {
           callback.reject()
         }
@@ -79,9 +83,16 @@ export namespace SessionPrompt {
     },
   )
 
+  const wakeAfter = Instance.state(
+    () => new Set<string>(),
+    async (set) => {
+      set.clear()
+    },
+  )
+
   const wake = (sessionID: string) => {
     log.info("waking session", { sessionID })
-    loop(sessionID).catch((error) => {
+    SessionPrompt.loop(sessionID).catch((error) => {
       log.error("failed to wake session", { sessionID, error: error?.message })
     })
   }
@@ -105,8 +116,9 @@ export namespace SessionPrompt {
 
     await Session.updateMessage(uiMessage)
 
+    const partID = uiMessage.id.replace(/^msg_/, "prt_")
     const msgPart: MessageV2.MessagePart = {
-      id: Identifier.ascending("part"),
+      id: Identifier.ascending("part", partID),
       messageID: uiMessage.id,
       sessionID,
       type: "message",
@@ -119,6 +131,52 @@ export namespace SessionPrompt {
     }
 
     await Session.updatePart(msgPart)
+  }
+
+  const DELIVERED_CACHE_MAX = 2048
+
+  const delivered = Instance.state(
+    () => {
+      return {
+        inflight: new Map<string, Promise<void>>(),
+        done: new Map<string, true>(),
+      }
+    },
+    async (entry) => {
+      entry.inflight.clear()
+      entry.done.clear()
+    },
+  )
+
+  function persistInbound(message: SessionMessage.Message) {
+    const cache = delivered()
+    if (cache.done.has(message.id)) return Promise.resolve()
+
+    const existing = cache.inflight.get(message.id)
+    if (existing) return existing
+
+    const next = persistDeliveredMessage(message)
+      .then(() => {
+        cache.done.set(message.id, true)
+        while (cache.done.size > DELIVERED_CACHE_MAX) {
+          const oldest = cache.done.keys().next().value
+          if (!oldest) break
+          cache.done.delete(oldest)
+        }
+      })
+      .finally(() => {
+        cache.inflight.delete(message.id)
+      })
+
+    cache.inflight.set(message.id, next)
+    return next
+  }
+
+  function persistInboundInDirectory(message: SessionMessage.Message, directory: string) {
+    return Instance.provide({
+      directory,
+      fn: () => persistInbound(message),
+    })
   }
 
   async function updateWaitProgress(sessionID: string, policy: WaitPolicy.Policy) {
@@ -160,14 +218,18 @@ export namespace SessionPrompt {
 
   SessionMessage.setWakeSessionFn((message) => {
     const sessionID = message.to
+    const directory = Instance.directory
 
     // Persist immediately so the TUI can show queued agent messages while busy.
-    persistDeliveredMessage(message).catch((error) => {
+    persistInboundInDirectory(message, directory).catch((error) => {
       log.error("failed to persist delivered message", { sessionID, error: error?.message })
     })
 
     // If the session loop is currently running, let it observe pending messages directly.
-    if (state()[sessionID]) return
+    if (state()[sessionID]) {
+      wakeAfter().add(sessionID)
+      return
+    }
 
     const status = SessionStatus.get(sessionID)
     if (status.type === "idle") {
@@ -189,7 +251,26 @@ export namespace SessionPrompt {
       })
 
       const pending = SessionMessage.peekPending(sessionID)
-      const pendingFromSources = new Set(pending.filter((m) => policy.sources.includes(m.from)).map((m) => m.from))
+      const sources = new Set(policy.sources)
+
+      const nonSource = pending.filter((m) => !sources.has(m.from))
+      if (nonSource.length > 0) {
+        Promise.allSettled(nonSource.map((m) => persistInboundInDirectory(m, directory)))
+          .then((settled) => {
+            const ok = new Set<string>()
+            for (const [i, msg] of nonSource.entries()) {
+              if (settled[i]?.status === "fulfilled") ok.add(msg.id)
+            }
+            if (ok.size === 0) return
+
+            SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id) && !sources.has(msg.from))
+          })
+          .catch((error) => {
+            log.error("failed to persist non-source wait messages", { sessionID, error: error?.message })
+          })
+      }
+
+      const pendingFromSources = new Set(pending.filter((m) => sources.has(m.from)).map((m) => m.from))
 
       const result = WaitPolicy.evaluate({
         policy,
@@ -537,9 +618,16 @@ export namespace SessionPrompt {
     const s = state()
     if (s[sessionID]) return
     const controller = new AbortController()
+    let doneResolve: () => void = () => {}
+    const done = new Promise<void>((resolve) => {
+      doneResolve = resolve
+    })
+
     s[sessionID] = {
       abort: controller,
       callbacks: [],
+      done,
+      doneResolve,
     }
     pinEnvironment(sessionID)
     return controller.signal
@@ -559,6 +647,8 @@ export namespace SessionPrompt {
         const wasWaiting = WaitPolicy.isWaiting(sessionID)
         WaitPolicy.clear(sessionID)
         SessionStatus.set(sessionID, { type: "idle" })
+        wakeAfter().delete(sessionID)
+
         if (wasWaiting && SessionMessage.hasPending(sessionID)) {
           wake(sessionID)
         }
@@ -570,32 +660,90 @@ export namespace SessionPrompt {
     for (const item of match.callbacks) {
       item.reject()
     }
-    delete s[sessionID]
+    match.callbacks = []
 
+    // Forced cancel aborts the active loop but keeps its lock in place.
+    // This avoids starting a concurrent loop while the aborted one is still unwinding.
     if (force) {
+      if (SessionMessage.hasPending(sessionID)) {
+        wakeAfter().add(sessionID)
+      }
       WaitPolicy.clear(sessionID)
       SessionStatus.set(sessionID, { type: "idle" })
       return
     }
 
+    match.doneResolve()
+    delete s[sessionID]
+
     const status = SessionStatus.get(sessionID)
     if (status.type !== "waiting") {
       SessionStatus.set(sessionID, { type: "idle" })
     }
+
+    if (!wakeAfter().has(sessionID)) return
+    wakeAfter().delete(sessionID)
+
+    if (!SessionMessage.hasPending(sessionID)) return
+
+    if (status.type === "waiting") {
+      const policy = WaitPolicy.get(sessionID)
+      if (!policy) {
+        SessionStatus.set(sessionID, { type: "idle" })
+        wake(sessionID)
+        return
+      }
+
+      const pending = SessionMessage.peekPending(sessionID)
+      const pendingFromSources = new Set(pending.filter((m) => policy.sources.includes(m.from)).map((m) => m.from))
+
+      const result = WaitPolicy.evaluate({
+        policy,
+        pendingFromSources,
+      })
+
+      if (!result.ready) return
+
+      wake(sessionID)
+      return
+    }
+
+    wake(sessionID)
   }
 
-  export const loop = fn(Identifier.schema("session"), async (sessionID) => {
+  async function runLoop(sessionID: string): Promise<MessageV2.WithParts> {
     const abort = start(sessionID)
     if (!abort) {
+      const active = state()[sessionID]
+      if (!active) {
+        return runLoop(sessionID)
+      }
+
+      if (active.abort.signal.aborted) {
+        await active.done
+        return runLoop(sessionID)
+      }
+
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
-        const callbacks = state()[sessionID].callbacks
-        callbacks.push({ resolve, reject })
+        const cb = { resolve, reject }
+        active.callbacks.push(cb)
+
+        const current = state()[sessionID]
+        if (current === active) return
+
+        const idx = active.callbacks.indexOf(cb)
+        if (idx !== -1) {
+          active.callbacks.splice(idx, 1)
+        }
+
+        resolve(runLoop(sessionID))
       })
     }
 
     using _ = defer(() => cancel(sessionID, { force: false }))
 
     let step = 0
+    let pendingPersistFailures = 0
     const session = await Session.get(sessionID)
     while (true) {
       log.info("loop", { step, sessionID })
@@ -622,67 +770,70 @@ export namespace SessionPrompt {
           break
         }
 
+        WaitPolicy.clear(sessionID)
         SessionStatus.set(sessionID, { type: "busy" })
 
-        const taken = SessionMessage.pending(sessionID)
+        const settled = await Promise.allSettled(pending.map((m) => persistInbound(m)))
+        const ok = new Set<string>()
+        for (const [i, msg] of pending.entries()) {
+          if (settled[i]?.status === "fulfilled") ok.add(msg.id)
+        }
+        if (ok.size > 0) {
+          SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id))
+        }
 
         const respondedSources = result.respondedSources
         const timedOutSources = result.timedOut ? result.missingSources : []
 
-        const timeoutMessages = timedOutSources.map(
-          (s): SessionMessage.Message => ({
-            id: Identifier.ascending("message"),
-            from: s,
-            to: sessionID,
-            text: MessageParser.formatTimeoutMessage(wait.timeout),
-            time: Date.now(),
-            messageType: "timeout",
-          }),
-        )
+        if (timedOutSources.length > 0) {
+          const timeoutMessages = timedOutSources.map((source): SessionMessage.Message => {
+            const st = SessionStatus.get(source)
+            const snapshot: MessageParser.TimeoutSnapshot = (() => {
+              if (st.type === "idle") {
+                return { source, run: "idle" }
+              }
+              if (st.type === "busy") {
+                return { source, run: "working" }
+              }
+              if (st.type === "retry") {
+                return {
+                  source,
+                  run: "retry",
+                  retry: {
+                    attempt: st.attempt,
+                    message: st.message,
+                    next: st.next,
+                  },
+                }
+              }
+              if (st.type === "waiting") {
+                return {
+                  source,
+                  run: "waiting",
+                  waiting: {
+                    sources: st.sources,
+                    mode: st.mode,
+                    deadline: st.time.deadline,
+                  },
+                }
+              }
+              return { source, run: "unknown" }
+            })()
 
-        const incoming = [...taken, ...timeoutMessages]
-
-        if (incoming.length > 0) {
-          const agentName = await lastAgent(sessionID)
-          const agentInfo = await Agent.get(agentName)
-          const incomingMessage: MessageV2.User = {
-            id: Identifier.ascending("message"),
-            sessionID,
-            time: { created: Date.now() },
-            role: "user",
-            agent: agentName,
-            model: agentInfo?.model ?? (await lastModel(sessionID)),
-          }
-          await Session.updateMessage(incomingMessage)
-
-          // Create MessageParts only for timeout messages (taken messages already persisted by persistDeliveredMessage)
-          for (const msg of timeoutMessages) {
-            const msgPart: MessageV2.MessagePart = {
-              id: Identifier.ascending("part"),
-              messageID: incomingMessage.id,
-              sessionID,
-              type: "message",
-              direction: "incoming",
-              peer: msg.from,
-              peerType: msg.from === "human" ? "human" : "agent",
-              text: msg.text,
-              timeoutOccurred: msg.messageType === "timeout",
-              time: { created: msg.time },
+            return {
+              id: Identifier.ascending("message"),
+              from: source,
+              to: sessionID,
+              text: MessageParser.formatWaitTimeoutMessage({
+                timeoutMs: wait.timeout,
+                snapshot,
+              }),
+              time: Date.now(),
+              messageType: "timeout",
             }
-            await Session.updatePart(msgPart)
-          }
+          })
 
-          // Also create a synthetic TextPart with formatted text for LLM context
-          const formatted = MessageParser.formatInbox(incoming)
-          const incomingPart: MessageV2.TextPart = {
-            id: Identifier.ascending("part"),
-            messageID: incomingMessage.id,
-            sessionID,
-            type: "text",
-            text: formatted,
-            synthetic: true,
-          }
-          await Session.updatePart(incomingPart)
+          await Promise.allSettled(timeoutMessages.map((m) => persistInbound(m)))
         }
 
         const parts = await MessageV2.parts(wait.messageID)
@@ -716,7 +867,6 @@ export namespace SessionPrompt {
           })
         }
 
-        WaitPolicy.clear(sessionID)
         SessionStatus.set(sessionID, { type: "busy" })
         continue
       }
@@ -756,32 +906,27 @@ export namespace SessionPrompt {
 
       // Check for incoming messages from other sessions
       if (SessionMessage.hasPending(sessionID)) {
-        const incoming = SessionMessage.pending(sessionID)
-        if (incoming.length > 0) {
-          // Create a single synthetic user message containing an inbox snapshot.
-          // This avoids losing earlier messages when multiple arrive at once.
-          const agentName = await lastAgent(sessionID)
-          const agentInfo = await Agent.get(agentName)
-          const incomingMessage: MessageV2.User = {
-            id: Identifier.ascending("message"),
-            sessionID,
-            time: { created: Date.now() },
-            role: "user",
-            agent: agentName,
-            model: agentInfo?.model ?? (await lastModel(sessionID)),
+        const pending = SessionMessage.peekPending(sessionID)
+        if (pending.length > 0) {
+          const settled = await Promise.allSettled(pending.map((m) => persistInbound(m)))
+          const ok = new Set<string>()
+          for (const [i, msg] of pending.entries()) {
+            if (settled[i]?.status === "fulfilled") ok.add(msg.id)
           }
-          await Session.updateMessage(incomingMessage)
 
-          const formatted = MessageParser.formatInbox(incoming)
-          const incomingPart: MessageV2.TextPart = {
-            id: Identifier.ascending("part"),
-            messageID: incomingMessage.id,
-            sessionID,
-            type: "text",
-            text: formatted,
-            synthetic: true,
+          if (ok.size === 0) {
+            pendingPersistFailures++
+            const delay = Math.min(100 * Math.pow(2, pendingPersistFailures - 1), 2000)
+            await SessionRetry.sleep(delay, abort).catch(() => {})
           }
-          await Session.updatePart(incomingPart)
+
+          if (ok.size > 0) {
+            pendingPersistFailures = 0
+            SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id))
+          }
+        }
+        if (pending.length === 0) {
+          pendingPersistFailures = 0
         }
         // Continue loop to process the incoming messages
         continue
@@ -804,6 +949,7 @@ export namespace SessionPrompt {
             if (part.type === "compaction") return true
             if (part.type === "subtask") return true
             if (part.type === "agent") return true
+            if (part.type === "message") return true
             return false
           })
         ) {
@@ -1005,7 +1151,8 @@ export namespace SessionPrompt {
           return (p.state.metadata as { ok?: boolean } | undefined)?.ok === true
         })
 
-        if (okSends.length > 0 && !hasWait) {
+        const hasPending = SessionMessage.hasPending(sessionID)
+        if (okSends.length > 0 && !hasWait && !hasPending) {
           break
         }
       }
@@ -1027,14 +1174,28 @@ export namespace SessionPrompt {
     SessionCompaction.prune({ sessionID })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
-      const queued = state()[sessionID]?.callbacks ?? []
+      const active = state()[sessionID]
+      const queued = active?.callbacks ?? []
+      if (active) {
+        active.callbacks = []
+      }
+
+      if (abort.aborted) {
+        for (const q of queued) {
+          q.reject()
+        }
+        return item
+      }
+
       for (const q of queued) {
         q.resolve(item)
       }
       return item
     }
     throw new Error("Impossible")
-  })
+  }
+
+  export const loop = fn(Identifier.schema("session"), runLoop)
 
   async function lastModel(sessionID: string) {
     const visited = new Set<string>()

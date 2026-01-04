@@ -7,6 +7,7 @@ import { SplitBorder } from "@tui/component/border"
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { useKeybind } from "../../context/keybind"
 import { useTerminalDimensions } from "@opentui/solid"
+import { buildSessionTree, sessionRunState } from "../../lib/session-tree"
 
 const Title = (props: { title: Accessor<string>; truncate?: boolean }) => {
   const { theme } = useTheme()
@@ -73,21 +74,24 @@ export function Header() {
 
   const showShare = createMemo(() => shareEnabled() && !session()?.share?.url)
 
-  // Count child/subagent sessions for the current session
-  const childCount = createMemo(() => {
-    const current = session()
-    if (!current) return 0
-    return sync.data.session.filter((s) => s.parentID === current.id).length
-  })
+  const tree = createMemo(() =>
+    buildSessionTree({
+      currentSessionID: route.sessionID,
+      sessions: sync.data.session,
+      sort: "created",
+    }),
+  )
 
-  // Count how many children are currently working
+  // Count child/subagent sessions for the current session (including nested)
+  const childCount = createMemo(() => Math.max(0, tree().list.length - 1))
+
+  // Count how many children are currently active (working/waiting)
   const workingChildCount = createMemo(() => {
-    const current = session()
-    if (!current) return 0
-    return sync.data.session.filter((s) => {
-      if (s.parentID !== current.id) return false
-      const status = sync.data.session_status?.[s.id]
-      return status?.type === "busy" || status?.type === "retry" || status?.type === "waiting"
+    const t = tree()
+    return t.list.filter((item) => {
+      if (item.id === t.rootID) return false
+      const status = sync.data.session_status?.[item.id] as { type?: string } | undefined
+      return sessionRunState(status) !== "done"
     }).length
   })
 
