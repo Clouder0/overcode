@@ -17,6 +17,7 @@ export const TIPS = [
   "Press {highlight}Ctrl+X X{/highlight} or {highlight}/export{/highlight} to save the conversation as Markdown.",
   "Press {highlight}Ctrl+X Y{/highlight} to copy the assistant's last message to clipboard.",
   "Press {highlight}Ctrl+P{/highlight} to see all available actions and commands.",
+  "Select a paste chip with {highlight}←{/highlight}/{highlight}→{/highlight}, then press {highlight}x{/highlight} to expand or {highlight}e{/highlight} to edit.",
   "Run {highlight}/connect{/highlight} to add API keys for 75+ supported LLM providers.",
   "The default leader key is {highlight}Ctrl+X{/highlight}; combine with other keys for quick actions.",
   "Press {highlight}F2{/highlight} to quickly switch between recently used models.",

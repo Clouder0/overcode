@@ -649,6 +649,14 @@ function getSyntaxRules(theme: Theme) {
       },
     },
     {
+      scope: ["extmark.paste.selected"],
+      style: {
+        foreground: theme.selectedListItemText,
+        background: theme.primary,
+        bold: true,
+      },
+    },
+    {
       scope: ["comment"],
       style: {
         foreground: theme.syntaxComment,
