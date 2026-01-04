@@ -47,24 +47,33 @@ jobs:
         working-directory: packages/opencode
         run: bun run build --single
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
-        working-directory: packages/opencode
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        working-directory: packages/opencode/dist
         run: |
-          cd dist
           for dir in opencode-*/; do
             name="${dir%/}"
-            tar -czvf "${name}.tar.gz" "$name"
+            (cd "${name}/bin" && tar -czf "../../${name}.tar.gz" *)
+          done
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        working-directory: packages/opencode/dist
+        run: |
+          for dir in opencode-*/; do
+            name="${dir%/}"
+            (cd "${name}/bin" && zip -r "../../${name}.zip" *)
           done
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
-        working-directory: packages/opencode
+        working-directory: packages/opencode/dist
         shell: pwsh
         run: |
-          cd dist
           Get-ChildItem -Directory | ForEach-Object {
-            Compress-Archive -Path $_.FullName -DestinationPath "$($_.Name).zip"
+            $name = $_.Name
+            $binPath = Join-Path $_.FullName "bin\*"
+            Compress-Archive -Path $binPath -DestinationPath "$name.zip"
           }
 
       - name: Upload artifacts
