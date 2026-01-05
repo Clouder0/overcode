@@ -113,7 +113,7 @@ export function Session() {
   const kv = useKV()
   const { theme } = useTheme()
   const promptRef = usePromptRef()
-  const session = createMemo(() => sync.session.get(route.sessionID)!)
+  const session = createMemo(() => sync.session.get(route.sessionID))
 
   const thread = createMemo(() =>
     buildSessionTree({
@@ -206,11 +206,28 @@ export function Session() {
   const toast = useToast()
   const sdk = useSDK()
 
+  const [initialPromptApplied, setInitialPromptApplied] = createSignal(false)
+  const [promptHandle, setPromptHandle] = createSignal<PromptRef | undefined>(undefined)
+
   // Handle initial prompt from fork
+  createEffect(
+    on(
+      () => route.sessionID,
+      () => {
+        setPromptHandle(undefined)
+        setInitialPromptApplied(false)
+      },
+    ),
+  )
+
   createEffect(() => {
-    if (route.initialPrompt && prompt) {
-      prompt.set(route.initialPrompt)
-    }
+    const initial = route.initialPrompt
+    if (!initial) return
+    const handle = promptHandle()
+    if (!handle) return
+    if (initialPromptApplied()) return
+    handle.set(initial)
+    setInitialPromptApplied(true)
   })
 
   let scroll: ScrollBoxRenderable
@@ -416,7 +433,7 @@ export function Session() {
       onSelect: async (dialog) => {
         const status = sync.data.session_status?.[route.sessionID]
         if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
-        const revert = session().revert?.messageID
+        const revert = session()?.revert?.messageID
         const message = messages().findLast((x) => {
           if (x.role !== "user") return false
           if (revert && x.id >= revert) return false
@@ -456,7 +473,7 @@ export function Session() {
       category: "Session",
       onSelect: (dialog) => {
         dialog.clear()
-        const messageID = session().revert?.messageID
+        const messageID = session()?.revert?.messageID
         if (!messageID) return
         const message = messages().find((x) => {
           if (x.role !== "user") return false
@@ -760,6 +777,7 @@ export function Session() {
       onSelect: async (dialog) => {
         try {
           const sessionData = session()
+          if (!sessionData) return
           const sessionMessages = messages()
           const transcript = formatTranscript(
             sessionData,
@@ -786,6 +804,7 @@ export function Session() {
       onSelect: async (dialog) => {
         try {
           const sessionData = session()
+          if (!sessionData) return
           const sessionMessages = messages()
 
           const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
@@ -1127,6 +1146,7 @@ export function Session() {
                 ref={(r) => {
                   prompt = r
                   promptRef.set(r)
+                  setPromptHandle(r)
                 }}
                 disabled={permissions().length > 0}
                 onSubmit={() => {

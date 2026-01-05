@@ -1490,6 +1490,78 @@ export namespace SessionPrompt {
     const parts = await Promise.all(
       input.parts.map(async (part): Promise<MessageV2.Part[]> => {
         if (part.type === "file") {
+          // before checking the protocol we check if this is an mcp resource because it needs special handling
+          if (part.source?.type === "resource") {
+            const { clientName, uri } = part.source
+            log.info("mcp resource", { clientName, uri, mime: part.mime })
+
+            const pieces: MessageV2.Part[] = [
+              {
+                id: Identifier.ascending("part"),
+                messageID: info.id,
+                sessionID: input.sessionID,
+                type: "text",
+                synthetic: true,
+                text: `Reading MCP resource: ${part.filename} (${uri})`,
+              },
+            ]
+
+            try {
+              const resourceContent = await MCP.readResource(clientName, uri)
+              if (!resourceContent) {
+                throw new Error(`Resource not found: ${clientName}/${uri}`)
+              }
+
+              // Handle different content types
+              const contents = Array.isArray(resourceContent.contents)
+                ? resourceContent.contents
+                : [resourceContent.contents]
+
+              for (const content of contents) {
+                if ("text" in content && content.text) {
+                  pieces.push({
+                    id: Identifier.ascending("part"),
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: content.text as string,
+                  })
+                } else if ("blob" in content && content.blob) {
+                  // Handle binary content if needed
+                  const mimeType = "mimeType" in content ? content.mimeType : part.mime
+                  pieces.push({
+                    id: Identifier.ascending("part"),
+                    messageID: info.id,
+                    sessionID: input.sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: `[Binary content: ${mimeType}]`,
+                  })
+                }
+              }
+
+              pieces.push({
+                ...part,
+                id: part.id ?? Identifier.ascending("part"),
+                messageID: info.id,
+                sessionID: input.sessionID,
+              })
+            } catch (error: unknown) {
+              log.error("failed to read MCP resource", { error, clientName, uri })
+              const message = error instanceof Error ? error.message : String(error)
+              pieces.push({
+                id: Identifier.ascending("part"),
+                messageID: info.id,
+                sessionID: input.sessionID,
+                type: "text",
+                synthetic: true,
+                text: `Failed to read MCP resource ${part.filename}: ${message}`,
+              })
+            }
+
+            return pieces
+          }
           const url = new URL(part.url)
           switch (url.protocol) {
             case "data:":
@@ -1589,7 +1661,13 @@ export namespace SessionPrompt {
                       messageID: info.id,
                       extra: { bypassCwdCheck: true, model },
                       metadata: async () => {},
-                      ask: async () => {},
+                      ask: async (req) => {
+                        await PermissionNext.ask({
+                          ...req,
+                          sessionID: input.sessionID,
+                          ruleset: PermissionNext.merge(agent.permission, session?.permission ?? []),
+                        })
+                      },
                     }
                     const result = await t.execute(args, readCtx)
                     pieces.push({
@@ -1650,7 +1728,13 @@ export namespace SessionPrompt {
                   messageID: info.id,
                   extra: { bypassCwdCheck: true },
                   metadata: async () => {},
-                  ask: async () => {},
+                  ask: async (req) => {
+                    await PermissionNext.ask({
+                      ...req,
+                      sessionID: input.sessionID,
+                      ruleset: PermissionNext.merge(agent.permission, session?.permission ?? []),
+                    })
+                  },
                 }
                 const result = await ListTool.init().then((t) => t.execute(args, listCtx))
                 return [
@@ -1744,6 +1828,7 @@ export namespace SessionPrompt {
         agent: input.agent,
         model: input.model,
         messageID: input.messageID,
+        variant: input.variant,
       },
       {
         message: info,

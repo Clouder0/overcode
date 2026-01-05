@@ -712,14 +712,36 @@ export namespace Server {
             },
           },
         }),
+        validator(
+          "query",
+          z.object({
+            start: z.coerce
+              .number()
+              .optional()
+              .meta({ description: "Filter sessions updated on or after this timestamp (milliseconds since epoch)" }),
+            search: z.string().optional().meta({ description: "Filter sessions by title (case-insensitive)" }),
+            limit: z.coerce
+              .number()
+              .int()
+              .min(0)
+              .optional()
+              .meta({ description: "Maximum number of sessions to return" }),
+          }),
+        ),
         async (c) => {
+          const query = c.req.valid("query")
+          if (query.limit === 0) return c.json([])
+          const term = query.search?.toLowerCase()
+
           const sessions = await Array.fromAsync(Session.list())
-          pipe(
-            await Array.fromAsync(Session.list()),
-            filter((s) => !s.time.archived),
-            sortBy((s) => s.time.updated),
-          )
-          return c.json(sessions)
+          const filtered = sessions.filter((session) => {
+            if (query.start !== undefined && session.time.updated < query.start) return false
+            if (term !== undefined && !session.title.toLowerCase().includes(term)) return false
+            return true
+          })
+          const sorted = filtered.toSorted((a, b) => b.time.updated - a.time.updated)
+          const limited = query.limit !== undefined ? sorted.slice(0, query.limit) : sorted
+          return c.json(limited)
         },
       )
       .get(
@@ -2359,6 +2381,45 @@ export namespace Server {
           const { name } = c.req.valid("param")
           await MCP.disconnect(name)
           return c.json(true)
+        },
+      )
+      .get(
+        "/experimental/resource",
+        describeRoute({
+          summary: "Get MCP resources",
+          description: "Get all available MCP resources from connected servers. Optionally filter by name.",
+          operationId: "experimental.resource.list",
+          responses: {
+            200: {
+              description: "MCP resources",
+              content: {
+                "application/json": {
+                  schema: resolver(z.record(z.string(), MCP.Resource)),
+                },
+              },
+            },
+          },
+        }),
+        validator(
+          "query",
+          z.object({
+            search: z.string().optional().meta({ description: "Filter resources by name (case-insensitive)" }),
+          }),
+        ),
+        async (c) => {
+          const query = c.req.valid("query")
+          const term = query.search?.toLowerCase()
+          const resources = await MCP.resources()
+          if (!term) return c.json(resources)
+
+          const filtered = Object.fromEntries(
+            Object.entries(resources).filter(([key, value]) => {
+              if (key.toLowerCase().includes(term)) return true
+              return value.name.toLowerCase().includes(term)
+            }),
+          )
+
+          return c.json(filtered)
         },
       )
       .get(

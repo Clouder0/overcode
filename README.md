@@ -2,11 +2,7 @@
 
 > **A power-user fork of [OpenCode](https://github.com/sst/opencode)** — async subagents, nested sessions, TUI-focused.
 
-
-
 https://github.com/user-attachments/assets/e111ba85-9757-4d82-8a77-20a1266790d8
-
-
 
 ---
 
