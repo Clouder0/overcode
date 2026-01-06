@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Agent } from "../../src/agent/agent"
+import type { Config } from "../../src/config/config"
 import { Session } from "../../src/session"
 import { SubagentSpawnTool } from "../../src/tool/subagent-spawn"
 
@@ -253,7 +254,7 @@ describe("tool.subagent_spawn fine-grained permissions", () => {
   })
 
   test("allow-list mode uses string schema and lists available_subagents when too many targets", async () => {
-    const agent: Record<string, unknown> = {
+    const agent: NonNullable<Config.Info["agent"]> = {
       build: {
         permission: {
           subagent_spawn_agent: {

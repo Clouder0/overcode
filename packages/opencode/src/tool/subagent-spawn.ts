@@ -176,7 +176,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         title: `Spawned ${spawned.length} agent(s)`,
         metadata: {
           spawned,
-          errors: [],
+          errors: [] as string[],
         },
         output: JSON.stringify({ spawned }, null, 2),
       }

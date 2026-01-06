@@ -180,7 +180,7 @@ test("WaitPolicy timeout wake is not dropped while SessionPrompt.loop is active"
 
             const parts = await MessageV2.parts(waitMessageID)
             const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === callID)
-            if ((tool?.state.metadata as any)?.status === "timedOut") {
+            if (tool && tool.state.status !== "pending" && tool.state.metadata?.status === "timedOut") {
               break
             }
 
@@ -191,8 +191,11 @@ test("WaitPolicy timeout wake is not dropped while SessionPrompt.loop is active"
 
           const parts = await MessageV2.parts(waitMessageID)
           const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === callID)
-          expect(tool?.state.status).toBe("completed")
-          expect((tool?.state.metadata as any)?.status).toBe("timedOut")
+          if (!tool || tool.state.status !== "completed") {
+            expect(tool?.state.status).toBe("completed")
+            return
+          }
+          expect(tool.state.metadata.status).toBe("timedOut")
         } finally {
           ;(MessageV2 as any).stream = originalStream
           WaitPolicy.clear(session.id)
