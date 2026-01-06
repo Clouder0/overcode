@@ -26,6 +26,10 @@ export namespace WaitPolicy {
   type State = {
     policy: Policy
     timeoutTimer?: ReturnType<typeof setTimeout>
+    mono: {
+      created: number
+      deadline?: number
+    }
   }
 
   const state = Instance.state(
@@ -38,10 +42,19 @@ export namespace WaitPolicy {
     },
   )
 
+  function nowMono() {
+    if (typeof performance !== "undefined" && typeof performance.now === "function") {
+      return performance.now()
+    }
+    return Date.now()
+  }
+
   let wakeFn: ((sessionID: string) => void) | undefined
 
-  export function setWakeFn(fn: (sessionID: string) => void) {
+  export function setWakeFn(fn: ((sessionID: string) => void) | undefined) {
+    const prev = wakeFn
     wakeFn = fn
+    return prev
   }
 
   export function get(sessionID: string): Policy | undefined {
@@ -70,7 +83,9 @@ export namespace WaitPolicy {
     clear(input.sessionID)
 
     const now = Date.now()
+    const createdMono = nowMono()
     const deadline = input.timeout > 0 ? now + input.timeout : undefined
+    const deadlineMono = input.timeout > 0 ? createdMono + input.timeout : undefined
 
     const policy: Policy = {
       sessionID: input.sessionID,
@@ -87,11 +102,21 @@ export namespace WaitPolicy {
 
     const next: State = {
       policy,
+      mono: {
+        created: createdMono,
+        deadline: deadlineMono,
+      },
     }
 
     if (deadline !== undefined) {
+      const directory = Instance.directory
       next.timeoutTimer = setTimeout(() => {
-        wakeFn?.(input.sessionID)
+        Instance.provide({
+          directory,
+          fn: () => {
+            wakeFn?.(input.sessionID)
+          },
+        }).catch(() => {})
       }, input.timeout)
     }
 
@@ -99,15 +124,28 @@ export namespace WaitPolicy {
     return policy
   }
 
-  export function evaluate(input: { policy: Policy; now?: number; pendingFromSources: Set<string> }): EvaluateResult {
-    const now = input.now ?? Date.now()
+  function getMono(policy: Policy) {
+    return state().get(policy.sessionID)?.mono
+  }
 
+  export function evaluate(input: { policy: Policy; now?: number; pendingFromSources: Set<string> }): EvaluateResult {
     const respondedSources = input.policy.sources.filter((s) => input.pendingFromSources.has(s))
     const missingSources = input.policy.sources.filter((s) => !input.pendingFromSources.has(s))
 
     const ready = input.policy.mode === "any" ? respondedSources.length > 0 : missingSources.length === 0
 
-    const timedOut = input.policy.time.deadline !== undefined && now >= input.policy.time.deadline && !ready
+    const deadline = input.policy.time.deadline
+    const now = input.now ?? Date.now()
+
+    let timedOut = false
+    if (deadline !== undefined && !ready) {
+      timedOut = now >= deadline
+
+      const mono = getMono(input.policy)
+      if (mono?.deadline !== undefined) {
+        timedOut = timedOut || nowMono() >= mono.deadline
+      }
+    }
 
     return {
       ready: ready || timedOut,

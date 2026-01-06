@@ -75,22 +75,25 @@ test("evaluate() any mode resolves immediately on first response", async () => {
 test("register() timeout wakes via callback", async () => {
   await withinInstance(async () => {
     let wakes = 0
-    WaitPolicy.setWakeFn(() => {
+    const prev = WaitPolicy.setWakeFn(() => {
       wakes++
     })
 
-    WaitPolicy.register({
-      sessionID: "wait_timeout",
-      messageID: "msg",
-      callID: "call",
-      sources: ["a"],
-      timeout: 30,
-      mode: "all",
-    })
+    try {
+      WaitPolicy.register({
+        sessionID: "wait_timeout",
+        messageID: "msg",
+        callID: "call",
+        sources: ["a"],
+        timeout: 30,
+        mode: "all",
+      })
 
-    await Bun.sleep(60)
-    expect(wakes).toBe(1)
-
-    WaitPolicy.clear("wait_timeout")
+      await Bun.sleep(60)
+      expect(wakes).toBe(1)
+    } finally {
+      WaitPolicy.setWakeFn(prev)
+      WaitPolicy.clear("wait_timeout")
+    }
   })
 })
