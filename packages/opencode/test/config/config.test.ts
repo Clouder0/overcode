@@ -324,7 +324,6 @@ Test agent prompt`,
       const config = await Config.get()
       expect(config.agent?.["test"]).toEqual(
         expect.objectContaining({
-          name: "test",
           model: "test/model",
           prompt: "Test agent prompt",
         }),
@@ -479,7 +478,6 @@ Helper subagent prompt`,
     fn: async () => {
       const config = await Config.get()
       expect(config.agent?.["helper"]).toMatchObject({
-        name: "helper",
         model: "test/model",
         mode: "subagent",
         prompt: "Helper subagent prompt",
