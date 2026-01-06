@@ -1636,7 +1636,25 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
         </text>
       </Show>
       {/* Content: full markdown for human, expandable for agents */}
-      <Show when={isToHuman} fallback={<text fg={theme.text}>{displayContent()}</text>}>
+      <Show
+        when={isToHuman}
+        fallback={
+          <Show
+            when={expanded() || !contentInfo().canExpand}
+            fallback={<text fg={theme.text}>{displayContent()}</text>}
+          >
+            <code
+              filetype="markdown"
+              drawUnstyledText={false}
+              streaming={false}
+              syntaxStyle={syntax()}
+              content={displayContent()}
+              conceal={ctx.conceal()}
+              fg={theme.text}
+            />
+          </Show>
+        }
+      >
         <code
           filetype="markdown"
           drawUnstyledText={false}
