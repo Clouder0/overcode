@@ -252,7 +252,7 @@ describe("tool.subagent_spawn fine-grained permissions", () => {
     })
   })
 
-  test("allow-list mode appends allowed patterns hint when too many targets", async () => {
+  test("allow-list mode uses string schema and lists available_subagents when too many targets", async () => {
     const agent: Record<string, unknown> = {
       build: {
         permission: {
@@ -281,10 +281,12 @@ describe("tool.subagent_spawn fine-grained permissions", () => {
         expect(build).toBeDefined()
 
         const tool = await SubagentSpawnTool.init({ agent: build })
-        expect(tool.description).toContain("Allowed patterns:")
-        expect(tool.description).toContain("w*")
+        // New behavior: lists all available subagents in XML format
+        expect(tool.description).toContain("<available_subagents>")
+        expect(tool.description).toContain("<name>w0</name>")
 
-        expect(tool.parameters.safeParse({ agents: [{ agent: "general", prompt: "ok" }] }).success).toBe(true)
+        // With >32 agents, should use string schema (not enum)
+        expect(tool.parameters.safeParse({ agents: [{ agent: "w0", prompt: "ok" }] }).success).toBe(true)
       },
     })
   })

@@ -6,7 +6,6 @@ import { SessionMessage } from "@/session/message-routing"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionStatus } from "@/session/status"
 import { PermissionNext } from "@/permission/next"
-import { Wildcard } from "@/util/wildcard"
 import { Log } from "@/util/log"
 import { Tool } from "./tool"
 
@@ -37,41 +36,50 @@ const MAX_AGENT_ENUM = 32
 
 export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
   const agent = init?.agent
-  let agentSchema = z.string().describe(AGENT_DESC)
+  let agentSchema: z.ZodTypeAny = z.string().describe(AGENT_DESC)
   let description = DESCRIPTION
 
+  // Get all spawnable agents (non-primary mode)
+  const spawnable = await Agent.list().then((agents) => agents.filter((a) => a.mode !== "primary"))
+
+  // Determine allowed list based on permissions
+  let allowed: typeof spawnable
   if (agent) {
-    const allowlist = PermissionNext.evaluate("subagent_spawn_agent", "*", agent.permission).action === "deny"
-    if (allowlist) {
-      const spawnable = await Agent.list().then((agents) => agents.filter((a) => a.mode !== "primary"))
-      const allowed = spawnable
-        .filter((a) => PermissionNext.evaluate("subagent_spawn_agent", a.name, agent.permission).action === "allow")
-        .map((a) => a.name)
+    const isAllowlistMode = PermissionNext.evaluate("subagent_spawn_agent", "*", agent.permission).action === "deny"
 
-      if (allowed.length > 0 && allowed.length <= MAX_AGENT_ENUM) {
-        agentSchema = z.enum(allowed as [string, ...string[]]).describe(AGENT_DESC)
-      }
+    allowed = isAllowlistMode
+      ? spawnable.filter(
+          (a) => PermissionNext.evaluate("subagent_spawn_agent", a.name, agent.permission).action === "allow",
+        )
+      : spawnable
+  } else {
+    allowed = spawnable
+  }
 
-      if (allowed.length === 0) {
-        description += "\n\nNo subagent types are allowed by current subagent_spawn_agent rules."
-      }
+  // Build description and schema based on allowed list
+  if (allowed.length === 0) {
+    description += "\n\nNo subagent types are available to spawn."
+  } else {
+    // Add <available_subagents> section (like <available_skills>)
+    const section = [
+      "<available_subagents>",
+      ...allowed.flatMap((a) => [
+        `  <subagent>`,
+        `    <name>${a.name}</name>`,
+        `    <description>${a.description ?? "No description"}</description>`,
+        `  </subagent>`,
+      ]),
+      "</available_subagents>",
+    ].join(" ")
 
-      if (allowed.length > MAX_AGENT_ENUM) {
-        const patterns: string[] = []
-        const seen = new Set<string>()
+    description += " " + section
 
-        for (const rule of agent.permission.slice().reverse()) {
-          if (!Wildcard.match("subagent_spawn_agent", rule.permission)) continue
-          if (seen.has(rule.pattern)) continue
-          seen.add(rule.pattern)
-          if (rule.action === "allow") patterns.push(rule.pattern)
-          if (patterns.length >= 8) break
-        }
-
-        if (patterns.length > 0) {
-          description += `\n\nAllowed patterns: ${patterns.join(", ")}`
-        }
-      }
+    // Configure schema: use enum if ≤32 agents, otherwise string to avoid bloat
+    const names = allowed.map((a) => a.name)
+    if (names.length <= MAX_AGENT_ENUM) {
+      agentSchema = z.enum(names as [string, ...string[]]).describe(AGENT_DESC)
+    } else {
+      agentSchema = z.string().describe(`${AGENT_DESC}. See <available_subagents> for available types.`)
     }
   }
 
@@ -87,7 +95,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         )
         .describe("Agents to spawn with their task prompts"),
     }),
-    async execute(params, ctx) {
+    async execute(params: { agents: Array<{ agent: string; prompt: string }> }, ctx) {
       const spawned: Array<{ session_id: string; agent: string }> = []
 
       const caller = await Agent.get(ctx.agent).catch(() => undefined)
