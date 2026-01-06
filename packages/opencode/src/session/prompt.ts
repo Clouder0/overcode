@@ -180,6 +180,9 @@ export namespace SessionPrompt {
   }
 
   async function updateWaitProgress(sessionID: string, policy: WaitPolicy.Policy) {
+    const current = WaitPolicy.get(sessionID)
+    if (!current || current.callID !== policy.callID) return
+
     const pending = SessionMessage.peekPending(sessionID)
     const pendingFromSources = new Set(pending.filter((m) => policy.sources.includes(m.from)).map((m) => m.from))
 
@@ -207,12 +210,64 @@ export namespace SessionPrompt {
 
     if (tool.state.status === "pending") return
 
+    const still = WaitPolicy.get(sessionID)
+    if (!still || still.callID !== policy.callID) return
+
     await Session.updatePart({
       ...tool,
       state: {
         ...tool.state,
         metadata: meta,
       },
+    })
+  }
+
+  async function interruptWait(sessionID: string, policy: WaitPolicy.Policy, by: "prompt" | "abort") {
+    const parts = await MessageV2.parts(policy.messageID)
+    const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === policy.callID)
+    if (!tool) return
+    if (tool.state.status !== "completed") return
+
+    const interruptedAt = Date.now()
+
+    const prev = tool.state.metadata as any
+    const respondedSources = Array.isArray(prev?.respondedSources) ? prev.respondedSources : []
+
+    const meta = {
+      ok: true,
+      status: "interrupted",
+      sources: policy.sources,
+      respondedSources,
+      timedOutSources: [],
+      timeout: policy.timeout,
+      mode: policy.mode,
+      allReceived: false,
+      createdAt: policy.time.created,
+      deadline: policy.time.deadline,
+      interruptedAt,
+      interruptedBy: by,
+    }
+
+    await Session.updatePart({
+      ...tool,
+      state: {
+        ...tool.state,
+        title: "Wait interrupted",
+        output: "",
+        metadata: meta,
+      },
+    })
+  }
+
+  function interruptWaitInDirectory(
+    sessionID: string,
+    policy: WaitPolicy.Policy,
+    directory: string,
+    by: "prompt" | "abort",
+  ) {
+    return Instance.provide({
+      directory,
+      fn: () => interruptWait(sessionID, policy, by),
     })
   }
 
@@ -292,11 +347,17 @@ export namespace SessionPrompt {
 
   // Allow WaitPolicy timers (timeout/debounce) to wake sessions.
   WaitPolicy.setWakeFn((sessionID) => {
-    // Don't start a concurrent loop; the active loop will observe the timeout/debounce itself.
-    if (state()[sessionID]) return
-
     const status = SessionStatus.get(sessionID)
+
+    // Retry state uses its own scheduler.
     if (status.type === "retry") return
+
+    // If a loop is active, schedule a wake once it unwinds.
+    // This avoids a one-shot timeout wake being dropped.
+    if (state()[sessionID]) {
+      wakeAfter().add(sessionID)
+      return
+    }
 
     wake(sessionID)
   })
@@ -522,6 +583,12 @@ export namespace SessionPrompt {
 
     // Human input cancels waiting.
     if (WaitPolicy.isWaiting(input.sessionID)) {
+      const wait = WaitPolicy.get(input.sessionID)
+      if (wait) {
+        await interruptWaitInDirectory(input.sessionID, wait, Instance.directory, "prompt").catch((error) => {
+          log.error("failed to mark wait interrupted", { sessionID: input.sessionID, error: error?.message })
+        })
+      }
       WaitPolicy.clear(input.sessionID)
       SessionStatus.set(input.sessionID, { type: "idle" })
     }
@@ -644,7 +711,14 @@ export namespace SessionPrompt {
     // Still allow a forced cancel to clear wait state.
     if (!match) {
       if (force) {
-        const wasWaiting = WaitPolicy.isWaiting(sessionID)
+        const wait = WaitPolicy.get(sessionID)
+        if (wait) {
+          interruptWaitInDirectory(sessionID, wait, Instance.directory, "abort").catch((error) => {
+            log.error("failed to mark wait interrupted", { sessionID, error: error?.message })
+          })
+        }
+
+        const wasWaiting = wait !== undefined
         WaitPolicy.clear(sessionID)
         SessionStatus.set(sessionID, { type: "idle" })
         wakeAfter().delete(sessionID)
@@ -665,6 +739,13 @@ export namespace SessionPrompt {
     // Forced cancel aborts the active loop but keeps its lock in place.
     // This avoids starting a concurrent loop while the aborted one is still unwinding.
     if (force) {
+      const wait = WaitPolicy.get(sessionID)
+      if (wait) {
+        interruptWaitInDirectory(sessionID, wait, Instance.directory, "abort").catch((error) => {
+          log.error("failed to mark wait interrupted", { sessionID, error: error?.message })
+        })
+      }
+
       if (SessionMessage.hasPending(sessionID)) {
         wakeAfter().add(sessionID)
       }
@@ -684,7 +765,9 @@ export namespace SessionPrompt {
     if (!wakeAfter().has(sessionID)) return
     wakeAfter().delete(sessionID)
 
-    if (!SessionMessage.hasPending(sessionID)) return
+    const hasPending = SessionMessage.hasPending(sessionID)
+    const hasWait = WaitPolicy.isWaiting(sessionID)
+    if (!hasPending && !hasWait) return
 
     if (status.type === "waiting") {
       const policy = WaitPolicy.get(sessionID)

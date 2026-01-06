@@ -224,9 +224,25 @@ const originalCancel = sessionPrompt.cancel
 const originalSetExtraTools = sessionPrompt.setExtraTools
 const originalClearExtraTools = sessionPrompt.clearExtraTools
 
+const originalLoop = sessionPrompt.loop
+
 // Avoid accidental LLM/network usage in tests. JobNotification.init also tries
 // to auto-trigger SessionPrompt.loop; for tests we prefer notifications to remain queued.
-sessionPrompt.loop = async () => {
+//
+// Some unit tests exercise SessionPrompt.loop behavior. Allow them to opt-in
+// by setting __OPENCODE_TEST_ALLOW_LOOP__.
+const g = globalThis as any
+sessionPrompt.loop = async (...args: any[]) => {
+  const allow = g.__OPENCODE_TEST_ALLOW_LOOP__
+  if (allow === true) {
+    return originalLoop(...args)
+  }
+
+  const sessionID = args[0]
+  if (allow && typeof allow.has === "function" && typeof sessionID === "string" && allow.has(sessionID)) {
+    return originalLoop(...args)
+  }
+
   throw new Error("SessionPrompt.loop disabled in tests")
 }
 

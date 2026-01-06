@@ -5,7 +5,7 @@ import { SessionStatus } from "@/session/status"
 import { WaitPolicy } from "@/session/wait-policy"
 import { Tool } from "./tool"
 
-type WaitMessageStatus = "blocked" | "waiting" | "resolved" | "timedOut"
+type WaitMessageStatus = "blocked" | "waiting" | "resolved" | "timedOut" | "interrupted"
 
 type WaitMessageMetadata = {
   ok: boolean
@@ -18,6 +18,8 @@ type WaitMessageMetadata = {
   allReceived: boolean
   createdAt?: number
   deadline?: number
+  interruptedAt?: number
+  interruptedBy?: "prompt" | "abort"
   error?: string
 }
 

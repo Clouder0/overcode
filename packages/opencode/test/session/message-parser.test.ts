@@ -11,7 +11,7 @@ Hello
 
 test("formatInbox for timeout message", () => {
   const result = MessageParser.formatInbox([{ from: "ses_b", text: "Timeout", messageType: "timeout" }])
-  expect(result).toBe(`Sender Agent with session id ses_b timed out:
+  expect(result).toBe(`Sender Agent with session id ses_b did not respond before your timeout:
 <content>
 Timeout
 </content>`)
@@ -23,7 +23,7 @@ test("formatInbox for multiple messages", () => {
     { from: "ses_b", text: "World", messageType: "timeout" },
   ])
   expect(result).toContain("Sender Agent with session id ses_a sent a message:")
-  expect(result).toContain("Sender Agent with session id ses_b timed out:")
+  expect(result).toContain("Sender Agent with session id ses_b did not respond before your timeout:")
 })
 
 test("formatTimeoutMessage", () => {

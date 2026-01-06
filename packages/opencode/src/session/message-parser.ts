@@ -18,7 +18,7 @@ export namespace MessageParser {
     const parts: string[] = []
 
     for (const msg of messages) {
-      const label = msg.messageType === "timeout" ? "timed out" : "sent a message"
+      const label = msg.messageType === "timeout" ? "did not respond before your timeout" : "sent a message"
       parts.push(`Sender Agent with session id ${msg.from} ${label}:`)
       parts.push("<content>")
       parts.push(msg.text)
@@ -43,7 +43,7 @@ export namespace MessageParser {
       if (input.snapshot.waiting.deadline !== undefined) {
         lines.push(`Wait deadline: ${input.snapshot.waiting.deadline}`)
       }
-      lines.push("Suggested action: wait longer (non-source pings won't wake a waiting session)")
+      lines.push("Suggested action: wait again")
       return lines.join("\n")
     }
 
@@ -51,7 +51,7 @@ export namespace MessageParser {
       lines.push(
         `Retry: attempt=${input.snapshot.retry.attempt} next=${input.snapshot.retry.next} reason=${input.snapshot.retry.message}`,
       )
-      lines.push("Suggested action: wait longer")
+      lines.push("Suggested action: wait again")
       return lines.join("\n")
     }
 
@@ -61,11 +61,11 @@ export namespace MessageParser {
     }
 
     if (input.snapshot.run === "working") {
-      lines.push("Suggested action: wait longer")
+      lines.push("Suggested action: wait again")
       return lines.join("\n")
     }
 
-    lines.push(`Suggested action: ping ${input.snapshot.source} or wait longer`)
+    lines.push("Suggested action: wait again")
     return lines.join("\n")
   }
 }

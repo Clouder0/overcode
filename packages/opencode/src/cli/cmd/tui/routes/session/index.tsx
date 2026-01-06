@@ -2362,8 +2362,19 @@ function WaitAgentMessage(props: ToolProps<any>) {
   const { theme } = useTheme()
   const sync = useSync()
 
-  const meta = createMemo(() => props.metadata as any)
-  const input = createMemo(() => props.input as any)
+  const state = createMemo(() => props.part.state as any)
+
+  const meta = createMemo(() => {
+    const s = state()
+    if (!s || s.status === "pending") return undefined
+    return s.metadata as any
+  })
+
+  const input = createMemo(() => {
+    const s = state()
+    if (!s || s.status === "pending") return undefined
+    return s.input as any
+  })
 
   const status = createMemo(() => (meta()?.status as string | undefined) ?? "waiting")
   const mode = createMemo(() => (meta()?.mode as ("all" | "any") | undefined) ?? input()?.mode)
@@ -2380,10 +2391,35 @@ function WaitAgentMessage(props: ToolProps<any>) {
 
   const createdAt = createMemo(() => meta()?.createdAt as number | undefined)
   const deadline = createMemo(() => meta()?.deadline as number | undefined)
+  const interruptedAt = createMemo(() => meta()?.interruptedAt as number | undefined)
+  const interruptedBy = createMemo(() => meta()?.interruptedBy as "prompt" | "abort" | undefined)
+
+  const interruptedLabel = createMemo(() => {
+    const by = interruptedBy()
+    if (by === "prompt") return "new prompt"
+    if (by === "abort") return "abort"
+    return undefined
+  })
+
+  const interruptedElapsed = createMemo(() => {
+    const start = createdAt()
+    if (start === undefined) return undefined
+    const at = interruptedAt()
+    if (at === undefined) return undefined
+    return Math.max(0, at - start)
+  })
+
+  const interruptedLeft = createMemo(() => {
+    const at = interruptedAt()
+    if (at === undefined) return undefined
+    const end = deadline()
+    if (end === undefined) return undefined
+    return Math.max(0, end - at)
+  })
 
   const [now, setNow] = createSignal(Date.now())
   createEffect(() => {
-    if (status() !== "waiting") return
+    if (effectiveStatus() !== "waiting") return
     const timer = setInterval(() => setNow(Date.now()), 100)
     onCleanup(() => clearInterval(timer))
   })
@@ -2398,6 +2434,18 @@ function WaitAgentMessage(props: ToolProps<any>) {
     const end = deadline()
     if (!end) return undefined
     return Math.max(0, end - now())
+  })
+
+  const effectiveStatus = createMemo(() => {
+    const s = status()
+    if (s !== "waiting") return s
+
+    const end = deadline()
+    if (end !== undefined && now() >= end) {
+      return "timedOut"
+    }
+
+    return s
   })
 
   const fmt = (ms: number | undefined) => {
@@ -2428,65 +2476,89 @@ function WaitAgentMessage(props: ToolProps<any>) {
   })
 
   const statusColor = createMemo(() => {
-    if (status() === "waiting") return theme.warning
-    if (status() === "resolved") return theme.success
+    if (effectiveStatus() === "waiting") return theme.warning
+    if (effectiveStatus() === "resolved") return theme.success
+    if (effectiveStatus() === "interrupted") return theme.warning
     return theme.error
   })
 
-  if (status() === "blocked") {
-    return (
-      <box marginTop={1} paddingLeft={6}>
-        <text fg={statusColor()}>⛔ wait_agent_message blocked</text>
-      </box>
-    )
-  }
-
-  if (status() === "resolved" && mode() === "all") {
-    return null
-  }
-
-  if (status() === "resolved" && mode() === "any") {
-    return (
-      <box marginTop={1} paddingLeft={6}>
-        <text fg={statusColor()}>
-          ✓ {respondedNames().join(", ")}
-          {failedSources().length > 0 && <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>}
-        </text>
-      </box>
-    )
-  }
-
-  if (status() === "timedOut") {
-    const timedOutNames = failedSources().length > 0 ? failedSources() : sourceNames()
-    return (
-      <box marginTop={1} paddingLeft={6}>
-        <text fg={statusColor()}>
-          ⏱ {timedOutNames.join(", ")} timed out
-          {respondedNames().length > 0 && <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>}
-        </text>
-      </box>
-    )
-  }
+  const timedOutNames = createMemo(() => {
+    const failed = failedSources()
+    if (failed.length > 0) return failed
+    return sourceNames()
+  })
 
   return (
-    <box marginTop={1} paddingLeft={6}>
-      <text fg={statusColor()}>
-        ⏳{" "}
-        <Show
-          when={respondedNames().length > 0}
-          fallback={<span style={{ fg: theme.textMuted }}>{sourceNames().join(", ")}</span>}
-        >
-          <span style={{ fg: theme.success }}>✓ {respondedNames().join(", ")}</span>
-          {failedSources().length > 0 && <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>}
-        </Show>
-        <span style={{ fg: theme.textMuted }}>
-          {" "}
-          ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
-          {elapsed() !== undefined && <span> · {fmt(elapsed())} elapsed</span>}
-          {remaining() !== undefined && <span> · {fmt(remaining())} left</span>}
-        </span>
-      </text>
-    </box>
+    <Switch>
+      <Match when={effectiveStatus() === "blocked"}>
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>⛔ wait_agent_message blocked</text>
+        </box>
+      </Match>
+      <Match when={effectiveStatus() === "resolved" && mode() === "all"}>{null}</Match>
+      <Match when={effectiveStatus() === "resolved" && mode() === "any"}>
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>
+            ✓ {respondedNames().join(", ")}
+            {failedSources().length > 0 && (
+              <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
+            )}
+          </text>
+        </box>
+      </Match>
+      <Match when={effectiveStatus() === "interrupted"}>
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>
+            ⏹ wait interrupted
+            {interruptedLabel() && <span style={{ fg: theme.textMuted }}> ({interruptedLabel()})</span>}
+            {respondedNames().length > 0 && (
+              <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>
+            )}
+            {failedSources().length > 0 && (
+              <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
+            )}
+            <span style={{ fg: theme.textMuted }}>
+              {" "}
+              ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
+              {interruptedElapsed() !== undefined && <span> · {fmt(interruptedElapsed())} elapsed</span>}
+              {interruptedLeft() !== undefined && <span> · {fmt(interruptedLeft())} left</span>}
+            </span>
+          </text>
+        </box>
+      </Match>
+      <Match when={effectiveStatus() === "timedOut"}>
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>
+            ⏱ {timedOutNames().join(", ")} timed out
+            {respondedNames().length > 0 && (
+              <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>
+            )}
+          </text>
+        </box>
+      </Match>
+      <Match when={true}>
+        <box marginTop={1} paddingLeft={6}>
+          <text fg={statusColor()}>
+            ⏳{" "}
+            <Show
+              when={respondedNames().length > 0}
+              fallback={<span style={{ fg: theme.textMuted }}>{sourceNames().join(", ")}</span>}
+            >
+              <span style={{ fg: theme.success }}>✓ {respondedNames().join(", ")}</span>
+              {failedSources().length > 0 && (
+                <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
+              )}
+            </Show>
+            <span style={{ fg: theme.textMuted }}>
+              {" "}
+              ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
+              {elapsed() !== undefined && <span> · {fmt(elapsed())} elapsed</span>}
+              {remaining() !== undefined && <span> · {fmt(remaining())} left</span>}
+            </span>
+          </text>
+        </box>
+      </Match>
+    </Switch>
   )
 }
 

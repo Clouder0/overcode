@@ -34,6 +34,7 @@ export namespace SystemPrompt {
 
   export async function environment() {
     const project = Instance.project
+    const includeTree = process.env.OPENCODE_PROMPT_INCLUDE_TREE === "1"
     return [
       [
         `Here is some useful information about the environment you are running in:`,
@@ -46,7 +47,7 @@ export namespace SystemPrompt {
         `<files>`,
         `  (File tree snapshot; may be outdated. Use tools to verify current files.)`,
         `  ${
-          project.vcs === "git" && false
+          project.vcs === "git" && includeTree
             ? await Ripgrep.tree({
                 cwd: Instance.directory,
                 limit: 200,
@@ -200,12 +201,13 @@ Messages from agents not in your sources list are queued and will not wake you.
 
 ### Timeouts Are Not Failures
 
-If you see: "Agent session ses_... timed out: Timeout after Nms waiting for response"
+If you see a timeout message (it includes "Timeout after Nms waiting for response")
 that means YOUR wait deadline expired before a message arrived. It does NOT prove the other agent failed or stopped.
 
-After a timeout, choose an action:
-- Ping for status: send_agent_message(to=<copy the ses_... from the timeout line>, text="Status? Please send progress/results so far.")
-- Wait again with a longer timeout (or mode: "any" if you just need any response).
+After a timeout, choose an action based on the other agent's status:
+- If the other agent appears to still be working, retrying, or waiting, wait again with a longer timeout.
+- If the other agent appears idle, ping for status: send_agent_message(to=<copy the ses_... from the timeout line>, text="Status? Please send progress/results so far.")
+- If you're unsure, wait again first.
 - Conclude failure only with evidence (error message, explicit cancellation, repeated no-response).
 
 ### Patterns
