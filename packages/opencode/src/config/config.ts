@@ -253,14 +253,20 @@ export namespace Config {
         agentName = pathParts.slice(0, -1).join("/") + "/" + pathParts[pathParts.length - 1]
       }
 
+      if ("name" in md.data) {
+        throw new InvalidError({
+          path: item,
+          message: `Agent frontmatter must not set "name"; agent id is derived from file path.`,
+        })
+      }
+
       const config = {
-        name: agentName,
         ...md.data,
         prompt: md.content.trim(),
       }
       const parsed = Agent.safeParse(config)
       if (parsed.success) {
-        result[config.name] = parsed.data
+        result[agentName] = parsed.data
         continue
       }
       throw new InvalidError({ path: item, issues: parsed.error.issues }, { cause: parsed.error })
@@ -280,14 +286,21 @@ export namespace Config {
       const md = await ConfigMarkdown.parse(item)
       if (!md.data) continue
 
+      if ("name" in md.data) {
+        throw new InvalidError({
+          path: item,
+          message: `Mode frontmatter must not set "name"; mode id is derived from file path.`,
+        })
+      }
+
+      const name = path.basename(item, ".md")
       const config = {
-        name: path.basename(item, ".md"),
         ...md.data,
         prompt: md.content.trim(),
       }
       const parsed = Agent.safeParse(config)
       if (parsed.success) {
-        result[config.name] = {
+        result[name] = {
           ...parsed.data,
           mode: "primary" as const,
         }
@@ -402,6 +415,8 @@ export namespace Config {
       grep: PermissionRule.optional(),
       list: PermissionRule.optional(),
       bash: PermissionRule.optional(),
+      subagent_spawn: PermissionRule.optional(),
+      subagent_spawn_agent: PermissionRule.optional(),
       task: PermissionRule.optional(),
       external_directory: PermissionRule.optional(),
       todowrite: PermissionAction.optional(),

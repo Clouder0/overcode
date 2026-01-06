@@ -263,7 +263,7 @@ test("agent mode can be overridden", async () => {
   })
 })
 
-test("agent name can be overridden", async () => {
+test("agent name override is rejected", async () => {
   await using tmp = await tmpdir({
     config: {
       agent: {
@@ -274,8 +274,7 @@ test("agent name can be overridden", async () => {
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
-      const build = await Agent.get("build")
-      expect(build?.name).toBe("Builder")
+      await expect(Agent.get("build")).rejects.toThrow(/must not set/i)
     },
   })
 })
