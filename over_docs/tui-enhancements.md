@@ -78,6 +78,22 @@ Large pasted content can be collapsed to save screen space:
 
 ---
 
+## Thinking Omission Markers
+
+If a run is interrupted mid-stream, you may see thinking blocks labeled:
+
+- `_Thinking (omitted when you continued):_`
+
+This means the thinking text is preserved in the local transcript for inspection, but was not included in the next model prompt.
+
+### Why
+
+Some providers require every message to be non-empty. When switching providers, unsupported thinking/reasoning parts can be dropped by adapters, which would turn a thinking-only assistant message into an empty message and cause the request to fail.
+
+For more detail on what gets preserved vs omitted (and how to recover it), see [Session Recovery](session-recovery.md).
+
+---
+
 ## Better Agent Message Styling
 
 Messages from subagents are styled distinctly:

@@ -42,6 +42,8 @@ The following topics are documented in detail:
 
 - **[TUI Enhancements](tui-enhancements.md)** — Visual improvements for navigating nested sessions, monitoring progress, and managing complex workflows.
 
+- **[Session Recovery](session-recovery.md)** — How interrupted runs are recovered (including orphan thinking omission markers).
+
 ---
 
 ## How to Use This Documentation

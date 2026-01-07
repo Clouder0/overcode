@@ -100,7 +100,8 @@ Additional optimizations:
 
 ### 4. Error Handling & Recovery
 
-- **Orphan reasoning recovery** — GPT/Codex models sometimes emit reasoning without final output; we detect and recover gracefully with context preservation
+- **Orphan thinking handling** — Interrupted runs can leave an assistant turn with only thinking and no final output. We keep that thinking in the local transcript, but omit it from the next model prompt (to avoid providers rejecting empty messages) and clearly mark it in the UI/transcript export.
+  - **Why:** some providers (eg, Claude) require every message to be non-empty; unsupported thinking/reasoning parts may be dropped by adapters, turning a thinking-only assistant turn into an empty message and failing the request.
 - **Hardened crash recovery** — Better handling of interrupted sessions and missing tool results
 - **Trash recovery fixes** — Improved resilience for corrupted session state
 

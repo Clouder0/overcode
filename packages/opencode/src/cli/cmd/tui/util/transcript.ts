@@ -73,10 +73,20 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
   }
 
   if (part.type === "reasoning") {
-    if (options.thinking) {
-      return `_Thinking:_\n\n${part.text}\n\n`
-    }
-    return ""
+    if (!options.thinking) return ""
+
+    const meta = part.metadata
+    const opencode = meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
+    const reason = opencode && typeof opencode === "object" ? (opencode as { reason?: unknown }).reason : undefined
+
+    const label =
+      part.ignored !== true
+        ? "_Thinking:_"
+        : reason === "interrupted"
+          ? "_Thinking (omitted when you continued):_"
+          : "_Thinking (omitted from model context):_"
+
+    return `${label}\n\n${part.text}\n\n`
   }
 
   if (part.type === "tool") {

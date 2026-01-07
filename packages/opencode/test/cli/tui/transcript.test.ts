@@ -88,6 +88,25 @@ describe("transcript", () => {
       expect(result).toBe("_Thinking:_\n\nLet me think...\n\n")
     })
 
+    test("formats omitted reasoning with a marker", () => {
+      const part: Part = {
+        id: "part_1",
+        sessionID: "ses_123",
+        messageID: "msg_123",
+        type: "reasoning",
+        text: "Let me think...",
+        ignored: true,
+        metadata: {
+          opencode: {
+            reason: "interrupted",
+          },
+        },
+        time: { start: 1000 },
+      }
+      const result = formatPart(part, options)
+      expect(result).toBe("_Thinking (omitted when you continued):_\n\nLet me think...\n\n")
+    })
+
     test("skips reasoning when thinking disabled", () => {
       const part: Part = {
         id: "part_1",

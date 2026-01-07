@@ -1672,11 +1672,39 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
   const { theme, subtleSyntax } = useTheme()
   const ctx = use()
+
   const content = createMemo(() => {
     // Filter out redacted reasoning chunks from OpenRouter
     // OpenRouter sends encrypted reasoning data that appears as [REDACTED]
     return props.part.text.replace("[REDACTED]", "").trim()
   })
+
+  const opencode = createMemo(() => {
+    const meta = props.part.metadata
+    if (!meta || typeof meta !== "object") return undefined
+    const data = (meta as { opencode?: unknown }).opencode
+    if (!data || typeof data !== "object") return undefined
+    return data as Record<string, unknown>
+  })
+
+  const omitted = createMemo(() => props.part.ignored === true)
+
+  const reason = createMemo(() => {
+    const data = opencode()
+    if (!data) return undefined
+    const value = data.reason
+    if (typeof value !== "string") return undefined
+    return value
+  })
+
+  const label = createMemo(() => {
+    if (!omitted()) return "_Thinking:_"
+    if (reason() === "interrupted") return "_Thinking (omitted when you continued):_"
+    return "_Thinking (omitted from model context):_"
+  })
+
+  const border = createMemo(() => (omitted() ? theme.warning : theme.backgroundElement))
+
   return (
     <Show when={content() && ctx.showThinking()}>
       <box
@@ -1686,14 +1714,14 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
         flexDirection="column"
         border={["left"]}
         customBorderChars={SplitBorder.customBorderChars}
-        borderColor={theme.backgroundElement}
+        borderColor={border()}
       >
         <code
           filetype="markdown"
           drawUnstyledText={false}
           streaming={true}
           syntaxStyle={subtleSyntax()}
-          content={"_Thinking:_ " + content()}
+          content={`${label()}\n\n${content()}`}
           conceal={ctx.conceal()}
           fg={theme.textMuted}
         />

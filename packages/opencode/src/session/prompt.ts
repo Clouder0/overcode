@@ -794,6 +794,70 @@ export namespace SessionPrompt {
     wake(sessionID)
   }
 
+  export async function omitOrphanThinking(input: {
+    sessionID: string
+    assistant: MessageV2.WithParts
+    continuedAtMessageID: string
+  }) {
+    if (input.assistant.info.role !== "assistant") return { omitted: false, persisted: true }
+    const assistant = input.assistant.info as MessageV2.Assistant
+    if (assistant.finish) return { omitted: false, persisted: true }
+
+    const parts = input.assistant.parts
+    const hasNonThinking = parts.some((part) => part.type !== "reasoning" && part.type !== "step-start")
+    if (hasNonThinking) return { omitted: false, persisted: true }
+
+    const reasoning = parts.filter(
+      (part): part is MessageV2.ReasoningPart => part.type === "reasoning" && !part.ignored,
+    )
+    if (reasoning.length === 0) return { omitted: false, persisted: true }
+
+    const now = Date.now()
+
+    const messageUpdate = (() => {
+      if (assistant.time.completed) return undefined
+      assistant.time.completed = now
+      return Session.updateMessage(assistant)
+    })()
+
+    const updates = reasoning.map((part) => {
+      const base =
+        part.metadata && typeof part.metadata === "object"
+          ? (part.metadata as Record<string, unknown>)
+          : ({} as Record<string, unknown>)
+      const existing =
+        base.opencode && typeof base.opencode === "object"
+          ? (base.opencode as Record<string, unknown>)
+          : ({} as Record<string, unknown>)
+
+      part.ignored = true
+      part.metadata = {
+        ...base,
+        opencode: {
+          ...existing,
+          status: "omitted",
+          reason: "interrupted",
+          continuedAtMessageID: input.continuedAtMessageID,
+          continuedAt: now,
+        },
+      }
+      return Session.updatePart(part)
+    })
+
+    const settled = await Promise.allSettled([...updates, ...(messageUpdate ? [messageUpdate] : [])])
+    const persisted = settled.every((s) => s.status === "fulfilled")
+
+    if (!persisted) {
+      log.error("failed to persist orphan reasoning omission metadata", {
+        sessionID: input.sessionID,
+        assistantMessageID: input.assistant.info.id,
+        userMessageID: input.continuedAtMessageID,
+      })
+    }
+
+    return { omitted: true, persisted }
+  }
+
   async function runLoop(sessionID: string): Promise<MessageV2.WithParts> {
     const abort = start(sessionID)
     if (!abort) {
@@ -1049,6 +1113,21 @@ export namespace SessionPrompt {
       }
 
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+
+      // If the previous run was interrupted mid-thinking, we can end up with an assistant message that contains only
+      // reasoning parts and no final output/tool call. Some providers (eg, Claude) reject such empty messages after
+      // unsupported parts are dropped. Keep the thinking in history, but omit it from the model context and mark it.
+      if (lastAssistant && lastUser.id > lastAssistant.id && !lastAssistant.finish) {
+        const orphan = msgs.find((m) => m.info.role === "assistant" && m.info.id === lastAssistant.id)
+        if (orphan) {
+          await omitOrphanThinking({
+            sessionID,
+            assistant: orphan,
+            continuedAtMessageID: lastUser.id,
+          })
+        }
+      }
+
       if (
         lastAssistant?.finish &&
         lastUser.id < lastAssistant.id &&
