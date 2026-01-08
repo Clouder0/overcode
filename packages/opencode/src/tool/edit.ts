@@ -73,7 +73,14 @@ export const EditTool = Tool.define("edit", {
         await Bus.publish(File.Event.Edited, {
           file: filePath,
         })
-        FileTime.read(ctx.sessionID, filePath)
+
+        const fileAfter = Bun.file(filePath)
+        const statsAfter = await fileAfter.stat()
+        contentNew = await fileAfter.text()
+        diff = trimDiff(
+          createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
+        )
+        FileTime.read(ctx.sessionID, filePath, FileTime.stamp(statsAfter.mtime, contentNew))
         return
       }
 
@@ -106,7 +113,8 @@ export const EditTool = Tool.define("edit", {
       diff = trimDiff(
         createTwoFilesPatch(filePath, filePath, normalizeLineEndings(contentOld), normalizeLineEndings(contentNew)),
       )
-      FileTime.read(ctx.sessionID, filePath)
+      const statsAfter = await file.stat()
+      FileTime.read(ctx.sessionID, filePath, FileTime.stamp(statsAfter.mtime, contentNew))
     })
 
     const filediff: Snapshot.FileDiff = {

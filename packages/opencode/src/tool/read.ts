@@ -96,7 +96,8 @@ export const ReadTool = Tool.define("read", {
 
     const limit = params.limit ?? DEFAULT_READ_LIMIT
     const offset = params.offset || 0
-    const lines = await file.text().then((text) => text.split("\n"))
+    const text = await file.text()
+    const lines = text.split("\n")
     const raw = lines.slice(offset, offset + limit).map((line) => {
       return line.length > MAX_LINE_LENGTH ? line.substring(0, MAX_LINE_LENGTH) + "..." : line
     })
@@ -121,7 +122,8 @@ export const ReadTool = Tool.define("read", {
 
     // just warms the lsp client
     LSP.touchFile(filepath, false)
-    FileTime.read(ctx.sessionID, filepath)
+    const stats = await file.stat()
+    FileTime.read(ctx.sessionID, filepath, FileTime.stamp(stats.mtime, text))
 
     return {
       title,

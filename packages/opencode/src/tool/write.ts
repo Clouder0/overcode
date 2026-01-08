@@ -29,27 +29,37 @@ export const WriteTool = Tool.define("write", {
     }
     */
 
-    const file = Bun.file(filepath)
-    const exists = await file.exists()
-    const contentOld = exists ? await file.text() : ""
-    if (exists) await FileTime.assert(ctx.sessionID, filepath)
+    const result = await FileTime.withLock(filepath, async () => {
+      const file = Bun.file(filepath)
+      const exists = await file.exists()
+      const contentOld = exists ? await file.text() : ""
+      if (exists) await FileTime.assert(ctx.sessionID, filepath)
 
-    const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
-    await ctx.ask({
-      permission: "edit",
-      patterns: [path.relative(Instance.worktree, filepath)],
-      always: ["*"],
-      metadata: {
-        filepath,
-        diff,
-      },
-    })
+      const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
+      await ctx.ask({
+        permission: "edit",
+        patterns: [path.relative(Instance.worktree, filepath)],
+        always: ["*"],
+        metadata: {
+          filepath,
+          diff,
+        },
+      })
 
-    await Bun.write(filepath, params.content)
-    await Bus.publish(File.Event.Edited, {
-      file: filepath,
+      await Bun.write(filepath, params.content)
+      await Bus.publish(File.Event.Edited, {
+        file: filepath,
+      })
+
+      const fileAfter = Bun.file(filepath)
+      const statsAfter = await fileAfter.stat()
+      const contentAfter = await fileAfter.text()
+      FileTime.read(ctx.sessionID, filepath, FileTime.stamp(statsAfter.mtime, contentAfter))
+
+      return {
+        exists,
+      }
     })
-    FileTime.read(ctx.sessionID, filepath)
 
     let output = ""
     await LSP.touchFile(filepath, true)
@@ -76,7 +86,7 @@ export const WriteTool = Tool.define("write", {
       metadata: {
         diagnostics,
         filepath,
-        exists: exists,
+        exists: result.exists,
       },
       output,
     }
