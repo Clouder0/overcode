@@ -275,6 +275,16 @@ Every subagent knows its parent session ID. This creates a tree structure you ca
 
 Subagents have their own tool access, permission overrides, and conversation history. They cannot interfere with each other's state, but they can communicate through messaging.
 
+### Safe File Writes
+
+Overcode enforces a read-before-write flow for tools like `edit`, `write`, and `patch`. This prevents stale edits from silently overwriting changes made by other agents (or by you in another session).
+
+This matters most with parallel subagents (or batched tool calls): if two sessions touch the same file, a later write can be rejected when its view is out of date.
+
+- On Windows/WSL, filesystem `mtime` can drift; Overcode uses a file stamp (`mtime` + size + content fingerprint) to avoid false positives when content is unchanged
+- If you hit a "modified since it was last read" error, re-read the file and retry against the latest contents
+- For ongoing work, assign file ownership per agent (or serialize writes) to avoid collisions
+
 ### Persistent Sessions
 
 Subagents don't disappear after their initial task. They remain active and can be consulted indefinitely. Their accumulated context makes each subsequent consultation more valuable.

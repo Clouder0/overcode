@@ -1926,7 +1926,9 @@ export namespace SessionPrompt {
               }
 
               const file = Bun.file(filepath)
-              FileTime.read(input.sessionID, filepath)
+              const stats = await file.stat()
+              const bytes = await file.bytes()
+              FileTime.read(input.sessionID, filepath, FileTime.stamp(stats.mtime, bytes))
               return [
                 {
                   id: Identifier.ascending("part"),
@@ -1941,7 +1943,7 @@ export namespace SessionPrompt {
                   messageID: info.id,
                   sessionID: input.sessionID,
                   type: "file",
-                  url: `data:${part.mime};base64,` + Buffer.from(await file.bytes()).toString("base64"),
+                  url: `data:${part.mime};base64,` + Buffer.from(bytes).toString("base64"),
                   mime: part.mime,
                   filename: part.filename!,
                   source: part.source,
