@@ -4,19 +4,33 @@ import { Tool } from "./tool"
 import { Skill } from "../skill"
 import { SessionToolOverrides } from "../session/tool-overrides"
 import { ConfigMarkdown } from "../config/markdown"
+import { PermissionNext } from "../permission/next"
 
-export const SkillTool = Tool.define("skill", async () => {
+const parameters = z.object({
+  name: z.string().describe("The skill identifier from available_skills (e.g., 'code-review' or 'category/helper')"),
+})
+
+export const SkillTool = Tool.define("skill", async (ctx) => {
   const skills = await Skill.all()
 
+  // Filter skills by agent permissions if agent provided
+  const agent = ctx?.agent
+  const accessibleSkills = agent
+    ? skills.filter((skill) => {
+        const rule = PermissionNext.evaluate("skill", skill.name, agent.permission)
+        return rule.action !== "deny"
+      })
+    : skills
+
   const description =
-    skills.length === 0
+    accessibleSkills.length === 0
       ? "Load a skill to get detailed instructions for a specific task. No skills are currently available."
       : [
           "Load a skill to get detailed instructions for a specific task.",
           "Skills provide specialized knowledge and step-by-step guidance.",
           "Use this when a task matches an available skill's description.",
           "<available_skills>",
-          ...skills.flatMap((skill) => [
+          ...accessibleSkills.flatMap((skill) => [
             `  <skill>`,
             `    <name>${skill.name}</name>`,
             `    <description>${skill.description}</description>`,
@@ -27,12 +41,8 @@ export const SkillTool = Tool.define("skill", async () => {
 
   return {
     description,
-    parameters: z.object({
-      name: z
-        .string()
-        .describe("The skill identifier from available_skills (e.g., 'code-review' or 'category/helper')"),
-    }),
-    async execute(params, ctx) {
+    parameters,
+    async execute(params: z.infer<typeof parameters>, ctx) {
       const skill = await Skill.get(params.name)
 
       if (!skill) {

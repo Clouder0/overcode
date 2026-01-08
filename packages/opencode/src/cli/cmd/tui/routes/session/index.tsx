@@ -73,6 +73,7 @@ import { Footer } from "./footer.tsx"
 import { usePromptRef } from "../../context/prompt"
 import { Filesystem } from "@/util/filesystem"
 import { PermissionPrompt } from "./permission"
+import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
 
@@ -125,6 +126,7 @@ export function Session() {
 
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
+  const questions = createMemo(() => sync.data.question[route.sessionID] ?? [])
 
   // Get task prompt for current session
   const currentTaskPrompt = createMemo((): string | undefined => {
@@ -1140,6 +1142,9 @@ export function Session() {
             <box flexShrink={0}>
               <Show when={permissions().length > 0}>
                 <PermissionPrompt request={permissions()[0]} />
+              </Show>
+              <Show when={questions().length > 0}>
+                <QuestionPrompt request={questions()[0]} />
               </Show>
               <Prompt
                 visible={permissions().length === 0}

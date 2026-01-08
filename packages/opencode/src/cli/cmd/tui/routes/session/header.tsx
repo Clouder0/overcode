@@ -34,7 +34,6 @@ export function Header() {
   const sync = useSync()
   const session = createMemo(() => sync.session.get(route.sessionID)!)
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
-  const shareEnabled = createMemo(() => sync.data.config.share !== "disabled")
 
   const cost = createMemo(() => {
     const total = pipe(
@@ -71,8 +70,6 @@ export function Header() {
     if (!current) return ""
     return current.title
   })
-
-  const showShare = createMemo(() => shareEnabled() && !session()?.share?.url)
 
   const tree = createMemo(() =>
     buildSessionTree({
@@ -128,11 +125,6 @@ export function Header() {
                 List <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_list")}</span>
               </text>
               <box flexGrow={1} flexShrink={1} />
-              <Show when={showShare()}>
-                <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
-                  /share{" "}
-                </text>
-              </Show>
               <ContextInfo context={context} cost={cost} />
             </box>
           </Match>
@@ -155,24 +147,6 @@ export function Header() {
               </box>
               <ContextInfo context={context} cost={cost} />
             </box>
-            <Show when={shareEnabled()}>
-              <box flexDirection="row" justifyContent="space-between" gap={1}>
-                <box flexGrow={1} flexShrink={1}>
-                  <Switch>
-                    <Match when={session().share?.url}>
-                      <text fg={theme.textMuted} wrapMode="word">
-                        {session().share!.url}
-                      </text>
-                    </Match>
-                    <Match when={true}>
-                      <text fg={theme.text} wrapMode="word">
-                        /share <span style={{ fg: theme.textMuted }}>copy link</span>
-                      </text>
-                    </Match>
-                  </Switch>
-                </box>
-              </box>
-            </Show>
           </Match>
         </Switch>
       </box>

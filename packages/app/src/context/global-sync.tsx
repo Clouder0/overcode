@@ -23,7 +23,7 @@ import { Binary } from "@opencode-ai/util/binary"
 import { retry } from "@opencode-ai/util/retry"
 import { useGlobalSDK } from "./global-sdk"
 import { ErrorPage, type InitError } from "../pages/error"
-import { batch, createContext, useContext, onMount, type ParentProps, Switch, Match } from "solid-js"
+import { batch, createContext, useContext, onCleanup, onMount, type ParentProps, Switch, Match } from "solid-js"
 import { showToast } from "@opencode-ai/ui/toast"
 import { getFilename } from "@opencode-ai/util/path"
 
@@ -213,7 +213,7 @@ function createGlobalSync() {
       .catch((e) => setGlobalStore("error", e))
   }
 
-  globalSDK.event.listen((e) => {
+  const unsub = globalSDK.event.listen((e) => {
     const directory = e.name
     const event = e.details
 
@@ -417,6 +417,7 @@ function createGlobalSync() {
       }
     }
   })
+  onCleanup(unsub)
 
   async function bootstrap() {
     const health = await globalSDK.client.global

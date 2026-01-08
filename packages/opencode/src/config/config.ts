@@ -61,7 +61,7 @@ export namespace Config {
       if (value.type === "wellknown") {
         process.env[value.key] = value.token
         const wellknown = (await fetch(`${key}/.well-known/opencode`).then((x) => x.json())) as any
-        result = mergeConfigConcatArrays(result, await load(JSON.stringify(wellknown.config ?? {}), process.cwd()))
+        result = mergeConfigConcatArrays(await load(JSON.stringify(wellknown.config ?? {}), process.cwd()), result)
       }
     }
 
@@ -407,29 +407,22 @@ export namespace Config {
   })
   export type PermissionRule = z.infer<typeof PermissionRule>
 
+  const PermissionEntry = z.tuple([z.string(), PermissionRule])
+
+  function permissionPreprocess(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return input
+    return Object.entries(input)
+  }
+
+  function permissionTransform(input: unknown): Record<string, PermissionRule> {
+    if (typeof input === "string") return { "*": input as PermissionAction }
+    if (Array.isArray(input)) return Object.fromEntries(input as Array<[string, PermissionRule]>)
+    return input as Record<string, PermissionRule>
+  }
+
   export const Permission = z
-    .object({
-      read: PermissionRule.optional(),
-      edit: PermissionRule.optional(),
-      glob: PermissionRule.optional(),
-      grep: PermissionRule.optional(),
-      list: PermissionRule.optional(),
-      bash: PermissionRule.optional(),
-      subagent_spawn: PermissionRule.optional(),
-      subagent_spawn_agent: PermissionRule.optional(),
-      task: PermissionRule.optional(),
-      external_directory: PermissionRule.optional(),
-      todowrite: PermissionAction.optional(),
-      todoread: PermissionAction.optional(),
-      webfetch: PermissionAction.optional(),
-      websearch: PermissionAction.optional(),
-      codesearch: PermissionAction.optional(),
-      lsp: PermissionRule.optional(),
-      doom_loop: PermissionAction.optional(),
-    })
-    .catchall(PermissionRule)
-    .or(PermissionAction)
-    .transform((x) => (typeof x === "string" ? { "*": x } : x))
+    .preprocess(permissionPreprocess, z.union([PermissionAction, z.array(PermissionEntry)]))
+    .transform(permissionTransform)
     .meta({
       ref: "PermissionConfig",
     })
@@ -1080,7 +1073,10 @@ export namespace Config {
     if (parsed.success) {
       if (!parsed.data.$schema) {
         parsed.data.$schema = "https://opencode.ai/config.json"
-        await Bun.write(configFilepath, JSON.stringify(parsed.data, null, 2))
+        const ext = path.extname(configFilepath)
+        if (ext === ".json" || ext === ".jsonc") {
+          await Bun.write(configFilepath, JSON.stringify(parsed.data, null, 2))
+        }
       }
       const data = parsed.data
       if (data.plugin) {

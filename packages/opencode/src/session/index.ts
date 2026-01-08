@@ -304,7 +304,54 @@ export namespace Session {
     },
   )
 
+  const index = Instance.state(() => {
+    const byID = new Map<string, Info>()
+    let loaded = false
+
+    return {
+      byID,
+      get loaded() {
+        return loaded
+      },
+      set loaded(value: boolean) {
+        loaded = value
+      },
+    }
+  })
+
+  async function loadIndex() {
+    const s = index()
+    if (s.loaded) return
+    s.loaded = true
+
+    const project = Instance.project
+    const keys = await Storage.list(["session", project.id]).catch(() => [])
+    for (const key of keys) {
+      const info = await Storage.read<Info>(key).catch(() => undefined)
+      if (!info?.id) continue
+      s.byID.set(info.id, info)
+    }
+
+    // Keep the cache up-to-date after initial load
+    Bus.subscribe(Event.Created, (evt) => {
+      s.byID.set(evt.properties.info.id, evt.properties.info)
+    })
+    Bus.subscribe(Event.Updated, (evt) => {
+      s.byID.set(evt.properties.info.id, evt.properties.info)
+    })
+    Bus.subscribe(Event.Deleted, (evt) => {
+      s.byID.delete(evt.properties.info.id)
+    })
+  }
+
+  export async function listCached() {
+    await loadIndex()
+    return Array.from(index().byID.values())
+  }
+
   export async function* list() {
+    // Keep existing streaming API for callers that truly want it.
+    // This still benefits from Storage.list() order but remains IO-backed.
     const project = Instance.project
     for (const item of await Storage.list(["session", project.id])) {
       yield Storage.read<Info>(item)

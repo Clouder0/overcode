@@ -1966,7 +1966,7 @@ export namespace SessionPrompt {
               type: "text",
               synthetic: true,
               text:
-                "Use the above message and context to generate a prompt and call the task tool with subagent: " +
+                "Use the above message and context to generate a prompt and call the subagent_spawn tool with subagent: " +
                 part.name,
             },
           ]
@@ -2385,7 +2385,7 @@ export namespace SessionPrompt {
               agent: agent.name,
               description: command.description ?? "",
               command: input.command,
-              // TODO: how can we make task tool accept a more complex input?
+              // TODO: how can we make subagent_spawn accept a more complex input?
               prompt: await resolvePromptParts(template).then((x) => x.find((y) => y.type === "text")?.text ?? ""),
             },
           ]

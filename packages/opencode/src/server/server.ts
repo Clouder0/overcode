@@ -29,6 +29,7 @@ import { Command } from "../command"
 import { ProviderAuth } from "../provider/auth"
 import { Global } from "../global"
 import { ProjectRoute } from "./project"
+import { QuestionRoute } from "./question"
 import { ToolRegistry } from "../tool/registry"
 import { zodToJsonSchema } from "zod-to-json-schema"
 import { SessionPrompt } from "../session/prompt"
@@ -180,7 +181,7 @@ export namespace Server {
         validator(
           "query",
           z.object({
-            directory: z.string().min(1),
+            directory: z.string().min(1).optional(),
           }),
         ),
         async (c) => {
@@ -196,8 +197,15 @@ export namespace Server {
               }),
             })
             async function handler(event: any) {
-              if (!event?.directory) return
-              if (event.directory !== requestedDirectory) return
+              const dir = event?.directory
+              if (dir === undefined) {
+                // Global (directory-less) events should always pass through
+                await stream.writeSSE({
+                  data: JSON.stringify({ directory: "global", payload: event?.payload }),
+                })
+                return
+              }
+              if (requestedDirectory && dir !== requestedDirectory && dir !== "global") return
               await stream.writeSSE({
                 data: JSON.stringify(event),
               })
@@ -282,6 +290,7 @@ export namespace Server {
       .use(validator("query", z.object({ directory: z.string().optional() })))
 
       .route("/project", ProjectRoute)
+      .route("/question", QuestionRoute)
 
       .get(
         "/pty",
@@ -733,7 +742,7 @@ export namespace Server {
           if (query.limit === 0) return c.json([])
           const term = query.search?.toLowerCase()
 
-          const sessions = await Array.fromAsync(Session.list())
+          const sessions = await Session.listCached().catch(() => [])
           const filtered = sessions.filter((session) => {
             if (query.start !== undefined && session.time.updated < query.start) return false
             if (term !== undefined && !session.title.toLowerCase().includes(term)) return false
