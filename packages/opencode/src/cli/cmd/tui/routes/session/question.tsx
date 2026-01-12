@@ -96,7 +96,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         setStore("editing", false)
         return
       }
-      if (evt.name === "return") {
+      if (evt.name === "return" && !evt.meta) {
         evt.preventDefault()
         const text = textarea?.plainText?.trim() ?? ""
         const prev = store.custom[store.tab]
@@ -162,7 +162,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
     }
 
     if (confirm()) {
-      if (evt.name === "return") {
+      if (evt.name === "return" && !evt.meta) {
         evt.preventDefault()
         submit()
       }
@@ -184,7 +184,7 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
         setStore("selected", (store.selected + 1) % total)
       }
 
-      if (evt.name === "return") {
+      if (evt.name === "return" && !evt.meta) {
         evt.preventDefault()
         if (other()) {
           if (!multi()) {
@@ -292,7 +292,9 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                 <Show when={store.editing}>
                   <box paddingLeft={3}>
                     <textarea
-                      ref={(val: TextareaRenderable) => (textarea = val)}
+                      ref={(val: TextareaRenderable) => {
+                        textarea = val
+                      }}
                       focused
                       initialValue={input()}
                       placeholder="Type your own answer"

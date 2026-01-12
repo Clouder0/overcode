@@ -1,0 +1,195 @@
+diff --git a/index-cr95zpf8.js b/index-cr95zpf8.js
+index 7352b927a..1fa224f41 100644
+--- a/index-cr95zpf8.js
++++ b/index-cr95zpf8.js
+@@ -8409,7 +8409,9 @@ class ExtmarksController {
+       }
+       const virtualExtmark = this.findVirtualExtmarkContaining(targetOffset);
+       if (virtualExtmark && currentOffset >= virtualExtmark.end) {
+-        this.editBuffer.setCursorByOffset(virtualExtmark.start - 1);
++        const space =
++          virtualExtmark.start > 0 && this.editBuffer.getTextRange(virtualExtmark.start - 1, virtualExtmark.start) === " ";
++        this.originalSetCursorByOffset(space ? virtualExtmark.start - 1 : virtualExtmark.start);
+         return;
+       }
+       this.originalMoveCursorLeft();
+@@ -8426,11 +8428,6 @@ class ExtmarksController {
+         return;
+       }
+       const targetOffset = currentOffset + 1;
+-      const textLength = this.editBuffer.getText().length;
+-      if (targetOffset > textLength) {
+-        this.originalMoveCursorRight();
+-        return;
+-      }
+       const virtualExtmark = this.findVirtualExtmarkContaining(targetOffset);
+       if (virtualExtmark && currentOffset <= virtualExtmark.start) {
+         this.editBuffer.setCursorByOffset(virtualExtmark.end);
+@@ -8456,7 +8453,7 @@ class ExtmarksController {
+         const distanceToStart = newOffset - virtualExtmark.start;
+         const distanceToEnd = virtualExtmark.end - newOffset;
+         if (distanceToStart < distanceToEnd) {
+-          this.editorView.setCursorByOffset(virtualExtmark.start - 1);
++          this.editorView.setCursorByOffset(virtualExtmark.start);
+         } else {
+           this.editorView.setCursorByOffset(virtualExtmark.end);
+         }
+@@ -8479,7 +8476,7 @@ class ExtmarksController {
+         const distanceToStart = newOffset - virtualExtmark.start;
+         const distanceToEnd = virtualExtmark.end - newOffset;
+         if (distanceToStart < distanceToEnd) {
+-          this.editorView.setCursorByOffset(virtualExtmark.start - 1);
++          this.editorView.setCursorByOffset(virtualExtmark.start);
+         } else {
+           this.editorView.setCursorByOffset(virtualExtmark.end);
+         }
+@@ -8506,7 +8503,8 @@ class ExtmarksController {
+       } else {
+         for (const extmark of this.extmarks.values()) {
+           if (extmark.virtual && currentOffset >= extmark.end && offset < extmark.end && offset >= extmark.start) {
+-            this.originalSetCursorByOffset(extmark.start - 1);
++            const space = extmark.start > 0 && this.editBuffer.getTextRange(extmark.start - 1, extmark.start) === " ";
++            this.originalSetCursorByOffset(space ? extmark.start - 1 : extmark.start);
+             return;
+           }
+         }
+@@ -8544,8 +8542,14 @@ class ExtmarksController {
+         this.updateHighlights();
+         return;
+       }
++      const beforeMaxOffset = this.getMaxOffset();
+       this.originalDeleteCharBackward();
+-      this.adjustExtmarksAfterDeletion(targetOffset, 1);
++      const afterMaxOffset = this.getMaxOffset();
++      const deletedLength = beforeMaxOffset - afterMaxOffset;
++      if (deletedLength > 0) {
++        const afterOffset = this.editorView.getVisualCursor().offset;
++        this.adjustExtmarksAfterDeletion(afterOffset, deletedLength);
++      }
+     };
+     this.editBuffer.deleteChar = () => {
+       if (this.destroyed) {
+@@ -8554,9 +8558,9 @@ class ExtmarksController {
+       }
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+-      const textLength = this.editBuffer.getText().length;
+       const hadSelection = this.editorView.hasSelection();
+-      if (currentOffset >= textLength) {
++      const beforeMaxOffset = this.getMaxOffset();
++      if (currentOffset >= beforeMaxOffset) {
+         this.originalDeleteChar();
+         return;
+       }
+@@ -8578,7 +8582,11 @@ class ExtmarksController {
+         return;
+       }
+       this.originalDeleteChar();
+-      this.adjustExtmarksAfterDeletion(targetOffset, 1);
++      const afterMaxOffset = this.getMaxOffset();
++      const deletedLength = beforeMaxOffset - afterMaxOffset;
++      if (deletedLength > 0) {
++        this.adjustExtmarksAfterDeletion(targetOffset, deletedLength);
++      }
+     };
+     this.editBuffer.deleteRange = (startLine, startCol, endLine, endCol) => {
+       if (this.destroyed) {
+@@ -8598,27 +8606,15 @@ class ExtmarksController {
+         return;
+       }
+       this.saveSnapshot();
+-      const text = this.editBuffer.getText();
+-      const currentOffset = this.editorView.getVisualCursor().offset;
+-      let lineStart = 0;
+-      for (let i = currentOffset - 1;i >= 0; i--) {
+-        if (text[i] === `
+-`) {
+-          lineStart = i + 1;
+-          break;
+-        }
+-      }
+-      let lineEnd = text.length;
+-      for (let i = currentOffset;i < text.length; i++) {
+-        if (text[i] === `
+-`) {
+-          lineEnd = i + 1;
+-          break;
+-        }
+-      }
+-      const deleteLength = lineEnd - lineStart;
++      const cursor = this.editBuffer.getCursorPosition();
++      const lineStartOffset = this.editBuffer.getLineStartOffset(cursor.row);
++      const beforeMaxOffset = this.getMaxOffset();
+       this.originalDeleteLine();
+-      this.adjustExtmarksAfterDeletion(lineStart, deleteLength);
++      const afterMaxOffset = this.getMaxOffset();
++      const deletedLength = beforeMaxOffset - afterMaxOffset;
++      if (deletedLength > 0) {
++        this.adjustExtmarksAfterDeletion(lineStartOffset, deletedLength);
++      }
+     };
+   }
+   wrapInsertion() {
+@@ -8630,7 +8626,11 @@ class ExtmarksController {
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+       this.originalInsertText(text);
+-      this.adjustExtmarksAfterInsertion(currentOffset, text.length);
++      const nextOffset = this.editorView.getVisualCursor().offset;
++      const insertedLength = nextOffset - currentOffset;
++      if (insertedLength > 0) {
++        this.adjustExtmarksAfterInsertion(currentOffset, insertedLength);
++      }
+     };
+     this.editBuffer.insertChar = (char) => {
+       if (this.destroyed) {
+@@ -8640,7 +8640,11 @@ class ExtmarksController {
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+       this.originalInsertChar(char);
+-      this.adjustExtmarksAfterInsertion(currentOffset, 1);
++      const nextOffset = this.editorView.getVisualCursor().offset;
++      const insertedLength = nextOffset - currentOffset;
++      if (insertedLength > 0) {
++        this.adjustExtmarksAfterInsertion(currentOffset, insertedLength);
++      }
+     };
+     this.editBuffer.setText = (text) => {
+       if (this.destroyed) {
+@@ -8676,7 +8680,11 @@ class ExtmarksController {
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+       this.originalNewLine();
+-      this.adjustExtmarksAfterInsertion(currentOffset, 1);
++      const nextOffset = this.editorView.getVisualCursor().offset;
++      const insertedLength = nextOffset - currentOffset;
++      if (insertedLength > 0) {
++        this.adjustExtmarksAfterInsertion(currentOffset, insertedLength);
++      }
+     };
+   }
+   wrapEditorViewDeleteSelectedText() {
+@@ -8722,6 +8730,23 @@ class ExtmarksController {
+     }
+     return null;
+   }
++  getMaxOffset() {
++    let low = 0;
++    let high = 1;
++    while (this.editBuffer.offsetToPosition(high)) {
++      low = high;
++      high *= 2;
++    }
++    while (low + 1 < high) {
++      const mid = low + Math.floor((high - low) / 2);
++      if (this.editBuffer.offsetToPosition(mid)) {
++        low = mid;
++      } else {
++        high = mid;
++      }
++    }
++    return low;
++  }
+   adjustExtmarksAfterInsertion(insertOffset, length) {
+     for (const extmark of this.extmarks.values()) {
+       if (extmark.start >= insertOffset) {
