@@ -34,15 +34,6 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
   })
 
   useKeyboard((evt) => {
-    if (evt.name === "return") {
-      props.onConfirm?.({
-        filename: textarea.plainText,
-        thinking: store.thinking,
-        toolDetails: store.toolDetails,
-        assistantMetadata: store.assistantMetadata,
-        openWithoutSaving: store.openWithoutSaving,
-      })
-    }
     if (evt.name === "tab") {
       const order: Array<"filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving"> = [
         "filename",
@@ -57,6 +48,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
       evt.preventDefault()
     }
     if (evt.name === "space") {
+      if (store.active === "filename") return
       if (store.active === "thinking") setStore("thinking", !store.thinking)
       if (store.active === "toolDetails") setStore("toolDetails", !store.toolDetails)
       if (store.active === "assistantMetadata") setStore("assistantMetadata", !store.assistantMetadata)
@@ -97,7 +89,9 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           }}
           height={3}
           keyBindings={[{ name: "return", action: "submit" }]}
-          ref={(val: TextareaRenderable) => (textarea = val)}
+          ref={(val: TextareaRenderable) => {
+            textarea = val
+          }}
           initialValue={props.defaultFilename}
           placeholder="Enter filename"
           textColor={theme.text}
@@ -106,6 +100,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
         />
       </box>
       <box flexDirection="column">
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
         <box
           flexDirection="row"
           gap={2}
@@ -118,6 +113,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           </text>
           <text fg={store.active === "thinking" ? theme.primary : theme.text}>Include thinking</text>
         </box>
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
         <box
           flexDirection="row"
           gap={2}
@@ -130,6 +126,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           </text>
           <text fg={store.active === "toolDetails" ? theme.primary : theme.text}>Include tool details</text>
         </box>
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
         <box
           flexDirection="row"
           gap={2}
@@ -142,6 +139,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           </text>
           <text fg={store.active === "assistantMetadata" ? theme.primary : theme.text}>Include assistant metadata</text>
         </box>
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
         <box
           flexDirection="row"
           gap={2}

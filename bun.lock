@@ -482,6 +482,7 @@
   ],
   "patchedDependencies": {
     "ghostty-web@0.3.0": "patches/ghostty-web@0.3.0.patch",
+    "@opentui/core@0.1.72": "patches/opentui-core@0.1.72.patch",
   },
   "overrides": {
     "@types/bun": "catalog:",
