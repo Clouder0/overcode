@@ -591,7 +591,7 @@ export namespace ProviderTransform {
     }
 
     if (model.providerID === "openai" || providerOptions?.setCacheKey) {
-      result["promptCacheKey"] = sessionID
+      result["promptCacheKey"] = sessionID.replace(/^ses_/, "sess_")
     }
 
     if (model.api.npm === "@ai-sdk/google" || model.api.npm === "@ai-sdk/google-vertex") {
@@ -617,7 +617,7 @@ export namespace ProviderTransform {
       }
 
       if (model.providerID.startsWith("opencode")) {
-        result["promptCacheKey"] = sessionID
+        result["promptCacheKey"] = sessionID.replace(/^ses_/, "sess_")
         result["include"] = ["reasoning.encrypted_content"]
         result["reasoningSummary"] = "auto"
       }

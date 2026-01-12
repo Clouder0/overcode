@@ -40,7 +40,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
 
   test("should set promptCacheKey when providerOptions.setCacheKey is true", () => {
     const result = ProviderTransform.options(mockModel, sessionID, { setCacheKey: true })
-    expect(result.promptCacheKey).toBe(sessionID)
+    expect(result.promptCacheKey).toBe(sessionID.replace(/^ses_/, "sess_"))
   })
 
   test("should not set promptCacheKey when providerOptions.setCacheKey is false", () => {
@@ -69,7 +69,7 @@ describe("ProviderTransform.options - setCacheKey", () => {
       },
     }
     const result = ProviderTransform.options(openaiModel, sessionID, {})
-    expect(result.promptCacheKey).toBe(sessionID)
+    expect(result.promptCacheKey).toBe(sessionID.replace(/^ses_/, "sess_"))
   })
 })
 
