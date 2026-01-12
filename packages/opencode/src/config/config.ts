@@ -956,10 +956,23 @@ export namespace Config {
         })
         .optional(),
       compaction: z
-        .object({
-          auto: z.boolean().optional().describe("Enable automatic compaction when context is full (default: true)"),
-          prune: z.boolean().optional().describe("Enable pruning of old tool outputs (default: true)"),
-        })
+        .preprocess(
+          (input) => {
+            if (typeof input === "string" || typeof input === "boolean") {
+              return { auto: input }
+            }
+            return input
+          },
+          z.object({
+            auto: z
+              .union([PermissionAction, z.boolean()])
+              .optional()
+              .describe(
+                "Automatic compaction policy when context is full: allow|deny|ask (or true/false). Defaults to allow.",
+              ),
+            prune: z.boolean().optional().describe("Enable pruning of old tool outputs (default: true)"),
+          }),
+        )
         .optional(),
       experimental: z
         .object({

@@ -224,6 +224,13 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               <Match when={props.request.permission === "doom_loop"}>
                 <TextBody icon="⟳" title="Continue after repeated failures" />
               </Match>
+              <Match when={props.request.permission === "compaction"}>
+                <TextBody
+                  icon="⤵"
+                  title="Auto compact session"
+                  description={props.request.metadata?.cause ? `Cause: ` + props.request.metadata.cause : undefined}
+                />
+              </Match>
               <Match when={true}>
                 <TextBody icon="⚙" title={`Call tool ` + props.request.permission} />
               </Match>
