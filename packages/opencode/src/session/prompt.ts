@@ -505,10 +505,10 @@ export namespace SessionPrompt {
 
   export function assertNotBusy(sessionID: string) {
     const match = state()[sessionID]
-    if (match) throw new Session.BusyError(sessionID)
+    if (match) throw new Session.BusyError({ sessionID })
 
     const status = SessionStatus.get(sessionID)
-    if (status.type === "waiting") throw new Session.BusyError(sessionID)
+    if (status.type === "waiting") throw new Session.BusyError({ sessionID })
   }
 
   export const PromptInput = z.object({
@@ -2054,7 +2054,7 @@ export namespace SessionPrompt {
   export async function shell(input: ShellInput) {
     const abort = start(input.sessionID)
     if (!abort) {
-      throw new Session.BusyError(input.sessionID)
+      throw new Session.BusyError({ sessionID: input.sessionID })
     }
     using _ = defer(() => cancel(input.sessionID))
 

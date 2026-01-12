@@ -3,6 +3,7 @@ import { Bus } from "@/bus"
 import { Decimal } from "decimal.js"
 import z from "zod"
 import { type LanguageModelUsage, type ProviderMetadata } from "ai"
+import { NamedError } from "@opencode-ai/util/error"
 import { Config } from "../config/config"
 import { Flag } from "../flag/flag"
 import { Identifier } from "../id/id"
@@ -538,11 +539,12 @@ export namespace Session {
     },
   )
 
-  export class BusyError extends Error {
-    constructor(public readonly sessionID: string) {
-      super(`Session ${sessionID} is busy`)
-    }
-  }
+  export const BusyError = NamedError.create(
+    "SessionBusyError",
+    z.object({
+      sessionID: Identifier.schema("session"),
+    }),
+  )
 
   export const initialize = fn(
     z.object({

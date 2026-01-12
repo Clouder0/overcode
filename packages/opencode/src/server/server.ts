@@ -46,7 +46,7 @@ import { Snapshot } from "@/snapshot"
 import { SessionSummary } from "@/session/summary"
 import { SessionStatus } from "@/session/status"
 import { upgradeWebSocket, websocket } from "hono/bun"
-import { errors } from "./error"
+import { PartMismatchError, errors } from "./error"
 import { Pty } from "@/pty"
 import { PermissionNext } from "@/permission/next"
 import { Installation } from "@/installation"
@@ -69,7 +69,28 @@ export namespace Server {
   export const Event = {
     Connected: BusEvent.define("server.connected", z.object({})),
     Disposed: BusEvent.define("global.disposed", z.object({})),
+    Heartbeat: BusEvent.define("server.heartbeat", z.object({})),
   }
+
+  function decodeDirectory(input: string) {
+    const raw = input.trim()
+    if (!raw) return undefined
+    if (!raw.includes("%")) return raw
+    try {
+      return decodeURIComponent(raw)
+    } catch {
+      return undefined
+    }
+  }
+
+  const openapiResponses = errors()
+  const openapiDefaults = {
+    GET: { responses: openapiResponses },
+    POST: { responses: openapiResponses },
+    PUT: { responses: openapiResponses },
+    PATCH: { responses: openapiResponses },
+    DELETE: { responses: openapiResponses },
+  } as const
 
   const app = new Hono()
   export const App = lazy(() =>
@@ -82,6 +103,8 @@ export namespace Server {
           let status: ContentfulStatusCode
           if (err instanceof Storage.NotFoundError) status = 404
           else if (err instanceof Storage.InvalidKeyError) status = 400
+          else if (PartMismatchError.isInstance(err)) status = 400
+          else if (Session.BusyError.isInstance(err)) status = 409
           else if (err instanceof Provider.ModelNotFoundError) status = 400
           else if (err.name.startsWith("Worktree")) status = 400
           else status = 500
@@ -185,13 +208,15 @@ export namespace Server {
           }),
         ),
         async (c) => {
-          const requestedDirectory = c.req.valid("query").directory
+          const headerDirectory = c.req.header("x-opencode-directory") ?? ""
+          const requestedDirectory = c.req.valid("query").directory ?? decodeDirectory(headerDirectory) ?? "global"
           log.info("global event connected", { requestedDirectory })
           return streamSSE(c, async (stream) => {
             stream.writeSSE({
               data: JSON.stringify({
+                directory: "global",
                 payload: {
-                  type: "server.connected",
+                  type: Event.Connected.type,
                   properties: {},
                 },
               }),
@@ -216,8 +241,9 @@ export namespace Server {
             const heartbeat = setInterval(() => {
               stream.writeSSE({
                 data: JSON.stringify({
+                  directory: "global",
                   payload: {
-                    type: "server.heartbeat",
+                    type: Event.Heartbeat.type,
                     properties: {},
                   },
                 }),
@@ -265,7 +291,9 @@ export namespace Server {
         },
       )
       .use(async (c, next) => {
-        const directory = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
+        const headerDirectory = c.req.header("x-opencode-directory")
+        const directory =
+          c.req.query("directory") || (headerDirectory ? decodeDirectory(headerDirectory) : undefined) || process.cwd()
         return Instance.provide({
           directory,
           init: InstanceBootstrap,
@@ -277,10 +305,11 @@ export namespace Server {
       .get(
         "/doc",
         openAPIRouteHandler(app, {
+          defaultOptions: openapiDefaults,
           documentation: {
             info: {
               title: "opencode",
-              version: "0.0.3",
+              version: Installation.VERSION,
               description: "opencode api",
             },
             openapi: "3.1.1",
@@ -379,13 +408,17 @@ export namespace Server {
                 },
               },
             },
-            ...errors(400),
+            ...errors(400, 404),
           },
         }),
         validator("param", z.object({ ptyID: z.string() })),
         validator("json", Pty.UpdateInput),
         async (c) => {
-          const info = await Pty.update(c.req.valid("param").ptyID, c.req.valid("json"))
+          const ptyID = c.req.valid("param").ptyID
+          const info = await Pty.update(ptyID, c.req.valid("json"))
+          if (!info) {
+            throw new Storage.NotFoundError({ message: `PTY not found: ${ptyID}` })
+          }
           return c.json(info)
         },
       )
@@ -409,7 +442,11 @@ export namespace Server {
         }),
         validator("param", z.object({ ptyID: z.string() })),
         async (c) => {
-          await Pty.remove(c.req.valid("param").ptyID)
+          const ptyID = c.req.valid("param").ptyID
+          if (!Pty.get(ptyID)) {
+            throw new Storage.NotFoundError({ message: `PTY not found: ${ptyID}` })
+          }
+          await Pty.remove(ptyID)
           return c.json(true)
         },
       )
@@ -420,14 +457,10 @@ export namespace Server {
           description:
             "Establish a WebSocket connection to interact with a pseudo-terminal (PTY) session in real-time.",
           operationId: "pty.connect",
+          "x-websocket": true,
           responses: {
-            200: {
-              description: "Connected session",
-              content: {
-                "application/json": {
-                  schema: resolver(z.boolean()),
-                },
-              },
+            101: {
+              description: "Switching Protocols (WebSocket)",
             },
             ...errors(404),
           },
@@ -436,7 +469,7 @@ export namespace Server {
         upgradeWebSocket((c) => {
           const id = c.req.param("ptyID")
           let handler: ReturnType<typeof Pty.connect>
-          if (!Pty.get(id)) throw new Error("Session not found")
+          if (!Pty.get(id)) throw new Storage.NotFoundError({ message: `PTY not found: ${id}` })
           return {
             onOpen(_event, ws) {
               handler = Pty.connect(id, ws)
@@ -1098,45 +1131,6 @@ export namespace Server {
           return c.json(session)
         },
       )
-      .get(
-        "/session/:sessionID/diff",
-        describeRoute({
-          summary: "Get message diff",
-          description: "Get the file changes (diff) that resulted from a specific user message in the session.",
-          operationId: "session.diff",
-          responses: {
-            200: {
-              description: "Successfully retrieved diff",
-              content: {
-                "application/json": {
-                  schema: resolver(Snapshot.FileDiff.array()),
-                },
-              },
-            },
-          },
-        }),
-        validator(
-          "param",
-          z.object({
-            sessionID: SessionSummary.diff.schema.shape.sessionID,
-          }),
-        ),
-        validator(
-          "query",
-          z.object({
-            messageID: SessionSummary.diff.schema.shape.messageID,
-          }),
-        ),
-        async (c) => {
-          const query = c.req.valid("query")
-          const params = c.req.valid("param")
-          const result = await SessionSummary.diff({
-            sessionID: params.sessionID,
-            messageID: query.messageID,
-          })
-          return c.json(result)
-        },
-      )
       .delete(
         "/session/:sessionID/share",
         describeRoute({
@@ -1348,7 +1342,7 @@ export namespace Server {
                 },
               },
             },
-            ...errors(400, 404),
+            ...errors(400, 404, 409),
           },
         }),
         validator(
@@ -1383,7 +1377,7 @@ export namespace Server {
                 },
               },
             },
-            ...errors(400, 404),
+            ...errors(400, 404, 409),
           },
         }),
         validator(
@@ -1399,9 +1393,18 @@ export namespace Server {
           const params = c.req.valid("param")
           const body = c.req.valid("json")
           if (body.id !== params.partID || body.messageID !== params.messageID || body.sessionID !== params.sessionID) {
-            throw new Error(
-              `Part mismatch: body.id='${body.id}' vs partID='${params.partID}', body.messageID='${body.messageID}' vs messageID='${params.messageID}', body.sessionID='${body.sessionID}' vs sessionID='${params.sessionID}'`,
-            )
+            throw new PartMismatchError({
+              expected: {
+                sessionID: params.sessionID,
+                messageID: params.messageID,
+                partID: params.partID,
+              },
+              received: {
+                sessionID: body.sessionID,
+                messageID: body.messageID,
+                partID: body.id,
+              },
+            })
           }
           const part = await Session.updatePart(body)
           return c.json(part)
@@ -1531,7 +1534,7 @@ export namespace Server {
                 },
               },
             },
-            ...errors(400, 404),
+            ...errors(400, 404, 409),
           },
         }),
         validator(
@@ -1563,7 +1566,7 @@ export namespace Server {
                 },
               },
             },
-            ...errors(400, 404),
+            ...errors(400, 404, 409),
           },
         }),
         validator(
@@ -1598,7 +1601,7 @@ export namespace Server {
                 },
               },
             },
-            ...errors(400, 404),
+            ...errors(400, 404, 409),
           },
         }),
         validator(
@@ -2822,7 +2825,7 @@ export namespace Server {
           return streamSSE(c, async (stream) => {
             stream.writeSSE({
               data: JSON.stringify({
-                type: "server.connected",
+                type: Event.Connected.type,
                 properties: {},
               }),
             })
@@ -2839,7 +2842,7 @@ export namespace Server {
             const heartbeat = setInterval(() => {
               stream.writeSSE({
                 data: JSON.stringify({
-                  type: "server.heartbeat",
+                  type: Event.Heartbeat.type,
                   properties: {},
                 }),
               })
@@ -2871,10 +2874,11 @@ export namespace Server {
 
   export async function openapi() {
     const result = await generateSpecs(App(), {
+      defaultOptions: openapiDefaults,
       documentation: {
         info: {
           title: "opencode",
-          version: "1.0.0",
+          version: Installation.VERSION,
           description: "opencode api",
         },
         openapi: "3.1.1",

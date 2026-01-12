@@ -119,7 +119,7 @@ export namespace Installation {
   }
 
   export async function upgrade(method: Method, target: string) {
-    let cmd
+    let cmd: ReturnType<typeof $>
     switch (method) {
       case "curl":
         cmd = $`curl -fsSL https://opencode.ai/install | bash`.env({
@@ -161,8 +161,10 @@ export namespace Installation {
     await $`${process.execPath} --version`.nothrow().quiet().text()
   }
 
-  export const VERSION = typeof OPENCODE_VERSION === "string" ? OPENCODE_VERSION : "local"
-  export const CHANNEL = typeof OPENCODE_CHANNEL === "string" ? OPENCODE_CHANNEL : "local"
+  export const VERSION =
+    typeof OPENCODE_VERSION === "string" ? OPENCODE_VERSION : process.env.OPENCODE_VERSION || "local"
+  export const CHANNEL =
+    typeof OPENCODE_CHANNEL === "string" ? OPENCODE_CHANNEL : process.env.OPENCODE_CHANNEL || "local"
   export const USER_AGENT = `opencode/${CHANNEL}/${VERSION}/${Flag.OPENCODE_CLIENT}`
 
   export async function latest(installMethod?: Method) {

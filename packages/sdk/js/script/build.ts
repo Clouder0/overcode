@@ -1,17 +1,32 @@
 #!/usr/bin/env bun
 
-const dir = new URL("..", import.meta.url).pathname
-process.chdir(dir)
-
 import { $ } from "bun"
 import path from "path"
 
 import { createClient } from "@hey-api/openapi-ts"
 
-await $`bun dev generate > ${dir}/openapi.json`.cwd(path.resolve(dir, "../../opencode"))
+const dir = new URL("..", import.meta.url).pathname
+process.chdir(dir)
+
+const opencode = path.resolve(dir, "../../opencode")
+const openapi = path.resolve(dir, "../openapi.json")
+
+type OpencodePackage = {
+  version?: string
+}
+
+const pkg = (await Bun.file(path.join(opencode, "package.json")).json()) as OpencodePackage
+const version = process.env.OPENCODE_VERSION || pkg.version || "local"
+const channel = process.env.OPENCODE_CHANNEL || "local"
+
+const spec = await $`bun dev generate`
+  .cwd(opencode)
+  .env({ OPENCODE_VERSION: version, OPENCODE_CHANNEL: channel })
+  .text()
+await Bun.write(openapi, spec)
 
 await createClient({
-  input: "./openapi.json",
+  input: "../openapi.json",
   output: {
     path: "./src/v2/gen",
     tsConfigPath: path.join(dir, "tsconfig.json"),
@@ -37,8 +52,6 @@ await createClient({
   ],
 })
 
-await $`bun prettier --write src/gen`
-await $`bun prettier --write src/v2`
+await $`bun prettier --write src`
 await $`rm -rf dist`
 await $`bun tsc`
-await $`rm openapi.json`

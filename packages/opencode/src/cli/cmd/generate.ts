@@ -1,6 +1,52 @@
 import { Server } from "../../server/server"
 import type { CommandModule } from "yargs"
 
+function camel(input: string) {
+  const parts = input.split(/[_-]/g)
+  const first = parts[0] ?? ""
+  const rest = parts
+    .slice(1)
+    .map((part) => {
+      if (!part) return ""
+      return part.slice(0, 1).toUpperCase() + part.slice(1)
+    })
+    .join("")
+  return first + rest
+}
+
+function sdkPath(operationId: string) {
+  return operationId
+    .split(".")
+    .map((part) => camel(part))
+    .join(".")
+}
+
+function jsSample(operationId: string) {
+  if (operationId === "pty.connect") {
+    return [
+      'import { createOpencodeClient } from "@opencode-ai/sdk"',
+      "",
+      "const client = createOpencodeClient()",
+      "",
+      "// PTY connect uses WebSocket (not fetch).",
+      "// Use a WebSocket client against /pty/<ptyID>/connect.",
+      "// const ws = new WebSocket('ws://localhost:4096/pty/<ptyID>/connect')",
+      "",
+      "void client",
+    ].join("\n")
+  }
+
+  const call = sdkPath(operationId)
+  return [
+    'import { createOpencodeClient } from "@opencode-ai/sdk"',
+    "",
+    "const client = createOpencodeClient()",
+    `await client.${call}({`,
+    "  ...",
+    "})",
+  ].join("\n")
+}
+
 export const GenerateCommand = {
   command: "generate",
   handler: async () => {
@@ -13,14 +59,7 @@ export const GenerateCommand = {
         operation["x-codeSamples"] = [
           {
             lang: "js",
-            source: [
-              `import { createOpencodeClient } from "@opencode-ai/sdk`,
-              ``,
-              `const client = createOpencodeClient()`,
-              `await client.${operation.operationId}({`,
-              `  ...`,
-              `})`,
-            ].join("\n"),
+            source: jsSample(operation.operationId),
           },
         ]
       }
