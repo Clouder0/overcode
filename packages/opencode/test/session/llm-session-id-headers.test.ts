@@ -114,7 +114,7 @@ test("adds x-session-id header for @ai-sdk/openai models", async () => {
 
       const call = streamCalls[0]
       expect(call.headers?.["x-session-id"]).toBe(upstreamSessionID)
-      expect(call.headers?.["session_id"]).toBeUndefined()
+      expect(call.headers?.["session_id"]).toBe(upstreamSessionID)
     },
   })
 })
