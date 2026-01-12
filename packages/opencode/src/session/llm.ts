@@ -1,3 +1,5 @@
+import os from "os"
+import { Installation } from "@/installation"
 import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
 import {
@@ -22,6 +24,7 @@ import { Flag } from "@/flag/flag"
 import { Wildcard } from "@/util/wildcard"
 import { SessionToolOverrides } from "./tool-overrides"
 import { PermissionNext } from "@/permission/next"
+import { Auth } from "@/auth"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -74,7 +77,7 @@ export namespace LLM {
 
     const header = system[0]
     const original = clone(system)
-    await Plugin.trigger("experimental.chat.system.transform", {}, { system })
+    await Plugin.trigger("experimental.chat.system.transform", { sessionID: input.sessionID }, { system })
     if (system.length === 0) {
       system.push(...original)
     }
@@ -86,12 +89,25 @@ export namespace LLM {
     }
 
     const provider = await Provider.getProvider(input.model.providerID)
+    const auth = await Auth.get(input.model.providerID)
+    const isCodex = provider.id === "openai" && auth?.type === "oauth"
+    const sess = input.sessionID.replace(/^ses_/, "sess_")
+
     const variant =
       !input.small && input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
     const base = input.small
       ? ProviderTransform.smallOptions(input.model)
       : ProviderTransform.options(input.model, input.sessionID, provider.options)
-    const options = pipe(base, mergeDeep(input.model.options), mergeDeep(input.agent.options), mergeDeep(variant))
+    const options: Record<string, any> = pipe(
+      base,
+      mergeDeep(input.model.options),
+      mergeDeep(input.agent.options),
+      mergeDeep(variant),
+    )
+    if (isCodex) {
+      options.instructions = SystemPrompt.instructions()
+      options.store = false
+    }
 
     const params = await Plugin.trigger(
       "chat.params",
@@ -112,16 +128,14 @@ export namespace LLM {
       },
     )
 
-    l.info("params", {
-      params,
-    })
-
-    const maxOutputTokens = ProviderTransform.maxOutputTokens(
-      input.model.api.npm,
-      params.options,
-      input.model.limit.output,
-      OUTPUT_TOKEN_MAX,
-    )
+    const maxOutputTokens = isCodex
+      ? undefined
+      : ProviderTransform.maxOutputTokens(
+          input.model.api.npm,
+          params.options,
+          input.model.limit.output,
+          OUTPUT_TOKEN_MAX,
+        )
 
     const tools = await resolveTools(input)
 
@@ -163,7 +177,15 @@ export namespace LLM {
       headers: {
         ...(input.model.api.npm === "@ai-sdk/openai"
           ? {
-              "x-session-id": input.sessionID.replace(/^ses_/, "sess_"),
+              "x-session-id": sess,
+            }
+          : undefined),
+        ...(isCodex
+          ? {
+              originator: "opencode",
+              "User-Agent": `opencode/${Installation.VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`,
+              session_id: sess,
+              "x-session-id": sess,
             }
           : undefined),
         ...(input.model.providerID.startsWith("opencode")
@@ -179,12 +201,19 @@ export namespace LLM {
       maxRetries: input.retries ?? 0,
       stopWhen: input.stopWhen,
       messages: [
-        ...system.map(
-          (x): ModelMessage => ({
-            role: "system",
-            content: x,
-          }),
-        ),
+        ...(isCodex
+          ? [
+              {
+                role: "user",
+                content: system.join("\n\n"),
+              } as ModelMessage,
+            ]
+          : system.map(
+              (x): ModelMessage => ({
+                role: "system",
+                content: x,
+              }),
+            )),
         ...input.messages,
       ],
       model: wrapLanguageModel({

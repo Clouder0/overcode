@@ -85,6 +85,7 @@ import type {
   PtyRemoveResponses,
   PtyUpdateErrors,
   PtyUpdateResponses,
+  QuestionAnswer,
   QuestionListResponses,
   QuestionRejectErrors,
   QuestionRejectResponses,
@@ -1823,7 +1824,7 @@ export class Question extends HeyApiClient {
     parameters: {
       requestID: string
       directory?: string
-      answers?: Array<string>
+      answers?: Array<QuestionAnswer>
     },
     options?: Options<never, ThrowOnError>,
   ) {

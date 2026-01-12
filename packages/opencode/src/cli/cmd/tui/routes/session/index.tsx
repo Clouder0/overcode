@@ -38,6 +38,7 @@ import type { WriteTool } from "@/tool/write"
 import { BashTool } from "@/tool/bash"
 import type { GlobTool } from "@/tool/glob"
 import { TodoWriteTool } from "@/tool/todo"
+import { QuestionTool } from "@/tool/question"
 import type { GrepTool } from "@/tool/grep"
 import type { ListTool } from "@/tool/ls"
 import type { EditTool } from "@/tool/edit"
@@ -54,8 +55,6 @@ import { TodoItem } from "../../component/todo-item"
 import { DialogMessage } from "./dialog-message"
 import { DialogSubagent } from "./dialog-subagent"
 import type { PromptInfo } from "../../component/prompt/history"
-
-import { iife } from "@/util/iife"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
@@ -1964,6 +1963,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={reactivePart().tool === "wait_agent_message"}>
           <WaitAgentMessage {...toolprops} />
         </Match>
+        <Match when={reactivePart().tool === "question"}>
+          <Question {...toolprops} />
+        </Match>
         <Match when={true}>
           <GenericTool {...toolprops} />
         </Match>
@@ -2334,6 +2336,44 @@ function TodoWrite(props: ToolProps<typeof TodoWriteTool>) {
       <Match when={true}>
         <InlineTool icon="⚙" pending="Updating todos..." complete={false} part={props.part}>
           Updating todos...
+        </InlineTool>
+      </Match>
+    </Switch>
+  )
+}
+
+function Question(props: ToolProps<typeof QuestionTool>) {
+  const { theme } = useTheme()
+
+  type QuestionInfo = { question: string }
+
+  const questions = createMemo(() => (props.input.questions as QuestionInfo[] | undefined) ?? [])
+  const answers = createMemo(() => props.metadata.answers as string[][] | undefined)
+
+  function format(answer?: string[]) {
+    if (!answer?.length) return "Unanswered"
+    return answer.join(", ")
+  }
+
+  return (
+    <Switch>
+      <Match when={answers()}>
+        <BlockTool title="# Questions" part={props.part}>
+          <box>
+            <For each={questions()}>
+              {(q, i) => (
+                <box flexDirection="row" gap={1}>
+                  <text fg={theme.textMuted}>{q.question}</text>
+                  <text fg={theme.text}>{format(answers()?.[i()])}</text>
+                </box>
+              )}
+            </For>
+          </box>
+        </BlockTool>
+      </Match>
+      <Match when={true}>
+        <InlineTool icon="?" pending="Asking questions..." complete={false} part={props.part}>
+          Asking questions...
         </InlineTool>
       </Match>
     </Switch>
