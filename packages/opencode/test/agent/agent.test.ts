@@ -70,6 +70,8 @@ test("explore agent denies edit and write", async () => {
       expect(evalPerm(explore, "write")).toBe("deny")
       expect(evalPerm(explore, "todoread")).toBe("deny")
       expect(evalPerm(explore, "todowrite")).toBe("deny")
+      expect(evalPerm(explore, "send_agent_message")).toBe("allow")
+      expect(evalPerm(explore, "wait_agent_message")).toBe("allow")
     },
   })
 })
