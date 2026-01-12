@@ -858,6 +858,46 @@ export namespace SessionPrompt {
     return { omitted: true, persisted }
   }
 
+  type AutoCompactionCause = "overflow" | "context_length"
+
+  async function requestAutoCompaction(input: {
+    sessionID: string
+    agent: string
+    model: MessageV2.User["model"]
+    cause: AutoCompactionCause
+  }) {
+    const cfg = await Config.get()
+    const policy = SessionCompaction.autoPolicy(cfg.compaction?.auto)
+
+    if (policy === "deny") return false
+
+    if (policy === "ask") {
+      const patterns = ["auto"]
+      const allowed = await PermissionNext.ask({
+        permission: "compaction",
+        patterns,
+        always: patterns,
+        sessionID: input.sessionID,
+        metadata: {
+          cause: input.cause,
+        },
+        ruleset: [],
+      })
+        .then(() => true)
+        .catch(() => false)
+
+      if (!allowed) return false
+    }
+
+    await SessionCompaction.create({
+      sessionID: input.sessionID,
+      agent: input.agent,
+      model: input.model,
+      auto: true,
+    })
+    return true
+  }
+
   async function runLoop(sessionID: string): Promise<MessageV2.WithParts> {
     const abort = start(sessionID)
     if (!abort) {
@@ -1178,13 +1218,13 @@ export namespace SessionPrompt {
         lastFinished.summary !== true &&
         (await SessionCompaction.isOverflow({ tokens: lastFinished.tokens, model }))
       ) {
-        await SessionCompaction.create({
+        const compacted = await requestAutoCompaction({
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
-          auto: true,
+          cause: "overflow",
         })
-        continue
+        if (compacted) continue
       }
 
       // normal processing
@@ -1321,12 +1361,24 @@ export namespace SessionPrompt {
 
       if (result === "stop") break
       if (result === "compact") {
-        await SessionCompaction.create({
+        const cause = processor.compactionRequest?.reason === "context_length" ? "context_length" : "overflow"
+        const compacted = await requestAutoCompaction({
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
-          auto: true,
+          cause,
         })
+
+        if (!compacted && processor.compactionRequest?.fallbackError) {
+          const fallback = processor.compactionRequest.fallbackError
+          processor.message.error = fallback
+          await Session.updateMessage(processor.message)
+          Bus.publish(Session.Event.Error, {
+            sessionID: processor.message.sessionID,
+            error: fallback,
+          })
+          break
+        }
       }
       continue
     }

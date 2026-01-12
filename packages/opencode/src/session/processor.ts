@@ -35,10 +35,14 @@ export namespace SessionProcessor {
     let blocked = false
     let attempt = 0
     let needsCompaction = false
+    let compactionRequest: { reason: "context_length"; fallbackError: MessageV2.Assistant["error"] } | undefined
 
     const result = {
       get message() {
         return input.assistantMessage
+      },
+      get compactionRequest() {
+        return compactionRequest
       },
       partFromToolCall(toolCallID: string) {
         return toolcalls[toolCallID]
@@ -46,6 +50,7 @@ export namespace SessionProcessor {
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         needsCompaction = false
+        compactionRequest = undefined
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
 
         let ignoredOpenAIReasoning = false
@@ -455,11 +460,28 @@ export namespace SessionProcessor {
               await SessionRetry.sleep(delay, input.abort).catch(() => {})
               continue
             }
-            input.assistantMessage.error = error
-            Bus.publish(Session.Event.Error, {
-              sessionID: input.assistantMessage.sessionID,
-              error: input.assistantMessage.error,
-            })
+
+            const compactOnContextLengthError = await (async () => {
+              if (streamInput.agent.name === "compaction") return false
+              if (!isContextLengthError(error)) return false
+              const cfg = await Config.get()
+              if (SessionCompaction.autoPolicy(cfg.compaction?.auto) === "deny") return false
+              if (await isReplayPrompt(streamInput.user.id)) return false
+              return true
+            })()
+
+            if (compactOnContextLengthError) {
+              needsCompaction = true
+              compactionRequest = { reason: "context_length", fallbackError: error }
+            }
+
+            if (!compactOnContextLengthError) {
+              input.assistantMessage.error = error
+              Bus.publish(Session.Event.Error, {
+                sessionID: input.assistantMessage.sessionID,
+                error: input.assistantMessage.error,
+              })
+            }
           }
           if (snapshot) {
             const patch = await Snapshot.patch(snapshot)
@@ -502,5 +524,82 @@ export namespace SessionProcessor {
       },
     }
     return result
+  }
+
+  async function isReplayPrompt(messageID: string) {
+    const parts = await MessageV2.parts(messageID)
+    for (const part of parts) {
+      if (part.type !== "text") continue
+      if (!isRecord(part.metadata)) continue
+      const oc = part.metadata["opencode"]
+      if (!isRecord(oc)) continue
+      if (oc["replay"] === true) return true
+    }
+    return false
+  }
+
+  function isContextLengthError(error: unknown) {
+    const info = apiErrorInfo(error)
+    if (!info) return false
+
+    const code = apiErrorCode(info.responseBody)?.toLowerCase()
+    if (code && code.includes("context_length")) return true
+
+    const msg = info.message.toLowerCase()
+    if (msg.includes("maximum context length")) return true
+    if (msg.includes("context length") && msg.includes("exceed")) return true
+    if (msg.includes("too many tokens")) return true
+    if (msg.includes("prompt is too long")) return true
+    if (msg.includes("input is too long")) return true
+    if (msg.includes("context window") && (msg.includes("exceed") || msg.includes("too large"))) return true
+
+    return false
+  }
+
+  function apiErrorInfo(error: unknown): { message: string; responseBody?: string } | undefined {
+    if (!isRecord(error)) return
+    if (error["name"] !== "APIError") return
+    const data = error["data"]
+    if (!isRecord(data)) return
+    const message = data["message"]
+    if (typeof message !== "string") return
+    const responseBody = data["responseBody"]
+    return {
+      message,
+      responseBody: typeof responseBody === "string" ? responseBody : undefined,
+    }
+  }
+
+  function apiErrorCode(responseBody?: string): string | undefined {
+    if (!responseBody) return
+    const parsed = safeJsonParse(responseBody)
+    if (!isRecord(parsed)) return
+
+    const error = parsed["error"]
+    if (isRecord(error)) {
+      const code = error["code"]
+      if (typeof code === "string") return code
+      if (typeof code === "number") return String(code)
+      const type = error["type"]
+      if (typeof type === "string") return type
+    }
+
+    const code = parsed["code"]
+    if (typeof code === "string") return code
+    if (typeof code === "number") return String(code)
+
+    return
+  }
+
+  function safeJsonParse(text: string): unknown {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return undefined
+    }
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === "object" && !Array.isArray(value)
   }
 }
