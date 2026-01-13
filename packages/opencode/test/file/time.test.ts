@@ -48,6 +48,7 @@ describe("file.time", () => {
         const stats = await file.stat()
         FileTime.read("s", filePath, FileTime.stamp(stats.mtime, "abcd"))
 
+        await Bun.sleep(2)
         await Bun.write(filePath, "abce")
 
         await expect(FileTime.assert("s", filePath)).rejects.toThrow("modified since")
@@ -69,6 +70,7 @@ describe("file.time", () => {
         const stats = await file.stat()
         FileTime.read("s", filePath, FileTime.stamp(stats.mtime, "abc"))
 
+        await Bun.sleep(2)
         await Bun.write(filePath, "abcd")
 
         await expect(FileTime.assert("s", filePath)).rejects.toThrow("modified since")

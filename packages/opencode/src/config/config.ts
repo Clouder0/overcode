@@ -1005,6 +1005,30 @@ export namespace Config {
             .boolean()
             .optional()
             .describe("Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)"),
+          llmConcurrency: z
+            .object({
+              global: z
+                .object({
+                  limits: z
+                    .record(z.string(), z.number().int().positive())
+                    .describe(
+                      "Global (machine-wide) max concurrent LLM streams using pattern keys. Keys match providerID/model.api.id (e.g. openai/gpt-5) and may be globs (openai/*) or regex prefixed with re:.",
+                    ),
+                  staleMs: z
+                    .number()
+                    .int()
+                    .positive()
+                    .min(1000)
+                    .optional()
+                    .describe(
+                      "Lease expiry for crash-recovery in milliseconds (min 1000). Used to prune stale global concurrency leases.",
+                    ),
+                })
+                .optional()
+                .describe("Global (machine-wide) concurrency limits for LLM streaming."),
+            })
+            .optional()
+            .describe("Optional concurrency limits for LLM streaming."),
           primary_tools: z
             .array(z.string())
             .optional()

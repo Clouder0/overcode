@@ -36,6 +36,8 @@ The following topics are documented in detail:
 
 - **[Subagent Permissions](subagent-permissions.md)** — Fine-grained control over which agents can spawn which subagents.
 
+- **[Machine Concurrency Limits](async-subagents.md#global-machine-wide-concurrency-limits-experimental)** — Optional machine-wide limits that can block subagent spawning when the machine is saturated.
+
 - **[Skill Tool Enhancement](skill-tools.md)** — Skills can now enable tools dynamically based on context.
 
 ### User Experience

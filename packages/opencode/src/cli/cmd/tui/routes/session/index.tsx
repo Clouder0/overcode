@@ -2384,9 +2384,15 @@ function SubagentSpawn(props: ToolProps<any>) {
   const { theme } = useTheme()
   const dialog = useDialog()
 
+  const pending = createMemo(() => props.part.state.status === "pending")
+
   const metadata = createMemo(() => {
     return props.metadata as
       | {
+          ok?: boolean
+          status?: string
+          reason?: string
+          blocked?: string[]
           spawned?: Array<{ session_id: string; agent: string }>
           errors?: string[]
         }
@@ -2396,35 +2402,55 @@ function SubagentSpawn(props: ToolProps<any>) {
   const input = createMemo(() => props.input as { agents?: Array<{ agent: string; prompt: string }> } | undefined)
 
   const spawned = createMemo(() => metadata()?.spawned ?? [])
-  const count = createMemo(() => spawned().length || input()?.agents?.length || 0)
+  const requested = createMemo(() => input()?.agents?.length ?? 0)
+  const blocked = createMemo(() => !pending() && (metadata()?.ok === false || metadata()?.status === "blocked"))
+
+  const title = createMemo(() => {
+    if (blocked()) return `# Subagent spawn blocked (${requested()} requested)`
+    const count = spawned().length || requested()
+    return `# Spawned ${count} subagent${count === 1 ? "" : "s"}`
+  })
 
   return (
-    <BlockTool title={`# Spawned ${count()} subagent${count() === 1 ? "" : "s"}`} part={props.part}>
+    <BlockTool title={title()} part={props.part}>
       <box>
-        <Show when={!spawned().length && input()?.agents?.length}>
-          <For each={input()!.agents}>
-            {(agent) => (
-              <box marginTop={1}>
-                <text fg={theme.textMuted}>
-                  <span style={{ fg: theme.warning }}>◐</span> <b>{agent.agent}</b> spawning...
-                </text>
-              </box>
-            )}
-          </For>
+        <Show when={blocked()}>
+          <box flexDirection="column" gap={1}>
+            <text fg={theme.error}>
+              ✗ <b>Blocked</b> by machine-wide LLM concurrency limits
+            </text>
+            <Show when={props.output}>
+              <code filetype="markdown" drawUnstyledText={false} fg={theme.textMuted} content={props.output ?? ""} />
+            </Show>
+          </box>
         </Show>
 
-        <For each={spawned()}>
-          {(item) => (
-            <SubagentRow
-              sessionID={item.session_id}
-              agent={item.agent}
-              onSelect={() => dialog.replace(() => <DialogSubagent sessionID={item.session_id} />)}
-            />
-          )}
-        </For>
+        <Show when={!blocked()}>
+          <Show when={pending() && !spawned().length && requested() > 0}>
+            <For each={input()!.agents}>
+              {(agent) => (
+                <box marginTop={1}>
+                  <text fg={theme.textMuted}>
+                    <span style={{ fg: theme.warning }}>◐</span> <b>{agent.agent}</b> spawning...
+                  </text>
+                </box>
+              )}
+            </For>
+          </Show>
 
-        <Show when={metadata()?.errors?.length}>
-          <For each={metadata()?.errors ?? []}>{(error) => <text fg={theme.error}>✗ {error}</text>}</For>
+          <For each={spawned()}>
+            {(item) => (
+              <SubagentRow
+                sessionID={item.session_id}
+                agent={item.agent}
+                onSelect={() => dialog.replace(() => <DialogSubagent sessionID={item.session_id} />)}
+              />
+            )}
+          </For>
+
+          <Show when={metadata()?.errors?.length}>
+            <For each={metadata()?.errors ?? []}>{(error) => <text fg={theme.error}>✗ {error}</text>}</For>
+          </Show>
         </Show>
       </box>
     </BlockTool>
