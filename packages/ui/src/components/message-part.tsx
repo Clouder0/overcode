@@ -54,10 +54,13 @@ interface Diagnostic {
 function getDiagnostics(
   diagnosticsByFile: Record<string, Diagnostic[]> | undefined,
   filePath: string | undefined,
+  limit: number,
 ): Diagnostic[] {
   if (!diagnosticsByFile || !filePath) return []
   const diagnostics = diagnosticsByFile[filePath] ?? []
-  return diagnostics.filter((d) => d.severity === 1).slice(0, 3)
+  const errors = diagnostics.filter((d) => (d.severity ?? 1) === 1)
+  const warnings = diagnostics.filter((d) => d.severity === 2)
+  return [...errors, ...warnings].slice(0, limit)
 }
 
 function DiagnosticsDisplay(props: { diagnostics: Diagnostic[] }): JSX.Element {
@@ -67,7 +70,7 @@ function DiagnosticsDisplay(props: { diagnostics: Diagnostic[] }): JSX.Element {
         <For each={props.diagnostics}>
           {(diagnostic) => (
             <div data-slot="diagnostic">
-              <span data-slot="diagnostic-label">Error</span>
+              <span data-slot="diagnostic-label">{(diagnostic.severity ?? 1) === 2 ? "Warning" : "Error"}</span>
               <span data-slot="diagnostic-location">
                 [{diagnostic.range.start.line + 1}:{diagnostic.range.start.character + 1}]
               </span>
@@ -909,7 +912,7 @@ ToolRegistry.register({
   name: "edit",
   render(props) {
     const diffComponent = useDiffComponent()
-    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath))
+    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath, 3))
     return (
       <BasicTool
         {...props}
@@ -958,7 +961,7 @@ ToolRegistry.register({
   name: "write",
   render(props) {
     const codeComponent = useCodeComponent()
-    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath))
+    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath, 10))
     return (
       <BasicTool
         {...props}

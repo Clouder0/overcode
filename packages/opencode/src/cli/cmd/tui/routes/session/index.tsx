@@ -2133,7 +2133,10 @@ function Write(props: ToolProps<typeof WriteTool>) {
 
   const diagnostics = createMemo(() => {
     const filePath = Filesystem.normalizePath(props.input.filePath ?? "")
-    return props.metadata.diagnostics?.[filePath] ?? []
+    const arr = props.metadata.diagnostics?.[filePath] ?? []
+    const errors = arr.filter((x) => (x.severity ?? 1) === 1)
+    const warnings = arr.filter((x) => x.severity === 2)
+    return [...errors, ...warnings].slice(0, 10)
   })
 
   return (
@@ -2152,11 +2155,19 @@ function Write(props: ToolProps<typeof WriteTool>) {
 
           <Show when={diagnostics().length}>
             <For each={diagnostics()}>
-              {(diagnostic) => (
-                <text fg={theme.error}>
-                  Error [{diagnostic.range.start.line}:{diagnostic.range.start.character}]: {diagnostic.message}
-                </text>
-              )}
+              {(diagnostic) => {
+                const severity = diagnostic.severity ?? 1
+                const isWarning = severity === 2
+                const fg = isWarning ? theme.warning : theme.error
+                const label = isWarning ? "Warning" : "Error"
+                const line = diagnostic.range.start.line + 1
+                const col = diagnostic.range.start.character + 1
+                return (
+                  <text fg={fg}>
+                    {label} [{line}:{col}]: {diagnostic.message}
+                  </text>
+                )
+              }}
             </For>
           </Show>
         </BlockTool>
@@ -2256,7 +2267,9 @@ function Edit(props: ToolProps<typeof EditTool>) {
   const diagnostics = createMemo(() => {
     const filePath = Filesystem.normalizePath(props.input.filePath ?? "")
     const arr = props.metadata.diagnostics?.[filePath] ?? []
-    return arr.filter((x) => x.severity === 1).slice(0, 3)
+    const errors = arr.filter((x) => (x.severity ?? 1) === 1)
+    const warnings = arr.filter((x) => x.severity === 2)
+    return [...errors, ...warnings].slice(0, 3)
   })
 
   return (
@@ -2287,12 +2300,19 @@ function Edit(props: ToolProps<typeof EditTool>) {
           <Show when={diagnostics().length}>
             <box>
               <For each={diagnostics()}>
-                {(diagnostic) => (
-                  <text fg={theme.error}>
-                    Error [{diagnostic.range.start.line + 1}:{diagnostic.range.start.character + 1}]{" "}
-                    {diagnostic.message}
-                  </text>
-                )}
+                {(diagnostic) => {
+                  const severity = diagnostic.severity ?? 1
+                  const isWarning = severity === 2
+                  const fg = isWarning ? theme.warning : theme.error
+                  const label = isWarning ? "Warning" : "Error"
+                  const line = diagnostic.range.start.line + 1
+                  const col = diagnostic.range.start.character + 1
+                  return (
+                    <text fg={fg}>
+                      {label} [{line}:{col}] {diagnostic.message}
+                    </text>
+                  )
+                }}
               </For>
             </box>
           </Show>

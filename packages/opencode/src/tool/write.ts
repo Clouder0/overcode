@@ -15,6 +15,20 @@ import { assertExternalDirectory } from "./external-directory"
 const MAX_DIAGNOSTICS_PER_FILE = 20
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
+type Diagnostic = Parameters<typeof LSP.Diagnostic.pretty>[0]
+
+function selectDiagnostics(issues: Diagnostic[], limit: number) {
+  const errors = issues.filter((item) => (item.severity ?? 1) === 1)
+  const warnings = issues.filter((item) => item.severity === 2)
+  const selected = [...errors, ...warnings].slice(0, limit)
+  const remaining = errors.length + warnings.length - selected.length
+  return {
+    selected,
+    remaining,
+    hasErrors: errors.length > 0,
+  }
+}
+
 export const WriteTool = Tool.define("write", {
   description: DESCRIPTION,
   parameters: z.object({
@@ -58,29 +72,33 @@ export const WriteTool = Tool.define("write", {
     })
 
     let output = ""
+    const savedDiagnostics: Record<string, Diagnostic[]> = {}
     await LSP.touchFile(filepath, true)
     const diagnostics = await LSP.diagnostics()
     const normalizedFilepath = Filesystem.normalizePath(filepath)
     let projectDiagnosticsCount = 0
     for (const [file, issues] of Object.entries(diagnostics)) {
-      const errors = issues.filter((item) => item.severity === 1)
-      if (errors.length === 0) continue
-      const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
-      const suffix =
-        errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
+      const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
       if (file === normalizedFilepath) {
-        output += `\nThis file has errors, please fix\n<file_diagnostics>\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</file_diagnostics>\n`
+        if (selected.selected.length === 0) continue
+        savedDiagnostics[file] = selected.selected
+        const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
+        output += `\nThis file has diagnostics, please fix\n<file_diagnostics>\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</file_diagnostics>\n`
         continue
       }
+
+      if (!selected.hasErrors) continue
       if (projectDiagnosticsCount >= MAX_PROJECT_DIAGNOSTICS_FILES) continue
       projectDiagnosticsCount++
-      output += `\n<project_diagnostics>\n${file}\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</project_diagnostics>\n`
+      savedDiagnostics[file] = selected.selected
+      const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
+      output += `\n<project_diagnostics>\n${file}\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</project_diagnostics>\n`
     }
 
     return {
       title: path.relative(Instance.worktree, filepath),
       metadata: {
-        diagnostics,
+        diagnostics: savedDiagnostics,
         filepath,
         exists: result.exists,
       },

@@ -343,30 +343,40 @@ function getShikiLang(filename: string) {
   return type ? (overrides[type] ?? type) : "plaintext"
 }
 
-function getDiagnostics(diagnosticsByFile: Record<string, Diagnostic[]>, currentFile: string): JSX.Element[] {
+function getDiagnostics(
+  diagnosticsByFile: Record<string, Diagnostic[]> | undefined,
+  currentFile: string | undefined,
+  limit: number,
+): JSX.Element[] {
   const result: JSX.Element[] = []
 
-  if (diagnosticsByFile === undefined || diagnosticsByFile[currentFile] === undefined) return result
+  if (!diagnosticsByFile || !currentFile) return result
 
-  for (const diags of Object.values(diagnosticsByFile)) {
-    for (const d of diags) {
-      if (d.severity !== 1) continue
+  const diags = diagnosticsByFile[currentFile] ?? []
+  const errors = diags.filter((d) => (d.severity ?? 1) === 1)
+  const warnings = diags.filter((d) => d.severity === 2)
+  const selected = [...errors, ...warnings].slice(0, limit)
 
-      const line = d.range.start.line + 1
-      const column = d.range.start.character + 1
+  for (const d of selected) {
+    const severity = d.severity ?? 1
+    const isWarning = severity === 2
+    const color = isWarning ? "yellow" : "red"
+    const label = isWarning ? "Warning" : "Error"
 
-      result.push(
-        <pre>
-          <span data-color="red" data-marker="label">
-            Error
-          </span>
-          <span data-color="dimmed" data-separator>
-            [{line}:{column}]
-          </span>
-          <span>{d.message}</span>
-        </pre>,
-      )
-    }
+    const line = d.range.start.line + 1
+    const column = d.range.start.character + 1
+
+    result.push(
+      <pre>
+        <span data-color={color} data-marker="label">
+          {label}
+        </span>
+        <span data-color="dimmed" data-separator>
+          [{line}:{column}]
+        </span>
+        <span>{d.message}</span>
+      </pre>,
+    )
   }
 
   return result
@@ -538,7 +548,9 @@ export function ReadTool(props: ToolProps) {
 
 export function WriteTool(props: ToolProps) {
   const filePath = createMemo(() => stripWorkingDirectory(props.state.input?.filePath, props.message.path.cwd))
-  const diagnostics = createMemo(() => getDiagnostics(props.state.metadata?.diagnostics, props.state.input.filePath))
+  const diagnostics = createMemo(() =>
+    getDiagnostics(props.state.metadata?.diagnostics, props.state.input.filePath, 10),
+  )
 
   return (
     <>
@@ -569,7 +581,7 @@ export function WriteTool(props: ToolProps) {
 
 export function EditTool(props: ToolProps) {
   const filePath = createMemo(() => stripWorkingDirectory(props.state.input.filePath, props.message.path.cwd))
-  const diagnostics = createMemo(() => getDiagnostics(props.state.metadata?.diagnostics, props.state.input.filePath))
+  const diagnostics = createMemo(() => getDiagnostics(props.state.metadata?.diagnostics, props.state.input.filePath, 3))
 
   return (
     <>

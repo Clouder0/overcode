@@ -19,6 +19,19 @@ import { assertExternalDirectory } from "./external-directory"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
 
+type Diagnostic = Parameters<typeof LSP.Diagnostic.pretty>[0]
+
+function selectDiagnostics(issues: Diagnostic[], limit: number) {
+  const errors = issues.filter((item) => (item.severity ?? 1) === 1)
+  const warnings = issues.filter((item) => item.severity === 2)
+  const selected = [...errors, ...warnings].slice(0, limit)
+  const remaining = errors.length + warnings.length - selected.length
+  return {
+    selected,
+    remaining,
+  }
+}
+
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
 }
@@ -132,17 +145,20 @@ export const EditTool = Tool.define("edit", {
     const diagnostics = await LSP.diagnostics()
     const normalizedFilePath = Filesystem.normalizePath(filePath)
     const issues = diagnostics[normalizedFilePath] ?? []
-    const errors = issues.filter((item) => item.severity === 1)
-    if (errors.length > 0) {
-      const limited = errors.slice(0, MAX_DIAGNOSTICS_PER_FILE)
-      const suffix =
-        errors.length > MAX_DIAGNOSTICS_PER_FILE ? `\n... and ${errors.length - MAX_DIAGNOSTICS_PER_FILE} more` : ""
-      output += `\nThis file has errors, please fix\n<file_diagnostics>\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</file_diagnostics>\n`
+    const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
+    if (selected.selected.length > 0) {
+      const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
+      output += `\nThis file has diagnostics, please fix\n<file_diagnostics>\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</file_diagnostics>\n`
+    }
+
+    const savedDiagnostics: Record<string, Diagnostic[]> = {}
+    if (selected.selected.length > 0) {
+      savedDiagnostics[normalizedFilePath] = selected.selected
     }
 
     return {
       metadata: {
-        diagnostics,
+        diagnostics: savedDiagnostics,
         diff,
         filediff,
       },
