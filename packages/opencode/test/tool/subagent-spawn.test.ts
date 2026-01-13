@@ -3,8 +3,9 @@ import { describe, expect, test } from "bun:test"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { Agent } from "../../src/agent/agent"
-import type { Config } from "../../src/config/config"
+import { Config } from "../../src/config/config"
 import { Session } from "../../src/session"
+import { LLMConcurrencyMachine } from "../../src/session/llm-concurrency-machine"
 import { SubagentSpawnTool } from "../../src/tool/subagent-spawn"
 
 const ctxBase = {
@@ -17,6 +18,66 @@ const ctxBase = {
 }
 
 describe("tool.subagent_spawn fine-grained permissions", () => {
+  test("blocks spawn when global concurrency limit would be exceeded", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        agent: {
+          build: {
+            permission: {
+              subagent_spawn_agent: {
+                "*": "allow",
+              },
+            },
+          },
+        },
+        experimental: {
+          llmConcurrency: {
+            global: {
+              limits: {
+                "*": 1,
+              },
+            },
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const parent = await Session.create({})
+
+        const lim = LLMConcurrencyMachine.limits(await Config.get())
+        const lease = await LLMConcurrencyMachine.enter({
+          limits: lim,
+          providerID: "openai",
+          modelName: "gpt-5",
+          sessionID: parent.id,
+        })
+
+        const tool = await SubagentSpawnTool.init()
+        const result = await tool.execute(
+          {
+            agents: [{ agent: "explore", prompt: "blocked" }],
+          },
+          {
+            ...ctxBase,
+            sessionID: parent.id,
+          },
+        )
+
+        expect((result.metadata as any).ok).toBe(false)
+        expect((result.metadata as any).status).toBe("blocked")
+
+        const next = await Session.get(parent.id)
+        expect(next.childrenIDs).toHaveLength(0)
+
+        await lease?.release()
+        await Session.remove(parent.id)
+      },
+    })
+  })
+
   test("denies disallowed target and spawns nothing", async () => {
     await using tmp = await tmpdir({
       config: {

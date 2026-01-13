@@ -1,7 +1,11 @@
 import z from "zod"
 import { Agent } from "@/agent/agent"
+import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
+import { Provider } from "@/provider/provider"
 import { Session } from "@/session"
+import { LLMConcurrencyMachine } from "@/session/llm-concurrency-machine"
+import { MessageV2 } from "@/session/message-v2"
 import { SessionMessage } from "@/session/message-routing"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionStatus } from "@/session/status"
@@ -29,7 +33,11 @@ Common patterns:
 The subagent's system prompt will include its Current Session ID and Parent Session ID, but you must explicitly instruct it to reply if you expect a response.
 
 Spawn permissions are evaluated from the calling agent's configuration only (session tool overrides do not apply).
-If any requested agent is invalid or denied by subagent_spawn_agent, the entire call fails.`
+If any requested agent is invalid or denied by subagent_spawn_agent, the entire call fails.
+
+This tool may be blocked when global (machine-wide) LLM concurrency limits are configured (experimental.llmConcurrency.global).
+If blocked, no subagents are spawned and the tool returns ok:false with guidance. In that case, continue sequentially,
+wait and retry, or ask the human to adjust global concurrency limits.`
 
 const AGENT_DESC = "Agent type (e.g. general, explore)"
 const MAX_AGENT_ENUM = 32
@@ -103,6 +111,8 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         throw new Error(`Unknown calling agent: ${ctx.agent}`)
       }
 
+      const req = [] as Array<{ agent: string; prompt: string; info: Agent.Info }>
+
       const errors: string[] = []
       for (const item of params.agents) {
         const target = await Agent.get(item.agent).catch(() => undefined)
@@ -117,23 +127,111 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         }
 
         const rule = PermissionNext.evaluate("subagent_spawn_agent", item.agent, caller.permission)
-        if (rule.action === "allow") continue
-
         if (rule.action === "deny") {
           errors.push(`Not allowed to spawn agent: ${item.agent} (matched pattern: ${rule.pattern})`)
           continue
         }
 
-        errors.push(
-          `subagent_spawn_agent resolved to "ask" for ${ctx.agent} spawning ${item.agent} (matched pattern: ${rule.pattern}). This tool supports only allow/deny; configure permission.subagent_spawn_agent to "allow" or an allow-list like {"*":"deny","explore":"allow"}.`,
-        )
+        if (rule.action !== "allow") {
+          errors.push(
+            `subagent_spawn_agent resolved to "ask" for ${ctx.agent} spawning ${item.agent} (matched pattern: ${rule.pattern}). This tool supports only allow/deny; configure permission.subagent_spawn_agent to "allow" or an allow-list like {"*":"deny","explore":"allow"}.`,
+          )
+          continue
+        }
+
+        req.push({ agent: item.agent, prompt: item.prompt, info: target })
       }
 
       if (errors.length > 0) {
         throw new Error(["Subagent spawn preflight failed:", ...errors.map((e) => `- ${e}`)].join("\n"))
       }
 
-      for (const item of params.agents) {
+      const limits = await Config.get().then((cfg) => LLMConcurrencyMachine.limits(cfg))
+      if (limits) {
+        async function lastModel(sessionID: string) {
+          const visited = new Set<string>()
+          let current = sessionID
+
+          while (!visited.has(current)) {
+            visited.add(current)
+
+            for await (const item of MessageV2.stream(current)) {
+              if (item.info.role === "user" && item.info.model) return item.info.model
+            }
+
+            const session = await Session.get(current).catch(() => undefined)
+            if (!session?.parentID) break
+            current = session.parentID
+          }
+
+          return Provider.defaultModel()
+        }
+
+        const inherited = await lastModel(ctx.sessionID)
+
+        const keys = await Promise.all(
+          req.map(async (item) => {
+            const ref = item.info.model ?? inherited
+            const model = await Provider.getModel(ref.providerID, ref.modelID).catch(() => undefined)
+            const modelName = model?.api.id ?? ref.modelID
+            return LLMConcurrencyMachine.bucketKey({ providerID: ref.providerID, modelName })
+          }),
+        )
+
+        const request = LLMConcurrencyMachine.request(limits, keys)
+        const current = await LLMConcurrencyMachine.snapshot(limits)
+        const blocked = LLMConcurrencyMachine.blocked(limits, current, request)
+
+        if (blocked.length > 0) {
+          const map = LLMConcurrencyMachine.limitMap(limits)
+
+          const lines: string[] = []
+          lines.push(
+            "Global (machine-wide) LLM concurrency limit reached. No subagents were spawned.",
+            "",
+            "Blocked patterns:",
+          )
+
+          for (const pattern of blocked) {
+            const lim = map[pattern]
+            const cur = current.counts[pattern] ?? (pattern === "*" ? current.total : 0)
+            const add = request.counts[pattern] ?? (pattern === "*" ? request.total : 0)
+            lines.push(`- ${pattern}: ${cur}/${lim} (requested +${add})`)
+          }
+
+          lines.push(
+            "",
+            "For the assistant:",
+            "- Continue without spawning subagents, or retry with fewer subagents after current work finishes.",
+            "- If parallelism is required, ask the human to adjust global concurrency limits.",
+            "",
+            "For the human:",
+            "- Set experimental.llmConcurrency.global in your global opencode config (e.g. ~/.config/opencode/opencode.json).",
+            "- You can raise limits there if your provider rate limits allow it, or close other opencode clients to reduce load.",
+          )
+
+          const output = lines.join("\n")
+
+          return {
+            title: "subagent_spawn blocked: global concurrency limit reached",
+            metadata: {
+              ok: false,
+              status: "blocked",
+              reason: "global_llm_concurrency_limit",
+              blocked,
+              limits: map,
+              staleMs: limits.staleMs,
+              current,
+              requested: request,
+              spawned,
+              errors: ["Blocked by global LLM concurrency limit"],
+            } as any,
+            output,
+          }
+        }
+      }
+
+      for (const item of req) {
         const session = await Session.createNext({
           directory: Instance.directory,
           sessionType: "subagent",
@@ -175,9 +273,11 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
       return {
         title: `Spawned ${spawned.length} agent(s)`,
         metadata: {
+          ok: true,
+          status: "spawned",
           spawned,
           errors: [] as string[],
-        },
+        } as any,
         output: JSON.stringify({ spawned }, null, 2),
       }
     },

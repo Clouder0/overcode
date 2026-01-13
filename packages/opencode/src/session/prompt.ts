@@ -14,6 +14,7 @@ import { SessionCompaction } from "./compaction"
 import { SessionRetry } from "./retry"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
+import { TuiEvent } from "../cli/cmd/tui/event"
 import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
 import { Plugin } from "../plugin"
@@ -44,6 +45,7 @@ import { SessionStatus } from "./status"
 import { Config } from "../config/config"
 import { Shell } from "@/shell/shell"
 import { LLM } from "./llm"
+import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
 import { iife } from "@/util/iife"
 import { SessionMessage } from "./message-routing"
 import { WaitPolicy } from "./wait-policy"
@@ -55,6 +57,49 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
   export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
+
+  const warnState = Instance.state(() => {
+    return {
+      warnedAt: new Map<string, number>(),
+    }
+  })
+
+  async function warnMachineConcurrency(input: {
+    session: Session.Info
+    model: { providerID: string; modelID: string }
+  }) {
+    if (input.session.sessionType === "subagent") return
+
+    const limits = await Config.get().then((cfg) => LLMConcurrencyMachine.limits(cfg))
+    if (!limits) return
+
+    const now = Date.now()
+    const last = warnState().warnedAt.get(input.session.id) ?? 0
+    if (now - last < 10_000) return
+
+    const model = await Provider.getModel(input.model.providerID, input.model.modelID).catch(() => undefined)
+    const modelName = model?.api.id ?? input.model.modelID
+
+    const key = LLMConcurrencyMachine.bucketKey({ providerID: input.model.providerID, modelName })
+
+    const current = await LLMConcurrencyMachine.snapshot(limits)
+    const request = LLMConcurrencyMachine.request(limits, [key])
+
+    const blocked = LLMConcurrencyMachine.blocked(limits, current, request)
+    if (blocked.length === 0) return
+
+    warnState().warnedAt.set(input.session.id, now)
+
+    const message =
+      "Machine-wide LLM concurrency limit is reached; continuing because this is a primary session. Subagent spawning may be blocked until other work finishes."
+
+    Bus.publish(TuiEvent.ToastShow, {
+      title: "LLM concurrency limit",
+      message,
+      variant: "warning",
+      duration: 8000,
+    }).catch(() => {})
+  }
 
   const state = Instance.state(
     () => {
@@ -663,6 +708,13 @@ export namespace SessionPrompt {
 
     if (input.noReply === true) {
       return message
+    }
+
+    if (message.info.role === "user" && message.info.model) {
+      await warnMachineConcurrency({
+        session,
+        model: message.info.model,
+      })
     }
 
     return loop(input.sessionID)

@@ -25,6 +25,7 @@ import { Wildcard } from "@/util/wildcard"
 import { SessionToolOverrides } from "./tool-overrides"
 import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
+import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -60,6 +61,7 @@ export namespace LLM {
       providerID: input.model.providerID,
     })
     const [language, cfg] = await Promise.all([Provider.getLanguage(input.model), Config.get()])
+    const limits = LLMConcurrencyMachine.limits(cfg)
 
     const system = SystemPrompt.header(input.model.providerID)
     system.push(
@@ -139,13 +141,8 @@ export namespace LLM {
 
     const tools = await resolveTools(input)
 
-    return streamText({
-      onError(error) {
-        l.error("stream error", {
-          error,
-        })
-      },
-      async experimental_repairToolCall(failed) {
+    const args = {
+      async experimental_repairToolCall(failed: any) {
         const lower = failed.toolCall.toolName.toLowerCase()
         if (lower !== failed.toolCall.toolName && tools[lower]) {
           l.info("repairing tool call", {
@@ -233,7 +230,68 @@ export namespace LLM {
         ],
       }),
       experimental_telemetry: { isEnabled: cfg.experimental?.openTelemetry },
+    }
+
+    if (!limits) {
+      return streamText({
+        onError(error) {
+          l.error("stream error", {
+            error,
+          })
+        },
+        ...args,
+      })
+    }
+
+    const lease = await LLMConcurrencyMachine.enter({
+      limits,
+      providerID: input.model.providerID,
+      modelName: input.model.api.id,
+      sessionID: input.sessionID,
     })
+
+    const releaseState = { promise: undefined as Promise<void> | undefined }
+    const release = () => {
+      if (releaseState.promise) return releaseState.promise
+      releaseState.promise = lease?.release().catch(() => {}) ?? Promise.resolve()
+      return releaseState.promise
+    }
+
+    const stream = await Promise.resolve()
+      .then(() =>
+        streamText({
+          onError(error) {
+            release()
+            l.error("stream error", {
+              error,
+            })
+          },
+          onFinish() {
+            release()
+          },
+          ...args,
+        }),
+      )
+      .catch(async (error) => {
+        await release()
+        throw error
+      })
+
+    return {
+      ...stream,
+      fullStream: (async function* () {
+        try {
+          for await (const item of stream.fullStream) {
+            yield item
+          }
+        } finally {
+          await release()
+        }
+      })(),
+      text: stream.text.finally(() => {
+        return release()
+      }),
+    }
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "user" | "sessionID">) {

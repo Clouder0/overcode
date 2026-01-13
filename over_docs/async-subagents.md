@@ -106,6 +106,53 @@ The orchestrator doesn't see this conversation. It only sees the final result wh
 
 ---
 
+## Global (Machine-Wide) Concurrency Limits (Experimental)
+
+When you run multiple OpenCode/Overcode clients on the same machine, they typically share the same upstream provider rate limits.
+If you spawn many subagents in parallel from multiple clients, you can hit those limits quickly.
+
+Overcode supports optional **machine-wide concurrent LLM stream limits**:
+
+- Counts concurrent model streams across _all opencode processes on the machine_
+- Blocks `subagent_spawn` when the requested spawn would exceed limits
+- Allows primary (human-initiated) sessions to continue, but shows a warning when over limit
+
+### Configuration
+
+Add this to your global config (recommended): `~/.config/opencode/opencode.json` (or `opencode.jsonc`).
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "llmConcurrency": {
+      "global": {
+        "limits": {
+          "*": 4,
+          "openai/*": 2,
+          "openai/gpt-5": 1
+        },
+        "staleMs": 900000
+      }
+    }
+  }
+}
+```
+
+Notes:
+
+- Omit `experimental.llmConcurrency.global` entirely to disable the feature.
+- `limits` maps patterns to max concurrent streams; patterns match `providerID/model.api.id` (e.g. `openai/gpt-5`) and support globs (e.g. `openai/*`) plus regex keys prefixed with `re:`.
+- `staleMs` is used for crash-recovery (pruning stale leases). Keep it reasonably high to avoid false positives.
+
+### What Happens When `subagent_spawn` Is Blocked
+
+- The tool call completes with `ok: false` and a clear explanation.
+- The orchestrator should proceed without spawning subagents (sequentially), or retry later with fewer subagents.
+- The human can close other opencode clients or adjust global limits if desired.
+
+---
+
 ## How to Use
 
 ### Spawning Subagents
