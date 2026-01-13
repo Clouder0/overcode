@@ -76,3 +76,23 @@ describe("tui.selectSession endpoint", () => {
     })
   })
 })
+
+describe("session.diff endpoint", () => {
+  test("should return 200 with empty array when diff file is missing", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const session = await Session.create({})
+
+        const app = Server.App()
+        const response = await app.request(`/session/${session.id}/diff`)
+
+        expect(response.status).toBe(200)
+        const body = await response.json()
+        expect(body).toEqual([])
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+})

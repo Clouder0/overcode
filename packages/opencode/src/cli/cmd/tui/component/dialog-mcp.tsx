@@ -7,6 +7,7 @@ import { useTheme } from "../context/theme"
 import { Keybind } from "@/util/keybind"
 import { TextAttributes } from "@opentui/core"
 import { useSDK } from "@tui/context/sdk"
+import { useToast } from "../ui/toast"
 
 function Status(props: { enabled: boolean; loading: boolean }) {
   const { theme } = useTheme()
@@ -23,6 +24,7 @@ export function DialogMcp() {
   const local = useLocal()
   const sync = useSync()
   const sdk = useSDK()
+  const toast = useToast()
   const [, setRef] = createSignal<DialogSelectRef<unknown>>()
   const [loading, setLoading] = createSignal<string | null>(null)
 
@@ -61,10 +63,13 @@ export function DialogMcp() {
           if (status.data) {
             sync.set("mcp", status.data)
           } else {
-            console.error("Failed to refresh MCP status: no data returned")
+            toast.show({
+              message: "Failed to refresh MCP status",
+              variant: "error",
+            })
           }
         } catch (error) {
-          console.error("Failed to toggle MCP:", error)
+          toast.error(error)
         } finally {
           setLoading(null)
         }

@@ -134,26 +134,26 @@ The opencode server exposes the following APIs.
 
 ### Sessions
 
-| Method   | Path                                     | Description                           | Notes                                                                              |
-| -------- | ---------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------- |
-| `GET`    | `/session`                               | List all sessions                     | Returns <a href={typesUrl}><code>Session[]</code></a>                              |
-| `POST`   | `/session`                               | Create a new session                  | body: `{ parentID?, title? }`, returns <a href={typesUrl}><code>Session</code></a> |
-| `GET`    | `/session/status`                        | Get session status for all sessions   | Returns `{ [sessionID: string]: `<a href={typesUrl}>SessionStatus</a>` }`          |
-| `GET`    | `/session/:id`                           | Get session details                   | Returns <a href={typesUrl}><code>Session</code></a>                                |
-| `DELETE` | `/session/:id`                           | Delete a session and all its data     | Returns `boolean`                                                                  |
-| `PATCH`  | `/session/:id`                           | Update session properties             | body: `{ title? }`, returns <a href={typesUrl}><code>Session</code></a>            |
-| `GET`    | `/session/:id/children`                  | Get a session's child sessions        | Returns <a href={typesUrl}><code>Session[]</code></a>                              |
-| `GET`    | `/session/:id/todo`                      | Get the todo list for a session       | Returns <a href={typesUrl}><code>Todo[]</code></a>                                 |
-| `POST`   | `/session/:id/init`                      | Analyze app and create `AGENTS.md`    | body: `{ messageID, providerID, modelID }`, returns `boolean`                      |
-| `POST`   | `/session/:id/fork`                      | Fork an existing session at a message | body: `{ messageID? }`, returns <a href={typesUrl}><code>Session</code></a>        |
-| `POST`   | `/session/:id/abort`                     | Abort a running session               | Returns `boolean`                                                                  |
-| `POST`   | `/session/:id/share`                     | Share a session                       | Returns <a href={typesUrl}><code>Session</code></a>                                |
-| `DELETE` | `/session/:id/share`                     | Unshare a session                     | Returns <a href={typesUrl}><code>Session</code></a>                                |
-| `GET`    | `/session/:id/diff`                      | Get the diff for this session         | query: `messageID?`, returns <a href={typesUrl}><code>FileDiff[]</code></a>        |
-| `POST`   | `/session/:id/summarize`                 | Summarize the session                 | body: `{ providerID, modelID }`, returns `boolean`                                 |
-| `POST`   | `/session/:id/revert`                    | Revert a message                      | body: `{ messageID, partID? }`, returns `boolean`                                  |
-| `POST`   | `/session/:id/unrevert`                  | Restore all reverted messages         | Returns `boolean`                                                                  |
-| `POST`   | `/session/:id/permissions/:permissionID` | Respond to a permission request       | body: `{ response, remember? }`, returns `boolean`                                 |
+| Method   | Path                                     | Description                           | Notes                                                                               |
+| -------- | ---------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GET`    | `/session`                               | List all sessions                     | Returns <a href={typesUrl}><code>Session[]</code></a>                               |
+| `POST`   | `/session`                               | Create a new session                  | body: `{ parentID?, title? }`, returns <a href={typesUrl}><code>Session</code></a>  |
+| `GET`    | `/session/status`                        | Get session status for all sessions   | Returns `{ [sessionID: string]: `<a href={typesUrl}>SessionStatus</a>` }`           |
+| `GET`    | `/session/:id`                           | Get session details                   | Returns <a href={typesUrl}><code>Session</code></a>                                 |
+| `DELETE` | `/session/:id`                           | Delete a session and all its data     | Returns `boolean`                                                                   |
+| `PATCH`  | `/session/:id`                           | Update session properties             | body: `{ title? }`, returns <a href={typesUrl}><code>Session</code></a>             |
+| `GET`    | `/session/:id/children`                  | Get a session's child sessions        | Returns <a href={typesUrl}><code>Session[]</code></a>                               |
+| `GET`    | `/session/:id/todo`                      | Get the todo list for a session       | Returns <a href={typesUrl}><code>Todo[]</code></a>                                  |
+| `POST`   | `/session/:id/init`                      | Analyze app and create `AGENTS.md`    | body: `{ messageID, providerID, modelID }`, returns `boolean`                       |
+| `POST`   | `/session/:id/fork`                      | Fork an existing session at a message | body: `{ messageID? }`, returns <a href={typesUrl}><code>Session</code></a>         |
+| `POST`   | `/session/:id/abort`                     | Abort a running session               | Returns `boolean`                                                                   |
+| `POST`   | `/session/:id/share`                     | Share a session                       | Returns <a href={typesUrl}><code>Session</code></a>                                 |
+| `DELETE` | `/session/:id/share`                     | Unshare a session                     | Returns <a href={typesUrl}><code>Session</code></a>                                 |
+| `GET`    | `/session/:id/diff`                      | Get the diff for this session         | returns <a href={typesUrl}><code>FileDiff[]</code></a>                              |
+| `POST`   | `/session/:id/summarize`                 | Summarize the session                 | body: `{ providerID, modelID }`, returns `boolean`                                  |
+| `POST`   | `/session/:id/revert`                    | Revert a message                      | body: `{ messageID, partID? }`, returns <a href={typesUrl}><code>Session</code></a> |
+| `POST`   | `/session/:id/unrevert`                  | Restore all reverted messages         | Returns <a href={typesUrl}><code>Session</code></a>                                 |
+| `POST`   | `/session/:id/permissions/:permissionID` | Respond to a permission request       | body: `{ response }`, returns `boolean`                                             |
 
 ---
 
@@ -237,19 +237,17 @@ The opencode server exposes the following APIs.
 
 ### TUI
 
-| Method | Path                    | Description                                 | Response               |
-| ------ | ----------------------- | ------------------------------------------- | ---------------------- |
-| `POST` | `/tui/append-prompt`    | Append text to the prompt                   | `boolean`              |
-| `POST` | `/tui/open-help`        | Open the help dialog                        | `boolean`              |
-| `POST` | `/tui/open-sessions`    | Open the session selector                   | `boolean`              |
-| `POST` | `/tui/open-themes`      | Open the theme selector                     | `boolean`              |
-| `POST` | `/tui/open-models`      | Open the model selector                     | `boolean`              |
-| `POST` | `/tui/submit-prompt`    | Submit the current prompt                   | `boolean`              |
-| `POST` | `/tui/clear-prompt`     | Clear the prompt                            | `boolean`              |
-| `POST` | `/tui/execute-command`  | Execute a command (`{ command }`)           | `boolean`              |
-| `POST` | `/tui/show-toast`       | Show toast (`{ title?, message, variant }`) | `boolean`              |
-| `GET`  | `/tui/control/next`     | Wait for the next control request           | Control request object |
-| `POST` | `/tui/control/response` | Respond to a control request (`{ body }`)   | `boolean`              |
+| Method | Path                   | Description                                 | Response  |
+| ------ | ---------------------- | ------------------------------------------- | --------- |
+| `POST` | `/tui/append-prompt`   | Append text to the prompt                   | `boolean` |
+| `POST` | `/tui/open-help`       | Open the help dialog                        | `boolean` |
+| `POST` | `/tui/open-sessions`   | Open the session selector                   | `boolean` |
+| `POST` | `/tui/open-themes`     | Open the theme selector                     | `boolean` |
+| `POST` | `/tui/open-models`     | Open the model selector                     | `boolean` |
+| `POST` | `/tui/submit-prompt`   | Submit the current prompt                   | `boolean` |
+| `POST` | `/tui/clear-prompt`    | Clear the prompt                            | `boolean` |
+| `POST` | `/tui/execute-command` | Execute a command (`{ command }`)           | `boolean` |
+| `POST` | `/tui/show-toast`      | Show toast (`{ title?, message, variant }`) | `boolean` |
 
 ---
 

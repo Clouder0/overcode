@@ -8,6 +8,20 @@ import { Instance } from "../../src/project/instance"
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
 
+describe("session.diff", () => {
+  test("returns empty array when diff file is missing", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const session = await Session.create({})
+        const diffs = await Session.diff(session.id)
+        expect(diffs).toEqual([])
+        await Session.remove(session.id)
+      },
+    })
+  })
+})
+
 describe("session.started event", () => {
   test("should emit session.started event when session is created", async () => {
     await Instance.provide({

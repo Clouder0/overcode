@@ -4,13 +4,6 @@ export type ClientOptions = {
   baseUrl: `${string}://${string}` | (string & {})
 }
 
-export type UnknownError = {
-  name: "UnknownError"
-  data: {
-    message: string
-  }
-}
-
 export type EventInstallationUpdated = {
   type: "installation.updated"
   properties: {
@@ -105,6 +98,13 @@ export type ProviderAuthError = {
   name: "ProviderAuthError"
   data: {
     providerID: string
+    message: string
+  }
+}
+
+export type UnknownError = {
+  name: "UnknownError"
+  data: {
     message: string
   }
 }
@@ -600,6 +600,10 @@ export type QuestionInfo = {
    * Available choices
    */
   options: Array<QuestionOption>
+  /**
+   * Allow selecting multiple choices
+   */
+  multiple?: boolean
 }
 
 export type QuestionRequest = {
@@ -620,12 +624,14 @@ export type EventQuestionAsked = {
   properties: QuestionRequest
 }
 
+export type QuestionAnswer = Array<string>
+
 export type EventQuestionReplied = {
   type: "question.replied"
   properties: {
     sessionID: string
     requestID: string
-    answers: Array<string>
+    answers: Array<QuestionAnswer>
   }
 }
 
@@ -2152,6 +2158,7 @@ export type OAuth = {
   refresh: string
   access: string
   expires: number
+  accountId?: string
   enterpriseUrl?: string
 }
 
@@ -2198,10 +2205,13 @@ export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthRespo
 
 export type GlobalEventData = {
   body?: never
-  path?: never
-  query?: {
-    directory?: string
+  path: {
+    /**
+     * Session ID
+     */
+    sessionID: string
   }
+  query?: never
   url: "/global/event"
 }
 
@@ -2307,7 +2317,13 @@ export type ProjectCurrentResponses = {
 export type ProjectCurrentResponse = ProjectCurrentResponses[keyof ProjectCurrentResponses]
 
 export type ProjectUpdateData = {
-  body?: Part
+  body?: {
+    name?: string
+    icon?: {
+      url?: string
+      color?: string
+    }
+  }
   path: {
     projectID: string
   }
@@ -2371,7 +2387,12 @@ export type QuestionListResponses = {
 export type QuestionListResponse = QuestionListResponses[keyof QuestionListResponses]
 
 export type QuestionReplyData = {
-  body?: unknown
+  body?: {
+    /**
+     * User answers in order of questions (each answer is an array of selected labels)
+     */
+    answers: Array<QuestionAnswer>
+  }
   path: {
     requestID: string
   }
@@ -2408,7 +2429,7 @@ export type QuestionReplyResponses = {
 export type QuestionReplyResponse = QuestionReplyResponses[keyof QuestionReplyResponses]
 
 export type QuestionRejectData = {
-  body?: unknown
+  body?: never
   path: {
     requestID: string
   }
@@ -2472,10 +2493,16 @@ export type PtyListResponses = {
 export type PtyListResponse = PtyListResponses[keyof PtyListResponses]
 
 export type PtyCreateData = {
-  body?: unknown
-  path: {
-    requestID: string
+  body?: {
+    command?: string
+    args?: Array<string>
+    cwd?: string
+    title?: string
+    env?: {
+      [key: string]: string
+    }
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -2571,7 +2598,13 @@ export type PtyGetResponses = {
 export type PtyGetResponse = PtyGetResponses[keyof PtyGetResponses]
 
 export type PtyUpdateData = {
-  body?: Auth
+  body?: {
+    title?: string
+    size?: {
+      rows: number
+      cols: number
+    }
+  }
   path: {
     ptyID: string
   }
@@ -2633,9 +2666,7 @@ export type PtyConnectError = PtyConnectErrors[keyof PtyConnectErrors]
 
 export type ConfigGetData = {
   body?: never
-  path: {
-    ptyID: string
-  }
+  path?: never
   query?: {
     directory?: string
   }
@@ -2661,10 +2692,8 @@ export type ConfigGetResponses = {
 export type ConfigGetResponse = ConfigGetResponses[keyof ConfigGetResponses]
 
 export type ConfigUpdateData = {
-  body?: Part
-  path: {
-    projectID: string
-  }
+  body?: Config
+  path?: never
   query?: {
     directory?: string
   }
@@ -2695,9 +2724,7 @@ export type ConfigUpdateResponse = ConfigUpdateResponses[keyof ConfigUpdateRespo
 
 export type ToolIdsData = {
   body?: never
-  path: {
-    ptyID: string
-  }
+  path?: never
   query?: {
     directory?: string
   }
@@ -2728,9 +2755,7 @@ export type ToolIdsResponse = ToolIdsResponses[keyof ToolIdsResponses]
 
 export type ToolListData = {
   body?: never
-  path: {
-    ptyID: string
-  }
+  path?: never
   query: {
     directory?: string
     provider: string
@@ -2762,10 +2787,8 @@ export type ToolListResponses = {
 export type ToolListResponse = ToolListResponses[keyof ToolListResponses]
 
 export type InstanceDisposeData = {
-  body?: unknown
-  path: {
-    requestID: string
-  }
+  body?: never
+  path?: never
   query?: {
     directory?: string
   }
@@ -2793,10 +2816,8 @@ export type InstanceDisposeResponse = InstanceDisposeResponses[keyof InstanceDis
 export type PathGetData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    provider: string
-    model: string
   }
   url: "/path"
 }
@@ -2822,10 +2843,8 @@ export type PathGetResponse = PathGetResponses[keyof PathGetResponses]
 export type WorktreeListData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    provider: string
-    model: string
   }
   url: "/experimental/worktree"
 }
@@ -2849,10 +2868,8 @@ export type WorktreeListResponses = {
 export type WorktreeListResponse = WorktreeListResponses[keyof WorktreeListResponses]
 
 export type WorktreeCreateData = {
-  body?: unknown
-  path: {
-    requestID: string
-  }
+  body?: WorktreeCreateInput
+  path?: never
   query?: {
     directory?: string
   }
@@ -2884,10 +2901,8 @@ export type WorktreeCreateResponse = WorktreeCreateResponses[keyof WorktreeCreat
 export type VcsGetData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    provider: string
-    model: string
   }
   url: "/vcs"
 }
@@ -2913,10 +2928,8 @@ export type VcsGetResponse = VcsGetResponses[keyof VcsGetResponses]
 export type SessionListData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    provider: string
-    model: string
     /**
      * Filter sessions updated on or after this timestamp (milliseconds since epoch)
      */
@@ -2952,10 +2965,12 @@ export type SessionListResponses = {
 export type SessionListResponse = SessionListResponses[keyof SessionListResponses]
 
 export type SessionCreateData = {
-  body?: unknown
-  path: {
-    requestID: string
+  body?: {
+    parentID?: string
+    title?: string
+    permission?: PermissionRuleset
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -2989,18 +3004,6 @@ export type SessionStatusData = {
   path?: never
   query?: {
     directory?: string
-    /**
-     * Filter sessions updated on or after this timestamp (milliseconds since epoch)
-     */
-    start?: number
-    /**
-     * Filter sessions by title (case-insensitive)
-     */
-    search?: string
-    /**
-     * Maximum number of sessions to return
-     */
-    limit?: number
   }
   url: "/session/status"
 }
@@ -3032,7 +3035,6 @@ export type SessionStatusResponse = SessionStatusResponses[keyof SessionStatusRe
 export type SessionDeleteData = {
   body?: never
   path: {
-    ptyID: string
     sessionID: string
   }
   query?: {
@@ -3070,22 +3072,13 @@ export type SessionDeleteResponse = SessionDeleteResponses[keyof SessionDeleteRe
 export type SessionGetData = {
   body?: never
   path: {
+    /**
+     * Session ID
+     */
     sessionID: string
   }
   query?: {
     directory?: string
-    /**
-     * Filter sessions updated on or after this timestamp (milliseconds since epoch)
-     */
-    start?: number
-    /**
-     * Filter sessions by title (case-insensitive)
-     */
-    search?: string
-    /**
-     * Maximum number of sessions to return
-     */
-    limit?: number
   }
   url: "/session/{sessionID}"
 }
@@ -3117,9 +3110,16 @@ export type SessionGetResponses = {
 export type SessionGetResponse = SessionGetResponses[keyof SessionGetResponses]
 
 export type SessionUpdateData = {
-  body?: Part
+  body?: {
+    title?: string
+    time?: {
+      archived?: number
+    }
+  }
   path: {
-    projectID: string
+    /**
+     * Session ID
+     */
     sessionID: string
   }
   query?: {
@@ -3211,10 +3211,6 @@ export type SessionTodoErrors = {
    */
   400: BadRequest
   /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
    * Internal server error
    */
   500: UnknownError
@@ -3232,9 +3228,12 @@ export type SessionTodoResponses = {
 export type SessionTodoResponse = SessionTodoResponses[keyof SessionTodoResponses]
 
 export type SessionInitData = {
-  body?: unknown
+  body?: {
+    modelID: string
+    providerID: string
+    messageID: string
+  }
   path: {
-    requestID: string
     /**
      * Session ID
      */
@@ -3273,7 +3272,9 @@ export type SessionInitResponses = {
 export type SessionInitResponse = SessionInitResponses[keyof SessionInitResponses]
 
 export type SessionForkData = {
-  body?: unknown
+  body?: {
+    messageID?: string
+  }
   path: {
     sessionID: string
   }
@@ -3302,8 +3303,11 @@ export type SessionForkResponses = {
 export type SessionForkResponse = SessionForkResponses[keyof SessionForkResponses]
 
 export type SessionAbortData = {
-  body?: unknown
+  body?: never
   path: {
+    /**
+     * Session ID
+     */
     sessionID: string
   }
   query?: {
@@ -3317,10 +3321,6 @@ export type SessionAbortErrors = {
    * Bad request
    */
   400: BadRequest
-  /**
-   * Not found
-   */
-  404: NotFoundError
   /**
    * Internal server error
    */
@@ -3376,8 +3376,11 @@ export type SessionUnshareResponses = {
 export type SessionUnshareResponse = SessionUnshareResponses[keyof SessionUnshareResponses]
 
 export type SessionShareData = {
-  body?: unknown
+  body?: never
   path: {
+    /**
+     * Session ID
+     */
     sessionID: string
   }
   query?: {
@@ -3413,7 +3416,11 @@ export type SessionShareResponses = {
 export type SessionShareResponse = SessionShareResponses[keyof SessionShareResponses]
 
 export type SessionSummarizeData = {
-  body?: unknown
+  body?: {
+    providerID: string
+    modelID: string
+    auto?: boolean
+  }
   path: {
     /**
      * Session ID
@@ -3473,10 +3480,6 @@ export type SessionMessagesErrors = {
    */
   400: BadRequest
   /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
    * Internal server error
    */
   500: UnknownError
@@ -3497,7 +3500,24 @@ export type SessionMessagesResponses = {
 export type SessionMessagesResponse = SessionMessagesResponses[keyof SessionMessagesResponses]
 
 export type SessionPromptData = {
-  body?: unknown
+  body?: {
+    messageID?: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
+    agent?: string
+    noReply?: boolean
+    /**
+     * @deprecated tools and permissions have been merged, you can set permissions on the session itself now
+     */
+    tools?: {
+      [key: string]: boolean
+    }
+    system?: string
+    variant?: string
+    parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
+  }
   path: {
     /**
      * Session ID
@@ -3549,7 +3569,6 @@ export type SessionDiffData = {
   }
   query?: {
     directory?: string
-    limit?: number
   }
   url: "/session/{sessionID}/diff"
 }
@@ -3559,10 +3578,6 @@ export type SessionDiffErrors = {
    * Bad request
    */
   400: BadRequest
-  /**
-   * Not found
-   */
-  404: NotFoundError
   /**
    * Internal server error
    */
@@ -3732,7 +3747,24 @@ export type PartUpdateResponses = {
 export type PartUpdateResponse = PartUpdateResponses[keyof PartUpdateResponses]
 
 export type SessionPromptAsyncData = {
-  body?: unknown
+  body?: {
+    messageID?: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
+    agent?: string
+    noReply?: boolean
+    /**
+     * @deprecated tools and permissions have been merged, you can set permissions on the session itself now
+     */
+    tools?: {
+      [key: string]: boolean
+    }
+    system?: string
+    variant?: string
+    parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
+  }
   path: {
     /**
      * Session ID
@@ -3772,7 +3804,14 @@ export type SessionPromptAsyncResponses = {
 export type SessionPromptAsyncResponse = SessionPromptAsyncResponses[keyof SessionPromptAsyncResponses]
 
 export type SessionCommandData = {
-  body?: unknown
+  body?: {
+    messageID?: string
+    agent?: string
+    model?: string
+    arguments: string
+    command: string
+    variant?: string
+  }
   path: {
     /**
      * Session ID
@@ -3815,7 +3854,14 @@ export type SessionCommandResponses = {
 export type SessionCommandResponse = SessionCommandResponses[keyof SessionCommandResponses]
 
 export type SessionShellData = {
-  body?: unknown
+  body?: {
+    agent: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
+    command: string
+  }
   path: {
     /**
      * Session ID
@@ -3859,8 +3905,14 @@ export type SessionShellResponses = {
 export type SessionShellResponse = SessionShellResponses[keyof SessionShellResponses]
 
 export type SessionRevertData = {
-  body?: unknown
+  body?: {
+    messageID: string
+    partID?: string
+  }
   path: {
+    /**
+     * Session ID
+     */
     sessionID: string
   }
   query?: {
@@ -3900,8 +3952,11 @@ export type SessionRevertResponses = {
 export type SessionRevertResponse = SessionRevertResponses[keyof SessionRevertResponses]
 
 export type SessionUnrevertData = {
-  body?: unknown
+  body?: never
   path: {
+    /**
+     * Session ID
+     */
     sessionID: string
   }
   query?: {
@@ -3941,8 +3996,13 @@ export type SessionUnrevertResponses = {
 export type SessionUnrevertResponse = SessionUnrevertResponses[keyof SessionUnrevertResponses]
 
 export type PermissionRespondData = {
-  body?: unknown
+  body?: {
+    response: "once" | "always" | "reject"
+  }
   path: {
+    /**
+     * Session ID
+     */
     sessionID: string
     permissionID: string
   }
@@ -3979,10 +4039,11 @@ export type PermissionRespondResponses = {
 export type PermissionRespondResponse = PermissionRespondResponses[keyof PermissionRespondResponses]
 
 export type PermissionReplyData = {
-  body?: unknown
+  body?: {
+    reply: "once" | "always" | "reject"
+    message?: string
+  }
   path: {
-    sessionID: string
-    permissionID: string
     requestID: string
   }
   query?: {
@@ -4019,16 +4080,7 @@ export type PermissionReplyResponse = PermissionReplyResponses[keyof PermissionR
 
 export type PermissionListData = {
   body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-    /**
-     * Message ID
-     */
-    messageID: string
-  }
+  path?: never
   query?: {
     directory?: string
   }
@@ -4055,16 +4107,7 @@ export type PermissionListResponse = PermissionListResponses[keyof PermissionLis
 
 export type CommandListData = {
   body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-    /**
-     * Message ID
-     */
-    messageID: string
-  }
+  path?: never
   query?: {
     directory?: string
   }
@@ -4091,16 +4134,7 @@ export type CommandListResponse = CommandListResponses[keyof CommandListResponse
 
 export type ConfigProvidersData = {
   body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-    /**
-     * Message ID
-     */
-    messageID: string
-  }
+  path?: never
   query?: {
     directory?: string
   }
@@ -4132,16 +4166,7 @@ export type ConfigProvidersResponse = ConfigProvidersResponses[keyof ConfigProvi
 
 export type ProviderListData = {
   body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-    /**
-     * Message ID
-     */
-    messageID: string
-  }
+  path?: never
   query?: {
     directory?: string
   }
@@ -4233,16 +4258,7 @@ export type ProviderListResponse = ProviderListResponses[keyof ProviderListRespo
 
 export type ProviderAuthData = {
   body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-    /**
-     * Message ID
-     */
-    messageID: string
-  }
+  path?: never
   query?: {
     directory?: string
   }
@@ -4270,9 +4286,13 @@ export type ProviderAuthResponses = {
 export type ProviderAuthResponse = ProviderAuthResponses[keyof ProviderAuthResponses]
 
 export type ProviderOauthAuthorizeData = {
-  body?: unknown
+  body?: {
+    /**
+     * Auth method index
+     */
+    method: number
+  }
   path: {
-    requestID: string
     /**
      * Provider ID
      */
@@ -4307,7 +4327,16 @@ export type ProviderOauthAuthorizeResponses = {
 export type ProviderOauthAuthorizeResponse = ProviderOauthAuthorizeResponses[keyof ProviderOauthAuthorizeResponses]
 
 export type ProviderOauthCallbackData = {
-  body?: unknown
+  body?: {
+    /**
+     * Auth method index
+     */
+    method: number
+    /**
+     * OAuth authorization code
+     */
+    code?: string
+  }
   path: {
     /**
      * Provider ID
@@ -4344,16 +4373,7 @@ export type ProviderOauthCallbackResponse = ProviderOauthCallbackResponses[keyof
 
 export type FindTextData = {
   body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-    /**
-     * Message ID
-     */
-    messageID: string
-  }
+  path?: never
   query: {
     directory?: string
     pattern: string
@@ -4400,7 +4420,6 @@ export type FindFilesData = {
   path?: never
   query: {
     directory?: string
-    pattern: string
     query: string
     dirs?: "true" | "false"
     type?: "file" | "directory"
@@ -4433,9 +4452,6 @@ export type FindSymbolsData = {
   query: {
     directory?: string
     query: string
-    dirs?: "true" | "false"
-    type?: "file" | "directory"
-    limit?: number
   }
   url: "/find/symbol"
 }
@@ -4463,7 +4479,6 @@ export type FileListData = {
   path?: never
   query: {
     directory?: string
-    query: string
     path: string
   }
   url: "/file"
@@ -4518,9 +4533,8 @@ export type FileReadResponse = FileReadResponses[keyof FileReadResponses]
 export type FileStatusData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    path: string
   }
   url: "/file/status"
 }
@@ -4544,13 +4558,27 @@ export type FileStatusResponses = {
 export type FileStatusResponse = FileStatusResponses[keyof FileStatusResponses]
 
 export type AppLogData = {
-  body?: unknown
-  path: {
+  body?: {
     /**
-     * Provider ID
+     * Service name for the log entry
      */
-    providerID: string
+    service: string
+    /**
+     * Log level
+     */
+    level: "debug" | "info" | "error" | "warn"
+    /**
+     * Log message
+     */
+    message: string
+    /**
+     * Additional metadata for the log entry
+     */
+    extra?: {
+      [key: string]: unknown
+    }
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -4582,9 +4610,8 @@ export type AppLogResponse = AppLogResponses[keyof AppLogResponses]
 export type AppAgentsData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    path: string
   }
   url: "/agent"
 }
@@ -4610,9 +4637,8 @@ export type AppAgentsResponse = AppAgentsResponses[keyof AppAgentsResponses]
 export type McpStatusData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    path: string
   }
   url: "/mcp"
 }
@@ -4638,13 +4664,11 @@ export type McpStatusResponses = {
 export type McpStatusResponse = McpStatusResponses[keyof McpStatusResponses]
 
 export type McpAddData = {
-  body?: unknown
-  path: {
-    /**
-     * Provider ID
-     */
-    providerID: string
+  body?: {
+    name: string
+    config: McpLocalConfig | McpRemoteConfig
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -4678,18 +4702,6 @@ export type McpAddResponse = McpAddResponses[keyof McpAddResponses]
 export type McpAuthRemoveData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-    /**
-     * Message ID
-     */
-    messageID: string
-    /**
-     * Part ID
-     */
-    partID: string
     name: string
   }
   query?: {
@@ -4723,12 +4735,8 @@ export type McpAuthRemoveResponses = {
 export type McpAuthRemoveResponse = McpAuthRemoveResponses[keyof McpAuthRemoveResponses]
 
 export type McpAuthStartData = {
-  body?: unknown
+  body?: never
   path: {
-    /**
-     * Provider ID
-     */
-    providerID: string
     name: string
   }
   query?: {
@@ -4769,12 +4777,13 @@ export type McpAuthStartResponses = {
 export type McpAuthStartResponse = McpAuthStartResponses[keyof McpAuthStartResponses]
 
 export type McpAuthCallbackData = {
-  body?: unknown
-  path: {
+  body?: {
     /**
-     * Provider ID
+     * Authorization code from OAuth callback
      */
-    providerID: string
+    code: string
+  }
+  path: {
     name: string
   }
   query?: {
@@ -4810,12 +4819,8 @@ export type McpAuthCallbackResponses = {
 export type McpAuthCallbackResponse = McpAuthCallbackResponses[keyof McpAuthCallbackResponses]
 
 export type McpAuthAuthenticateData = {
-  body?: unknown
+  body?: never
   path: {
-    /**
-     * Provider ID
-     */
-    providerID: string
     name: string
   }
   query?: {
@@ -4851,12 +4856,8 @@ export type McpAuthAuthenticateResponses = {
 export type McpAuthAuthenticateResponse = McpAuthAuthenticateResponses[keyof McpAuthAuthenticateResponses]
 
 export type McpConnectData = {
-  body?: unknown
+  body?: never
   path: {
-    /**
-     * Provider ID
-     */
-    providerID: string
     name: string
   }
   query?: {
@@ -4884,7 +4885,7 @@ export type McpConnectResponses = {
 export type McpConnectResponse = McpConnectResponses[keyof McpConnectResponses]
 
 export type McpDisconnectData = {
-  body?: unknown
+  body?: never
   path: {
     name: string
   }
@@ -4915,9 +4916,8 @@ export type McpDisconnectResponse = McpDisconnectResponses[keyof McpDisconnectRe
 export type ExperimentalResourceListData = {
   body?: never
   path?: never
-  query: {
+  query?: {
     directory?: string
-    path: string
     /**
      * Filter resources by name (case-insensitive)
      */
@@ -4952,10 +4952,6 @@ export type LspStatusData = {
   path?: never
   query?: {
     directory?: string
-    /**
-     * Filter resources by name (case-insensitive)
-     */
-    search?: string
   }
   url: "/lsp"
 }
@@ -4983,10 +4979,6 @@ export type FormatterStatusData = {
   path?: never
   query?: {
     directory?: string
-    /**
-     * Filter resources by name (case-insensitive)
-     */
-    search?: string
   }
   url: "/formatter"
 }
@@ -5010,10 +5002,10 @@ export type FormatterStatusResponses = {
 export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterStatusResponses]
 
 export type TuiAppendPromptData = {
-  body?: unknown
-  path: {
-    name: string
+  body?: {
+    text: string
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -5043,10 +5035,8 @@ export type TuiAppendPromptResponses = {
 export type TuiAppendPromptResponse = TuiAppendPromptResponses[keyof TuiAppendPromptResponses]
 
 export type TuiOpenHelpData = {
-  body?: unknown
-  path: {
-    name: string
-  }
+  body?: never
+  path?: never
   query?: {
     directory?: string
   }
@@ -5072,10 +5062,8 @@ export type TuiOpenHelpResponses = {
 export type TuiOpenHelpResponse = TuiOpenHelpResponses[keyof TuiOpenHelpResponses]
 
 export type TuiOpenSessionsData = {
-  body?: unknown
-  path: {
-    name: string
-  }
+  body?: never
+  path?: never
   query?: {
     directory?: string
   }
@@ -5101,10 +5089,8 @@ export type TuiOpenSessionsResponses = {
 export type TuiOpenSessionsResponse = TuiOpenSessionsResponses[keyof TuiOpenSessionsResponses]
 
 export type TuiOpenThemesData = {
-  body?: unknown
-  path: {
-    name: string
-  }
+  body?: never
+  path?: never
   query?: {
     directory?: string
   }
@@ -5130,10 +5116,8 @@ export type TuiOpenThemesResponses = {
 export type TuiOpenThemesResponse = TuiOpenThemesResponses[keyof TuiOpenThemesResponses]
 
 export type TuiOpenModelsData = {
-  body?: unknown
-  path: {
-    name: string
-  }
+  body?: never
+  path?: never
   query?: {
     directory?: string
   }
@@ -5159,10 +5143,8 @@ export type TuiOpenModelsResponses = {
 export type TuiOpenModelsResponse = TuiOpenModelsResponses[keyof TuiOpenModelsResponses]
 
 export type TuiSubmitPromptData = {
-  body?: unknown
-  path: {
-    name: string
-  }
+  body?: never
+  path?: never
   query?: {
     directory?: string
   }
@@ -5188,10 +5170,8 @@ export type TuiSubmitPromptResponses = {
 export type TuiSubmitPromptResponse = TuiSubmitPromptResponses[keyof TuiSubmitPromptResponses]
 
 export type TuiClearPromptData = {
-  body?: unknown
-  path: {
-    name: string
-  }
+  body?: never
+  path?: never
   query?: {
     directory?: string
   }
@@ -5217,10 +5197,10 @@ export type TuiClearPromptResponses = {
 export type TuiClearPromptResponse = TuiClearPromptResponses[keyof TuiClearPromptResponses]
 
 export type TuiExecuteCommandData = {
-  body?: unknown
-  path: {
-    name: string
+  body?: {
+    command: string
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -5250,10 +5230,16 @@ export type TuiExecuteCommandResponses = {
 export type TuiExecuteCommandResponse = TuiExecuteCommandResponses[keyof TuiExecuteCommandResponses]
 
 export type TuiShowToastData = {
-  body?: unknown
-  path: {
-    name: string
+  body?: {
+    title?: string
+    message: string
+    variant: "info" | "success" | "warning" | "error"
+    /**
+     * Duration in milliseconds
+     */
+    duration?: number
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -5279,10 +5265,8 @@ export type TuiShowToastResponses = {
 export type TuiShowToastResponse = TuiShowToastResponses[keyof TuiShowToastResponses]
 
 export type TuiPublishData = {
-  body?: unknown
-  path: {
-    name: string
-  }
+  body?: EventTuiPromptAppend | EventTuiCommandExecute | EventTuiToastShow | EventTuiSessionSelect
+  path?: never
   query?: {
     directory?: string
   }
@@ -5312,10 +5296,13 @@ export type TuiPublishResponses = {
 export type TuiPublishResponse = TuiPublishResponses[keyof TuiPublishResponses]
 
 export type TuiSelectSessionData = {
-  body?: unknown
-  path: {
-    name: string
+  body?: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
   }
+  path?: never
   query?: {
     directory?: string
   }
@@ -5348,73 +5335,9 @@ export type TuiSelectSessionResponses = {
 
 export type TuiSelectSessionResponse = TuiSelectSessionResponses[keyof TuiSelectSessionResponses]
 
-export type TuiControlNextData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-    /**
-     * Filter resources by name (case-insensitive)
-     */
-    search?: string
-  }
-  url: "/tui/control/next"
-}
-
-export type TuiControlNextErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiControlNextError = TuiControlNextErrors[keyof TuiControlNextErrors]
-
-export type TuiControlNextResponses = {
-  /**
-   * Next TUI request
-   */
-  200: {
-    path: string
-    body: unknown
-  }
-}
-
-export type TuiControlNextResponse = TuiControlNextResponses[keyof TuiControlNextResponses]
-
-export type TuiControlResponseData = {
-  body?: unknown
-  path: {
-    name: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/tui/control/response"
-}
-
-export type TuiControlResponseErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiControlResponseError = TuiControlResponseErrors[keyof TuiControlResponseErrors]
-
-export type TuiControlResponseResponses = {
-  /**
-   * Response submitted successfully
-   */
-  200: boolean
-}
-
-export type TuiControlResponseResponse = TuiControlResponseResponses[keyof TuiControlResponseResponses]
-
 export type AuthSetData = {
   body?: Auth
   path: {
-    ptyID: string
     providerID: string
   }
   query?: {
@@ -5450,10 +5373,6 @@ export type EventSubscribeData = {
   path?: never
   query?: {
     directory?: string
-    /**
-     * Filter resources by name (case-insensitive)
-     */
-    search?: string
   }
   url: "/event"
 }

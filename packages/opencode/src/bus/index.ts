@@ -46,7 +46,7 @@ export namespace Bus {
       type: def.type,
       properties,
     }
-    log.info("publishing", {
+    log.debug("publishing", {
       type: def.type,
     })
     const pending = []

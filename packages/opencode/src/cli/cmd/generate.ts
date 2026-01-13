@@ -24,7 +24,7 @@ function sdkPath(operationId: string) {
 function jsSample(operationId: string) {
   if (operationId === "pty.connect") {
     return [
-      'import { createOpencodeClient } from "@opencode-ai/sdk"',
+      'import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"',
       "",
       "const client = createOpencodeClient()",
       "",
@@ -38,7 +38,7 @@ function jsSample(operationId: string) {
 
   const call = sdkPath(operationId)
   return [
-    'import { createOpencodeClient } from "@opencode-ai/sdk"',
+    'import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"',
     "",
     "const client = createOpencodeClient()",
     `await client.${call}({`,

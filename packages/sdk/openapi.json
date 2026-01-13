@@ -3,12 +3,14 @@
   "info": {
     "title": "opencode",
     "description": "opencode api",
-    "version": "1.1.6"
+    "version": "1.1.13"
   },
   "paths": {
     "/global/health": {
       "get": {
         "operationId": "global.health",
+        "summary": "Get health",
+        "description": "Get health information about the OpenCode server.",
         "responses": {
           "200": {
             "description": "Health information",
@@ -44,12 +46,10 @@
             }
           }
         },
-        "summary": "Get health",
-        "description": "Get health information about the OpenCode server.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.global.health({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.global.health({\n  ...\n})"
           }
         ]
       }
@@ -57,6 +57,8 @@
     "/global/event": {
       "get": {
         "operationId": "global.event",
+        "summary": "Get global events",
+        "description": "Subscribe to global events from the OpenCode system using server-sent events.",
         "responses": {
           "200": {
             "description": "Event stream",
@@ -89,22 +91,22 @@
             }
           }
         },
-        "summary": "Get global events",
-        "description": "Subscribe to global events from the OpenCode system using server-sent events.",
         "parameters": [
           {
-            "in": "query",
-            "name": "directory",
+            "in": "path",
+            "name": "sessionID",
             "schema": {
               "type": "string",
-              "minLength": 1
-            }
+              "pattern": "^ses[0-9A-Za-z_]+$"
+            },
+            "required": true,
+            "description": "Session ID"
           }
         ],
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.global.event({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.global.event({\n  ...\n})"
           }
         ]
       }
@@ -112,6 +114,8 @@
     "/global/dispose": {
       "post": {
         "operationId": "global.dispose",
+        "summary": "Dispose instance",
+        "description": "Clean up and dispose all OpenCode instances, releasing all resources.",
         "responses": {
           "200": {
             "description": "Global disposed",
@@ -134,12 +138,10 @@
             }
           }
         },
-        "summary": "Dispose instance",
-        "description": "Clean up and dispose all OpenCode instances, releasing all resources.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.global.dispose({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.global.dispose({\n  ...\n})"
           }
         ]
       }
@@ -152,11 +154,12 @@
             "in": "query",
             "name": "directory",
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             }
           }
         ],
+        "summary": "List all projects",
+        "description": "Get a list of projects that have been opened with OpenCode.",
         "responses": {
           "200": {
             "description": "List of projects",
@@ -182,12 +185,10 @@
             }
           }
         },
-        "summary": "List all projects",
-        "description": "Get a list of projects that have been opened with OpenCode.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.project.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.project.list({\n  ...\n})"
           }
         ]
       }
@@ -200,11 +201,12 @@
             "in": "query",
             "name": "directory",
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             }
           }
         ],
+        "summary": "Get current project",
+        "description": "Retrieve the currently active project that OpenCode is working with.",
         "responses": {
           "200": {
             "description": "Current project information",
@@ -227,12 +229,10 @@
             }
           }
         },
-        "summary": "Get current project",
-        "description": "Retrieve the currently active project that OpenCode is working with.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.project.current({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.project.current({\n  ...\n})"
           }
         ]
       }
@@ -257,6 +257,8 @@
             "required": true
           }
         ],
+        "summary": "Update project",
+        "description": "Update project properties such as name, icon and color.",
         "responses": {
           "200": {
             "description": "Updated project information",
@@ -299,13 +301,27 @@
             }
           }
         },
-        "summary": "Update project",
-        "description": "Update project properties such as name, icon and color.",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Part"
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "icon": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -313,7 +329,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.project.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.project.update({\n  ...\n})"
           }
         ]
       }
@@ -326,11 +342,12 @@
             "in": "query",
             "name": "directory",
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             }
           }
         ],
+        "summary": "List pending questions",
+        "description": "Get all pending question requests across all sessions.",
         "responses": {
           "200": {
             "description": "List of pending questions",
@@ -356,12 +373,10 @@
             }
           }
         },
-        "summary": "List pending questions",
-        "description": "Get all pending question requests across all sessions.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.question.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.question.list({\n  ...\n})"
           }
         ]
       }
@@ -386,6 +401,8 @@
             "required": true
           }
         ],
+        "summary": "Reply to question request",
+        "description": "Provide answers to a question request from the AI assistant.",
         "responses": {
           "200": {
             "description": "Question answered successfully",
@@ -428,19 +445,31 @@
             }
           }
         },
-        "summary": "Reply to question request",
-        "description": "Provide answers to a question request from the AI assistant.",
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "answers": {
+                    "description": "User answers in order of questions (each answer is an array of selected labels)",
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/QuestionAnswer"
+                    }
+                  }
+                },
+                "required": [
+                  "answers"
+                ]
+              }
             }
           }
         },
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.question.reply({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.question.reply({\n  ...\n})"
           }
         ]
       }
@@ -465,6 +494,8 @@
             "required": true
           }
         ],
+        "summary": "Reject question request",
+        "description": "Reject a question request from the AI assistant.",
         "responses": {
           "200": {
             "description": "Question rejected successfully",
@@ -507,19 +538,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Reject question request",
-        "description": "Reject a question request from the AI assistant.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.question.reject({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.question.reject({\n  ...\n})"
           }
         ]
       }
@@ -532,11 +554,12 @@
             "in": "query",
             "name": "directory",
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             }
           }
         ],
+        "summary": "List PTY sessions",
+        "description": "Get a list of all active pseudo-terminal (PTY) sessions managed by OpenCode.",
         "responses": {
           "200": {
             "description": "List of sessions",
@@ -562,12 +585,10 @@
             }
           }
         },
-        "summary": "List PTY sessions",
-        "description": "Get a list of all active pseudo-terminal (PTY) sessions managed by OpenCode.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.pty.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.pty.list({\n  ...\n})"
           }
         ]
       },
@@ -580,16 +601,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Create PTY session",
+        "description": "Create a new pseudo-terminal (PTY) session for running shell commands and processes.",
         "responses": {
           "200": {
             "description": "Created session",
@@ -625,16 +640,42 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "env": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
             }
           }
         },
-        "summary": "Create PTY session",
-        "description": "Create a new pseudo-terminal (PTY) session for running shell commands and processes.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.pty.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.pty.create({\n  ...\n})"
           }
         ]
       }
@@ -647,8 +688,7 @@
             "in": "query",
             "name": "directory",
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             }
           },
           {
@@ -660,6 +700,8 @@
             "required": true
           }
         ],
+        "summary": "Get PTY session",
+        "description": "Retrieve detailed information about a specific pseudo-terminal (PTY) session.",
         "responses": {
           "200": {
             "description": "Session info",
@@ -692,12 +734,10 @@
             }
           }
         },
-        "summary": "Get PTY session",
-        "description": "Retrieve detailed information about a specific pseudo-terminal (PTY) session.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.pty.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.pty.get({\n  ...\n})"
           }
         ]
       },
@@ -720,6 +760,8 @@
             "required": true
           }
         ],
+        "summary": "Update PTY session",
+        "description": "Update properties of an existing pseudo-terminal (PTY) session.",
         "responses": {
           "200": {
             "description": "Updated session",
@@ -762,13 +804,31 @@
             }
           }
         },
-        "summary": "Update PTY session",
-        "description": "Update properties of an existing pseudo-terminal (PTY) session.",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Auth"
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "object",
+                    "properties": {
+                      "rows": {
+                        "type": "number"
+                      },
+                      "cols": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "rows",
+                      "cols"
+                    ]
+                  }
+                }
               }
             }
           }
@@ -776,7 +836,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.pty.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.pty.update({\n  ...\n})"
           }
         ]
       },
@@ -799,6 +859,8 @@
             "required": true
           }
         ],
+        "summary": "Remove PTY session",
+        "description": "Remove and terminate a specific pseudo-terminal (PTY) session.",
         "responses": {
           "200": {
             "description": "Session removed",
@@ -831,12 +893,10 @@
             }
           }
         },
-        "summary": "Remove PTY session",
-        "description": "Remove and terminate a specific pseudo-terminal (PTY) session.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.pty.remove({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.pty.remove({\n  ...\n})"
           }
         ]
       }
@@ -861,6 +921,8 @@
             "required": true
           }
         ],
+        "summary": "Connect to PTY session",
+        "description": "Establish a WebSocket connection to interact with a pseudo-terminal (PTY) session in real-time.",
         "responses": {
           "101": {
             "description": "Switching Protocols (WebSocket)"
@@ -886,13 +948,11 @@
             }
           }
         },
-        "summary": "Connect to PTY session",
-        "description": "Establish a WebSocket connection to interact with a pseudo-terminal (PTY) session in real-time.",
         "x-websocket": true,
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\n\n// PTY connect uses WebSocket (not fetch).\n// Use a WebSocket client against /pty/<ptyID>/connect.\n// const ws = new WebSocket('ws://localhost:4096/pty/<ptyID>/connect')\n\nvoid client"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\n\n// PTY connect uses WebSocket (not fetch).\n// Use a WebSocket client against /pty/<ptyID>/connect.\n// const ws = new WebSocket('ws://localhost:4096/pty/<ptyID>/connect')\n\nvoid client"
           }
         ]
       }
@@ -907,16 +967,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Get configuration",
+        "description": "Retrieve the current OpenCode configuration settings and preferences.",
         "responses": {
           "200": {
             "description": "Get config info",
@@ -939,12 +993,10 @@
             }
           }
         },
-        "summary": "Get configuration",
-        "description": "Retrieve the current OpenCode configuration settings and preferences.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.config.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.config.get({\n  ...\n})"
           }
         ]
       },
@@ -957,16 +1009,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "projectID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Update configuration",
+        "description": "Update OpenCode configuration settings and preferences.",
         "responses": {
           "200": {
             "description": "Successfully updated config",
@@ -1003,17 +1049,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Part"
+                "$ref": "#/components/schemas/Config"
               }
             }
           }
         },
-        "summary": "Update configuration",
-        "description": "Update OpenCode configuration settings and preferences.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.config.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.config.update({\n  ...\n})"
           }
         ]
       }
@@ -1028,16 +1072,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "List tool IDs",
+        "description": "Get a list of all available tool IDs, including both built-in tools and dynamically registered tools.",
         "responses": {
           "200": {
             "description": "Tool IDs",
@@ -1070,12 +1108,10 @@
             }
           }
         },
-        "summary": "List tool IDs",
-        "description": "Get a list of all available tool IDs, including both built-in tools and dynamically registered tools.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tool.ids({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tool.ids({\n  ...\n})"
           }
         ]
       }
@@ -1090,14 +1126,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           },
           {
             "in": "query",
@@ -1116,6 +1144,8 @@
             "required": true
           }
         ],
+        "summary": "List tools",
+        "description": "Get a list of available tools with their JSON schema parameters for a specific provider and model combination.",
         "responses": {
           "200": {
             "description": "Tools",
@@ -1148,12 +1178,10 @@
             }
           }
         },
-        "summary": "List tools",
-        "description": "Get a list of available tools with their JSON schema parameters for a specific provider and model combination.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tool.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tool.list({\n  ...\n})"
           }
         ]
       }
@@ -1168,16 +1196,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Dispose instance",
+        "description": "Clean up and dispose the current OpenCode instance, releasing all resources.",
         "responses": {
           "200": {
             "description": "Instance disposed",
@@ -1200,19 +1222,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Dispose instance",
-        "description": "Clean up and dispose the current OpenCode instance, releasing all resources.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.instance.dispose({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.instance.dispose({\n  ...\n})"
           }
         ]
       }
@@ -1227,24 +1240,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "provider",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "model",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Get paths",
+        "description": "Retrieve the current working directory and related path information for the OpenCode instance.",
         "responses": {
           "200": {
             "description": "Path",
@@ -1267,12 +1266,10 @@
             }
           }
         },
-        "summary": "Get paths",
-        "description": "Retrieve the current working directory and related path information for the OpenCode instance.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.path.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.path.get({\n  ...\n})"
           }
         ]
       }
@@ -1287,16 +1284,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Create worktree",
+        "description": "Create a new git worktree for the current project.",
         "responses": {
           "200": {
             "description": "Worktree created",
@@ -1332,16 +1323,16 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/WorktreeCreateInput"
+              }
             }
           }
         },
-        "summary": "Create worktree",
-        "description": "Create a new git worktree for the current project.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.worktree.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.worktree.create({\n  ...\n})"
           }
         ]
       },
@@ -1354,24 +1345,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "provider",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "model",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "List worktrees",
+        "description": "List all sandbox worktrees for the current project.",
         "responses": {
           "200": {
             "description": "List of worktree directories",
@@ -1397,12 +1374,10 @@
             }
           }
         },
-        "summary": "List worktrees",
-        "description": "List all sandbox worktrees for the current project.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.worktree.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.worktree.list({\n  ...\n})"
           }
         ]
       }
@@ -1417,24 +1392,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "provider",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "model",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Get VCS info",
+        "description": "Retrieve version control system (VCS) information for the current project, such as git branch.",
         "responses": {
           "200": {
             "description": "VCS info",
@@ -1457,12 +1418,10 @@
             }
           }
         },
-        "summary": "Get VCS info",
-        "description": "Retrieve version control system (VCS) information for the current project, such as git branch.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.vcs.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.vcs.get({\n  ...\n})"
           }
         ]
       }
@@ -1477,22 +1436,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "provider",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "model",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           },
           {
             "in": "query",
@@ -1521,6 +1464,8 @@
             "description": "Maximum number of sessions to return"
           }
         ],
+        "summary": "List sessions",
+        "description": "Get a list of all OpenCode sessions, sorted by most recently updated.",
         "responses": {
           "200": {
             "description": "List of sessions",
@@ -1546,12 +1491,10 @@
             }
           }
         },
-        "summary": "List sessions",
-        "description": "Get a list of all OpenCode sessions, sorted by most recently updated.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.list({\n  ...\n})"
           }
         ]
       },
@@ -1564,16 +1507,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Create session",
+        "description": "Create a new OpenCode session for interacting with AI assistants and managing conversations.",
         "responses": {
           "200": {
             "description": "Successfully created session",
@@ -1609,16 +1546,28 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "parentID": {
+                    "type": "string",
+                    "pattern": "^ses[0-9A-Za-z_]+$"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "permission": {
+                    "$ref": "#/components/schemas/PermissionRuleset"
+                  }
+                }
+              }
             }
           }
         },
-        "summary": "Create session",
-        "description": "Create a new OpenCode session for interacting with AI assistants and managing conversations.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.create({\n  ...\n})"
           }
         ]
       }
@@ -1633,34 +1582,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "start",
-            "schema": {
-              "type": "number"
-            },
-            "description": "Filter sessions updated on or after this timestamp (milliseconds since epoch)"
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Filter sessions by title (case-insensitive)"
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "description": "Maximum number of sessions to return"
           }
         ],
+        "summary": "Get session status",
+        "description": "Retrieve the current status of all sessions, including active, idle, and completed states.",
         "responses": {
           "200": {
             "description": "Get session status",
@@ -1699,12 +1624,10 @@
             }
           }
         },
-        "summary": "Get session status",
-        "description": "Retrieve the current status of all sessions, including active, idle, and completed states.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.status({\n  ...\n})"
           }
         ]
       }
@@ -1721,40 +1644,20 @@
             }
           },
           {
-            "in": "query",
-            "name": "start",
-            "schema": {
-              "type": "number"
-            },
-            "description": "Filter sessions updated on or after this timestamp (milliseconds since epoch)"
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Filter sessions by title (case-insensitive)"
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "description": "Maximum number of sessions to return"
-          },
-          {
             "in": "path",
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "pattern": "^ses.*"
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Session ID"
           }
+        ],
+        "summary": "Get session",
+        "description": "Retrieve detailed information about a specific OpenCode session.",
+        "tags": [
+          "Session"
         ],
         "responses": {
           "200": {
@@ -1798,15 +1701,10 @@
             }
           }
         },
-        "summary": "Get session",
-        "description": "Retrieve detailed information about a specific OpenCode session.",
-        "tags": [
-          "Session"
-        ],
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.get({\n  ...\n})"
           }
         ]
       },
@@ -1822,22 +1720,16 @@
           },
           {
             "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "pattern": "^ses.*"
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true
           }
         ],
+        "summary": "Delete session",
+        "description": "Delete a session and permanently remove all associated data, including messages and history.",
         "responses": {
           "200": {
             "description": "Successfully deleted session",
@@ -1880,12 +1772,10 @@
             }
           }
         },
-        "summary": "Delete session",
-        "description": "Delete a session and permanently remove all associated data, including messages and history.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.delete({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.delete({\n  ...\n})"
           }
         ]
       },
@@ -1901,21 +1791,17 @@
           },
           {
             "in": "path",
-            "name": "projectID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Session ID"
           }
         ],
+        "summary": "Update session",
+        "description": "Update properties of an existing session, such as title or other metadata.",
         "responses": {
           "200": {
             "description": "Successfully updated session",
@@ -1962,17 +1848,28 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Part"
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "time": {
+                    "type": "object",
+                    "properties": {
+                      "archived": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
               }
             }
           }
         },
-        "summary": "Update session",
-        "description": "Update properties of an existing session, such as title or other metadata.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.update({\n  ...\n})"
           }
         ]
       }
@@ -1993,11 +1890,16 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "pattern": "^ses.*"
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true
           }
         ],
+        "summary": "Get session children",
+        "tags": [
+          "Session"
+        ],
+        "description": "Retrieve all child sessions that were forked from the specified parent session.",
         "responses": {
           "200": {
             "description": "List of children",
@@ -2043,15 +1945,10 @@
             }
           }
         },
-        "summary": "Get session children",
-        "tags": [
-          "Session"
-        ],
-        "description": "Retrieve all child sessions that were forked from the specified parent session.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.children({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.children({\n  ...\n})"
           }
         ]
       }
@@ -2071,12 +1968,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Get session todos",
+        "description": "Retrieve the todo list associated with a specific session, showing tasks and action items.",
         "responses": {
           "200": {
             "description": "Todo list",
@@ -2101,16 +2001,6 @@
               }
             }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -2122,12 +2012,10 @@
             }
           }
         },
-        "summary": "Get session todos",
-        "description": "Retrieve the todo list associated with a specific session, showing tasks and action items.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.todo({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.todo({\n  ...\n})"
           }
         ]
       }
@@ -2145,22 +2033,17 @@
           },
           {
             "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Initialize session",
+        "description": "Analyze the current application and create an AGENTS.md file with project-specific agent configurations.",
         "responses": {
           "200": {
             "description": "200",
@@ -2206,16 +2089,33 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "modelID": {
+                    "type": "string"
+                  },
+                  "providerID": {
+                    "type": "string"
+                  },
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  }
+                },
+                "required": [
+                  "modelID",
+                  "providerID",
+                  "messageID"
+                ]
+              }
             }
           }
         },
-        "summary": "Initialize session",
-        "description": "Analyze the current application and create an AGENTS.md file with project-specific agent configurations.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.init({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.init({\n  ...\n})"
           }
         ]
       }
@@ -2236,11 +2136,13 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "pattern": "^ses.*"
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true
           }
         ],
+        "summary": "Fork session",
+        "description": "Create a new session by forking an existing session at a specific message point.",
         "responses": {
           "200": {
             "description": "200",
@@ -2266,16 +2168,22 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  }
+                }
+              }
             }
           }
         },
-        "summary": "Fork session",
-        "description": "Create a new session by forking an existing session at a specific message point.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.fork({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.fork({\n  ...\n})"
           }
         ]
       }
@@ -2295,11 +2203,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Session ID"
           }
         ],
+        "summary": "Abort session",
+        "description": "Abort an active session and stop any ongoing AI processing or command execution.",
         "responses": {
           "200": {
             "description": "Aborted session",
@@ -2321,16 +2233,6 @@
               }
             }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -2342,19 +2244,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Abort session",
-        "description": "Abort an active session and stop any ongoing AI processing or command execution.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.abort({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.abort({\n  ...\n})"
           }
         ]
       }
@@ -2374,11 +2267,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Session ID"
           }
         ],
+        "summary": "Share session",
+        "description": "Create a shareable link for a session, allowing others to view the conversation.",
         "responses": {
           "200": {
             "description": "Successfully shared session",
@@ -2421,19 +2318,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Share session",
-        "description": "Create a shareable link for a session, allowing others to view the conversation.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.share({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.share({\n  ...\n})"
           }
         ]
       },
@@ -2452,11 +2340,13 @@
             "name": "sessionID",
             "schema": {
               "type": "string",
-              "pattern": "^ses.*"
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true
           }
         ],
+        "summary": "Unshare session",
+        "description": "Remove the shareable link for a session, making it private again.",
         "responses": {
           "200": {
             "description": "Successfully unshared session",
@@ -2499,12 +2389,10 @@
             }
           }
         },
-        "summary": "Unshare session",
-        "description": "Remove the shareable link for a session, making it private again.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.unshare({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.unshare({\n  ...\n})"
           }
         ]
       }
@@ -2524,12 +2412,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Summarize session",
+        "description": "Generate a concise summary of the session using AI compaction to preserve key information.",
         "responses": {
           "200": {
             "description": "Summarized session",
@@ -2575,16 +2466,32 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "providerID": {
+                    "type": "string"
+                  },
+                  "modelID": {
+                    "type": "string"
+                  },
+                  "auto": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "providerID",
+                  "modelID"
+                ]
+              }
             }
           }
         },
-        "summary": "Summarize session",
-        "description": "Generate a concise summary of the session using AI compaction to preserve key information.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.summarize({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.summarize({\n  ...\n})"
           }
         ]
       }
@@ -2604,7 +2511,8 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
@@ -2617,6 +2525,8 @@
             }
           }
         ],
+        "summary": "Get session messages",
+        "description": "Retrieve all messages in a session, including user prompts and AI responses.",
         "responses": {
           "200": {
             "description": "List of messages",
@@ -2656,16 +2566,6 @@
               }
             }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -2677,12 +2577,10 @@
             }
           }
         },
-        "summary": "Get session messages",
-        "description": "Retrieve all messages in a session, including user prompts and AI responses.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.messages({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.messages({\n  ...\n})"
           }
         ]
       },
@@ -2700,12 +2598,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Send message",
+        "description": "Create and send a new message to a session, streaming the AI response.",
         "responses": {
           "200": {
             "description": "Created message",
@@ -2766,16 +2667,81 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "providerID": {
+                        "type": "string"
+                      },
+                      "modelID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "providerID",
+                      "modelID"
+                    ]
+                  },
+                  "agent": {
+                    "type": "string"
+                  },
+                  "noReply": {
+                    "type": "boolean"
+                  },
+                  "tools": {
+                    "description": "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "boolean"
+                    }
+                  },
+                  "system": {
+                    "type": "string"
+                  },
+                  "variant": {
+                    "type": "string"
+                  },
+                  "parts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/TextPartInput"
+                        },
+                        {
+                          "$ref": "#/components/schemas/FilePartInput"
+                        },
+                        {
+                          "$ref": "#/components/schemas/AgentPartInput"
+                        },
+                        {
+                          "$ref": "#/components/schemas/SubtaskPartInput"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "parts"
+                ]
+              }
             }
           }
         },
-        "summary": "Send message",
-        "description": "Create and send a new message to a session, streaming the AI response.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.prompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.prompt({\n  ...\n})"
           }
         ]
       }
@@ -2792,22 +2758,18 @@
             }
           },
           {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "number"
-            }
-          },
-          {
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Get session diff",
+        "description": "Get all file changes (diffs) made during this session.",
         "responses": {
           "200": {
             "description": "List of diffs",
@@ -2832,16 +2794,6 @@
               }
             }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -2853,12 +2805,10 @@
             }
           }
         },
-        "summary": "Get session diff",
-        "description": "Get all file changes (diffs) made during this session.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.diff({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.diff({\n  ...\n})"
           }
         ]
       }
@@ -2878,7 +2828,8 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
@@ -2887,12 +2838,15 @@
             "in": "path",
             "name": "messageID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^msg[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Message ID"
           }
         ],
+        "summary": "Get message",
+        "description": "Retrieve a specific message from a session by its message ID.",
         "responses": {
           "200": {
             "description": "Message",
@@ -2950,12 +2904,10 @@
             }
           }
         },
-        "summary": "Get message",
-        "description": "Retrieve a specific message from a session by its message ID.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.message({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.message({\n  ...\n})"
           }
         ]
       }
@@ -2975,7 +2927,8 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
@@ -2984,7 +2937,8 @@
             "in": "path",
             "name": "messageID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^msg[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Message ID"
@@ -2993,12 +2947,14 @@
             "in": "path",
             "name": "partID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^prt[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Part ID"
           }
         ],
+        "description": "Delete a part from a message",
         "responses": {
           "200": {
             "description": "Successfully deleted part",
@@ -3051,11 +3007,10 @@
             }
           }
         },
-        "description": "Delete a part from a message",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.part.delete({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.part.delete({\n  ...\n})"
           }
         ]
       },
@@ -3073,7 +3028,8 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
@@ -3082,7 +3038,8 @@
             "in": "path",
             "name": "messageID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^msg[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Message ID"
@@ -3091,12 +3048,14 @@
             "in": "path",
             "name": "partID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^prt[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Part ID"
           }
         ],
+        "description": "Update a part in a message",
         "responses": {
           "200": {
             "description": "Successfully updated part",
@@ -3158,11 +3117,10 @@
             }
           }
         },
-        "description": "Update a part in a message",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.part.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.part.update({\n  ...\n})"
           }
         ]
       }
@@ -3182,12 +3140,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Send async message",
+        "description": "Create and send a new message to a session asynchronously, starting the session if needed and returning immediately.",
         "responses": {
           "204": {
             "description": "Prompt accepted"
@@ -3226,16 +3187,81 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "providerID": {
+                        "type": "string"
+                      },
+                      "modelID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "providerID",
+                      "modelID"
+                    ]
+                  },
+                  "agent": {
+                    "type": "string"
+                  },
+                  "noReply": {
+                    "type": "boolean"
+                  },
+                  "tools": {
+                    "description": "@deprecated tools and permissions have been merged, you can set permissions on the session itself now",
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "boolean"
+                    }
+                  },
+                  "system": {
+                    "type": "string"
+                  },
+                  "variant": {
+                    "type": "string"
+                  },
+                  "parts": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/TextPartInput"
+                        },
+                        {
+                          "$ref": "#/components/schemas/FilePartInput"
+                        },
+                        {
+                          "$ref": "#/components/schemas/AgentPartInput"
+                        },
+                        {
+                          "$ref": "#/components/schemas/SubtaskPartInput"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "parts"
+                ]
+              }
             }
           }
         },
-        "summary": "Send async message",
-        "description": "Create and send a new message to a session asynchronously, starting the session if needed and returning immediately.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.promptAsync({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.promptAsync({\n  ...\n})"
           }
         ]
       }
@@ -3255,12 +3281,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Send command",
+        "description": "Send a new command to a session for execution by the AI assistant.",
         "responses": {
           "200": {
             "description": "Created message",
@@ -3321,16 +3350,41 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  },
+                  "agent": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "arguments": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "variant": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "arguments",
+                  "command"
+                ]
+              }
             }
           }
         },
-        "summary": "Send command",
-        "description": "Send a new command to a session for execution by the AI assistant.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.command({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.command({\n  ...\n})"
           }
         ]
       }
@@ -3350,12 +3404,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
             "required": true,
             "description": "Session ID"
           }
         ],
+        "summary": "Run shell command",
+        "description": "Execute a shell command within the session context and return the AI's response.",
         "responses": {
           "200": {
             "description": "Created message",
@@ -3411,16 +3468,43 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "providerID": {
+                        "type": "string"
+                      },
+                      "modelID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "providerID",
+                      "modelID"
+                    ]
+                  },
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "agent",
+                  "command"
+                ]
+              }
             }
           }
         },
-        "summary": "Run shell command",
-        "description": "Execute a shell command within the session context and return the AI's response.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.shell({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.shell({\n  ...\n})"
           }
         ]
       }
@@ -3440,11 +3524,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Session ID"
           }
         ],
+        "summary": "Revert message",
+        "description": "Revert a specific message in a session, undoing its effects and restoring the previous state.",
         "responses": {
           "200": {
             "description": "Updated session",
@@ -3500,16 +3588,29 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  },
+                  "partID": {
+                    "type": "string",
+                    "pattern": "^prt[0-9A-Za-z_]+$"
+                  }
+                },
+                "required": [
+                  "messageID"
+                ]
+              }
             }
           }
         },
-        "summary": "Revert message",
-        "description": "Revert a specific message in a session, undoing its effects and restoring the previous state.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.revert({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.revert({\n  ...\n})"
           }
         ]
       }
@@ -3529,11 +3630,15 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Session ID"
           }
         ],
+        "summary": "Restore reverted messages",
+        "description": "Restore all previously reverted messages in a session.",
         "responses": {
           "200": {
             "description": "Updated session",
@@ -3586,19 +3691,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Restore reverted messages",
-        "description": "Restore all previously reverted messages in a session.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.unrevert({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.unrevert({\n  ...\n})"
           }
         ]
       }
@@ -3618,9 +3714,11 @@
             "in": "path",
             "name": "sessionID",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
             },
-            "required": true
+            "required": true,
+            "description": "Session ID"
           },
           {
             "in": "path",
@@ -3631,6 +3729,9 @@
             "required": true
           }
         ],
+        "summary": "Respond to permission",
+        "deprecated": true,
+        "description": "Approve or deny a permission request from the AI assistant.",
         "responses": {
           "200": {
             "description": "Permission processed successfully",
@@ -3676,17 +3777,29 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "response": {
+                    "type": "string",
+                    "enum": [
+                      "once",
+                      "always",
+                      "reject"
+                    ]
+                  }
+                },
+                "required": [
+                  "response"
+                ]
+              }
             }
           }
         },
-        "summary": "Respond to permission",
-        "deprecated": true,
-        "description": "Approve or deny a permission request from the AI assistant.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.permission.respond({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.permission.respond({\n  ...\n})"
           }
         ]
       }
@@ -3704,22 +3817,6 @@
           },
           {
             "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
-            "name": "permissionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
             "name": "requestID",
             "schema": {
               "type": "string"
@@ -3727,6 +3824,8 @@
             "required": true
           }
         ],
+        "summary": "Respond to permission request",
+        "description": "Approve or deny a permission request from the AI assistant.",
         "responses": {
           "200": {
             "description": "Permission processed successfully",
@@ -3772,16 +3871,32 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reply": {
+                    "type": "string",
+                    "enum": [
+                      "once",
+                      "always",
+                      "reject"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "reply"
+                ]
+              }
             }
           }
         },
-        "summary": "Respond to permission request",
-        "description": "Approve or deny a permission request from the AI assistant.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.permission.reply({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.permission.reply({\n  ...\n})"
           }
         ]
       }
@@ -3796,26 +3911,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Session ID"
-          },
-          {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Message ID"
           }
         ],
+        "summary": "List pending permissions",
+        "description": "Get all pending permission requests across all sessions.",
         "responses": {
           "200": {
             "description": "List of pending permissions",
@@ -3841,12 +3940,10 @@
             }
           }
         },
-        "summary": "List pending permissions",
-        "description": "Get all pending permission requests across all sessions.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.permission.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.permission.list({\n  ...\n})"
           }
         ]
       }
@@ -3861,26 +3958,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Session ID"
-          },
-          {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Message ID"
           }
         ],
+        "summary": "List commands",
+        "description": "Get a list of all available commands in the OpenCode system.",
         "responses": {
           "200": {
             "description": "List of commands",
@@ -3906,12 +3987,10 @@
             }
           }
         },
-        "summary": "List commands",
-        "description": "Get a list of all available commands in the OpenCode system.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.command.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.command.list({\n  ...\n})"
           }
         ]
       }
@@ -3926,26 +4005,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Session ID"
-          },
-          {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Message ID"
           }
         ],
+        "summary": "List config providers",
+        "description": "Get a list of all configured AI providers and their default models.",
         "responses": {
           "200": {
             "description": "List of providers",
@@ -3989,12 +4052,10 @@
             }
           }
         },
-        "summary": "List config providers",
-        "description": "Get a list of all configured AI providers and their default models.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.config.providers({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.config.providers({\n  ...\n})"
           }
         ]
       }
@@ -4009,26 +4070,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Session ID"
-          },
-          {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Message ID"
           }
         ],
+        "summary": "List providers",
+        "description": "Get a list of all available AI providers, including both available and connected ones.",
         "responses": {
           "200": {
             "description": "List of providers",
@@ -4318,12 +4363,10 @@
             }
           }
         },
-        "summary": "List providers",
-        "description": "Get a list of all available AI providers, including both available and connected ones.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.provider.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.provider.list({\n  ...\n})"
           }
         ]
       }
@@ -4338,26 +4381,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Session ID"
-          },
-          {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Message ID"
           }
         ],
+        "summary": "Get provider auth methods",
+        "description": "Retrieve available authentication methods for all AI providers.",
         "responses": {
           "200": {
             "description": "Provider auth methods",
@@ -4389,12 +4416,10 @@
             }
           }
         },
-        "summary": "Get provider auth methods",
-        "description": "Retrieve available authentication methods for all AI providers.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.provider.auth({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.provider.auth({\n  ...\n})"
           }
         ]
       }
@@ -4412,14 +4437,6 @@
           },
           {
             "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
             "name": "providerID",
             "schema": {
               "type": "string"
@@ -4428,6 +4445,8 @@
             "description": "Provider ID"
           }
         ],
+        "summary": "OAuth authorize",
+        "description": "Initiate OAuth authorization for a specific AI provider to get an authorization URL.",
         "responses": {
           "200": {
             "description": "Authorization URL and method",
@@ -4463,16 +4482,25 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "description": "Auth method index",
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "method"
+                ]
+              }
             }
           }
         },
-        "summary": "OAuth authorize",
-        "description": "Initiate OAuth authorization for a specific AI provider to get an authorization URL.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.authorize({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.authorize({\n  ...\n})"
           }
         ]
       }
@@ -4498,6 +4526,8 @@
             "description": "Provider ID"
           }
         ],
+        "summary": "OAuth callback",
+        "description": "Handle the OAuth callback from a provider after user authorization.",
         "responses": {
           "200": {
             "description": "OAuth callback processed successfully",
@@ -4533,16 +4563,29 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "method": {
+                    "description": "Auth method index",
+                    "type": "number"
+                  },
+                  "code": {
+                    "description": "OAuth authorization code",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "method"
+                ]
+              }
             }
           }
         },
-        "summary": "OAuth callback",
-        "description": "Handle the OAuth callback from a provider after user authorization.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.callback({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.callback({\n  ...\n})"
           }
         ]
       }
@@ -4559,24 +4602,6 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Session ID"
-          },
-          {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Message ID"
-          },
-          {
             "in": "query",
             "name": "pattern",
             "schema": {
@@ -4585,6 +4610,8 @@
             "required": true
           }
         ],
+        "summary": "Find text",
+        "description": "Search for text patterns across files in the project using ripgrep.",
         "responses": {
           "200": {
             "description": "Matches",
@@ -4677,12 +4704,10 @@
             }
           }
         },
-        "summary": "Find text",
-        "description": "Search for text patterns across files in the project using ripgrep.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.find.text({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.find.text({\n  ...\n})"
           }
         ]
       }
@@ -4697,14 +4722,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "pattern",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           },
           {
             "in": "query",
@@ -4746,6 +4763,8 @@
             }
           }
         ],
+        "summary": "Find files",
+        "description": "Search for files or directories by name or pattern in the project directory.",
         "responses": {
           "200": {
             "description": "File paths",
@@ -4771,12 +4790,10 @@
             }
           }
         },
-        "summary": "Find files",
-        "description": "Search for files or directories by name or pattern in the project directory.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.find.files({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.find.files({\n  ...\n})"
           }
         ]
       }
@@ -4799,39 +4816,10 @@
               "type": "string"
             },
             "required": true
-          },
-          {
-            "in": "query",
-            "name": "dirs",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "type",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "file",
-                "directory"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200
-            }
           }
         ],
+        "summary": "Find symbols",
+        "description": "Search for workspace symbols like functions, classes, and variables using LSP.",
         "responses": {
           "200": {
             "description": "Symbols",
@@ -4857,12 +4845,10 @@
             }
           }
         },
-        "summary": "Find symbols",
-        "description": "Search for workspace symbols like functions, classes, and variables using LSP.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.find.symbols({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.find.symbols({\n  ...\n})"
           }
         ]
       }
@@ -4880,14 +4866,6 @@
           },
           {
             "in": "query",
-            "name": "query",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
             "name": "path",
             "schema": {
               "type": "string"
@@ -4895,6 +4873,8 @@
             "required": true
           }
         ],
+        "summary": "List files",
+        "description": "List files and directories in a specified path.",
         "responses": {
           "200": {
             "description": "Files and directories",
@@ -4920,12 +4900,10 @@
             }
           }
         },
-        "summary": "List files",
-        "description": "List files and directories in a specified path.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.file.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.file.list({\n  ...\n})"
           }
         ]
       }
@@ -4950,6 +4928,8 @@
             "required": true
           }
         ],
+        "summary": "Read file",
+        "description": "Read the content of a specified file.",
         "responses": {
           "200": {
             "description": "File content",
@@ -4972,12 +4952,10 @@
             }
           }
         },
-        "summary": "Read file",
-        "description": "Read the content of a specified file.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.file.read({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.file.read({\n  ...\n})"
           }
         ]
       }
@@ -4992,16 +4970,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "path",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Get file status",
+        "description": "Get the git status of all files in the project.",
         "responses": {
           "200": {
             "description": "File status",
@@ -5027,12 +4999,10 @@
             }
           }
         },
-        "summary": "Get file status",
-        "description": "Get the git status of all files in the project.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.file.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.file.status({\n  ...\n})"
           }
         ]
       }
@@ -5047,17 +5017,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Provider ID"
           }
         ],
+        "summary": "Write log",
+        "description": "Write a log entry to the server logs with specified level and metadata.",
         "responses": {
           "200": {
             "description": "Log entry written successfully",
@@ -5093,16 +5056,49 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "service": {
+                    "description": "Service name for the log entry",
+                    "type": "string"
+                  },
+                  "level": {
+                    "description": "Log level",
+                    "type": "string",
+                    "enum": [
+                      "debug",
+                      "info",
+                      "error",
+                      "warn"
+                    ]
+                  },
+                  "message": {
+                    "description": "Log message",
+                    "type": "string"
+                  },
+                  "extra": {
+                    "description": "Additional metadata for the log entry",
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "service",
+                  "level",
+                  "message"
+                ]
+              }
             }
           }
         },
-        "summary": "Write log",
-        "description": "Write a log entry to the server logs with specified level and metadata.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.app.log({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.app.log({\n  ...\n})"
           }
         ]
       }
@@ -5117,16 +5113,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "path",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "List agents",
+        "description": "Get a list of all available AI agents in the OpenCode system.",
         "responses": {
           "200": {
             "description": "List of agents",
@@ -5152,12 +5142,10 @@
             }
           }
         },
-        "summary": "List agents",
-        "description": "Get a list of all available AI agents in the OpenCode system.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.app.agents({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.app.agents({\n  ...\n})"
           }
         ]
       }
@@ -5172,16 +5160,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "path",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Get MCP status",
+        "description": "Get the status of all Model Context Protocol (MCP) servers.",
         "responses": {
           "200": {
             "description": "MCP server status",
@@ -5210,12 +5192,10 @@
             }
           }
         },
-        "summary": "Get MCP status",
-        "description": "Get the status of all Model Context Protocol (MCP) servers.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.status({\n  ...\n})"
           }
         ]
       },
@@ -5228,17 +5208,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Provider ID"
           }
         ],
+        "summary": "Add MCP server",
+        "description": "Dynamically add a new Model Context Protocol (MCP) server to the system.",
         "responses": {
           "200": {
             "description": "MCP server added successfully",
@@ -5280,16 +5253,35 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "config": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/McpLocalConfig"
+                      },
+                      {
+                        "$ref": "#/components/schemas/McpRemoteConfig"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "config"
+                ]
+              }
             }
           }
         },
-        "summary": "Add MCP server",
-        "description": "Dynamically add a new Model Context Protocol (MCP) server to the system.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.add({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.add({\n  ...\n})"
           }
         ]
       }
@@ -5306,15 +5298,6 @@
             }
           },
           {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Provider ID"
-          },
-          {
             "schema": {
               "type": "string"
             },
@@ -5323,6 +5306,8 @@
             "required": true
           }
         ],
+        "summary": "Start MCP OAuth",
+        "description": "Start OAuth authentication flow for a Model Context Protocol (MCP) server.",
         "responses": {
           "200": {
             "description": "OAuth flow started",
@@ -5374,19 +5359,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Start MCP OAuth",
-        "description": "Start OAuth authentication flow for a Model Context Protocol (MCP) server.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.start({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.start({\n  ...\n})"
           }
         ]
       },
@@ -5401,33 +5377,6 @@
             }
           },
           {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Session ID"
-          },
-          {
-            "in": "path",
-            "name": "messageID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Message ID"
-          },
-          {
-            "in": "path",
-            "name": "partID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Part ID"
-          },
-          {
             "schema": {
               "type": "string"
             },
@@ -5436,6 +5385,8 @@
             "required": true
           }
         ],
+        "summary": "Remove MCP OAuth",
+        "description": "Remove OAuth credentials for an MCP server",
         "responses": {
           "200": {
             "description": "OAuth credentials removed",
@@ -5477,12 +5428,10 @@
             }
           }
         },
-        "summary": "Remove MCP OAuth",
-        "description": "Remove OAuth credentials for an MCP server",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.remove({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.remove({\n  ...\n})"
           }
         ]
       }
@@ -5499,15 +5448,6 @@
             }
           },
           {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Provider ID"
-          },
-          {
             "schema": {
               "type": "string"
             },
@@ -5516,6 +5456,8 @@
             "required": true
           }
         ],
+        "summary": "Complete MCP OAuth",
+        "description": "Complete OAuth authentication for a Model Context Protocol (MCP) server using the authorization code.",
         "responses": {
           "200": {
             "description": "OAuth authentication completed",
@@ -5561,16 +5503,25 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "description": "Authorization code from OAuth callback",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code"
+                ]
+              }
             }
           }
         },
-        "summary": "Complete MCP OAuth",
-        "description": "Complete OAuth authentication for a Model Context Protocol (MCP) server using the authorization code.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.callback({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.callback({\n  ...\n})"
           }
         ]
       }
@@ -5587,15 +5538,6 @@
             }
           },
           {
-            "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Provider ID"
-          },
-          {
             "schema": {
               "type": "string"
             },
@@ -5604,6 +5546,8 @@
             "required": true
           }
         ],
+        "summary": "Authenticate MCP OAuth",
+        "description": "Start OAuth flow and wait for callback (opens browser)",
         "responses": {
           "200": {
             "description": "OAuth authentication completed",
@@ -5646,19 +5590,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Authenticate MCP OAuth",
-        "description": "Start OAuth flow and wait for callback (opens browser)",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.authenticate({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.authenticate({\n  ...\n})"
           }
         ]
       }
@@ -5676,15 +5611,6 @@
           },
           {
             "in": "path",
-            "name": "providerID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "description": "Provider ID"
-          },
-          {
-            "in": "path",
             "name": "name",
             "schema": {
               "type": "string"
@@ -5692,6 +5618,7 @@
             "required": true
           }
         ],
+        "description": "Connect an MCP server",
         "responses": {
           "200": {
             "description": "MCP server connected successfully",
@@ -5714,18 +5641,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "description": "Connect an MCP server",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.connect({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.connect({\n  ...\n})"
           }
         ]
       }
@@ -5750,6 +5669,7 @@
             "required": true
           }
         ],
+        "description": "Disconnect an MCP server",
         "responses": {
           "200": {
             "description": "MCP server disconnected successfully",
@@ -5772,18 +5692,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "description": "Disconnect an MCP server",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.mcp.disconnect({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.mcp.disconnect({\n  ...\n})"
           }
         ]
       }
@@ -5801,14 +5713,6 @@
           },
           {
             "in": "query",
-            "name": "path",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
             "name": "search",
             "schema": {
               "type": "string"
@@ -5816,6 +5720,8 @@
             "description": "Filter resources by name (case-insensitive)"
           }
         ],
+        "summary": "Get MCP resources",
+        "description": "Get all available MCP resources from connected servers. Optionally filter by name.",
         "responses": {
           "200": {
             "description": "MCP resources",
@@ -5844,12 +5750,10 @@
             }
           }
         },
-        "summary": "Get MCP resources",
-        "description": "Get all available MCP resources from connected servers. Optionally filter by name.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.experimental.resource.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.experimental.resource.list({\n  ...\n})"
           }
         ]
       }
@@ -5864,16 +5768,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Filter resources by name (case-insensitive)"
           }
         ],
+        "summary": "Get LSP status",
+        "description": "Get LSP server status",
         "responses": {
           "200": {
             "description": "LSP server status",
@@ -5899,12 +5797,10 @@
             }
           }
         },
-        "summary": "Get LSP status",
-        "description": "Get LSP server status",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.lsp.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.lsp.status({\n  ...\n})"
           }
         ]
       }
@@ -5919,16 +5815,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Filter resources by name (case-insensitive)"
           }
         ],
+        "summary": "Get formatter status",
+        "description": "Get formatter status",
         "responses": {
           "200": {
             "description": "Formatter status",
@@ -5954,12 +5844,10 @@
             }
           }
         },
-        "summary": "Get formatter status",
-        "description": "Get formatter status",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.formatter.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.formatter.status({\n  ...\n})"
           }
         ]
       }
@@ -5974,16 +5862,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Append TUI prompt",
+        "description": "Append prompt to the TUI",
         "responses": {
           "200": {
             "description": "Prompt processed successfully",
@@ -6019,16 +5901,24 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              }
             }
           }
         },
-        "summary": "Append TUI prompt",
-        "description": "Append prompt to the TUI",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.appendPrompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.appendPrompt({\n  ...\n})"
           }
         ]
       }
@@ -6043,16 +5933,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Open help dialog",
+        "description": "Open the help dialog in the TUI to display user assistance information.",
         "responses": {
           "200": {
             "description": "Help dialog opened successfully",
@@ -6075,19 +5959,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Open help dialog",
-        "description": "Open the help dialog in the TUI to display user assistance information.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.openHelp({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.openHelp({\n  ...\n})"
           }
         ]
       }
@@ -6102,16 +5977,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Open sessions dialog",
+        "description": "Open the session dialog",
         "responses": {
           "200": {
             "description": "Session dialog opened successfully",
@@ -6134,19 +6003,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Open sessions dialog",
-        "description": "Open the session dialog",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.openSessions({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.openSessions({\n  ...\n})"
           }
         ]
       }
@@ -6161,16 +6021,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Open themes dialog",
+        "description": "Open the theme dialog",
         "responses": {
           "200": {
             "description": "Theme dialog opened successfully",
@@ -6193,19 +6047,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Open themes dialog",
-        "description": "Open the theme dialog",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.openThemes({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.openThemes({\n  ...\n})"
           }
         ]
       }
@@ -6220,16 +6065,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Open models dialog",
+        "description": "Open the model dialog",
         "responses": {
           "200": {
             "description": "Model dialog opened successfully",
@@ -6252,19 +6091,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Open models dialog",
-        "description": "Open the model dialog",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.openModels({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.openModels({\n  ...\n})"
           }
         ]
       }
@@ -6279,16 +6109,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Submit TUI prompt",
+        "description": "Submit the prompt",
         "responses": {
           "200": {
             "description": "Prompt submitted successfully",
@@ -6311,19 +6135,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Submit TUI prompt",
-        "description": "Submit the prompt",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.submitPrompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.submitPrompt({\n  ...\n})"
           }
         ]
       }
@@ -6338,16 +6153,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Clear TUI prompt",
+        "description": "Clear the prompt",
         "responses": {
           "200": {
             "description": "Prompt cleared successfully",
@@ -6370,19 +6179,10 @@
             }
           }
         },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Clear TUI prompt",
-        "description": "Clear the prompt",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.clearPrompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.clearPrompt({\n  ...\n})"
           }
         ]
       }
@@ -6397,16 +6197,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Execute TUI command",
+        "description": "Execute a TUI command (e.g. agent_cycle)",
         "responses": {
           "200": {
             "description": "Command executed successfully",
@@ -6442,16 +6236,24 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
             }
           }
         },
-        "summary": "Execute TUI command",
-        "description": "Execute a TUI command (e.g. agent_cycle)",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.executeCommand({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.executeCommand({\n  ...\n})"
           }
         ]
       }
@@ -6466,16 +6268,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Show TUI toast",
+        "description": "Show a toast notification in the TUI",
         "responses": {
           "200": {
             "description": "Toast notification shown successfully",
@@ -6501,16 +6297,42 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "variant": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "success",
+                      "warning",
+                      "error"
+                    ]
+                  },
+                  "duration": {
+                    "description": "Duration in milliseconds",
+                    "default": 5000,
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "message",
+                  "variant"
+                ]
+              }
             }
           }
         },
-        "summary": "Show TUI toast",
-        "description": "Show a toast notification in the TUI",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.showToast({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.showToast({\n  ...\n})"
           }
         ]
       }
@@ -6525,16 +6347,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Publish TUI event",
+        "description": "Publish a TUI event",
         "responses": {
           "200": {
             "description": "Event published successfully",
@@ -6570,16 +6386,29 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Event.tui.prompt.append"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Event.tui.command.execute"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Event.tui.toast.show"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Event.tui.session.select"
+                  }
+                ]
+              }
             }
           }
         },
-        "summary": "Publish TUI event",
-        "description": "Publish a TUI event",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.publish({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.publish({\n  ...\n})"
           }
         ]
       }
@@ -6594,16 +6423,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
           }
         ],
+        "summary": "Select session",
+        "description": "Navigate the TUI to display the specified session.",
         "responses": {
           "200": {
             "description": "Session selected successfully",
@@ -6649,137 +6472,26 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionID": {
+                    "description": "Session ID to navigate to",
+                    "type": "string",
+                    "pattern": "^ses[0-9A-Za-z_]+$"
+                  }
+                },
+                "required": [
+                  "sessionID"
+                ]
+              }
             }
           }
         },
-        "summary": "Select session",
-        "description": "Navigate the TUI to display the specified session.",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.selectSession({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/tui/control/next": {
-      "get": {
-        "operationId": "tui.control.next",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Filter resources by name (case-insensitive)"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Next TUI request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "path": {
-                      "type": "string"
-                    },
-                    "body": {}
-                  },
-                  "required": [
-                    "path",
-                    "body"
-                  ]
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UnknownError"
-                }
-              }
-            }
-          }
-        },
-        "summary": "Get next TUI request",
-        "description": "Retrieve the next TUI (Terminal User Interface) request from the queue for processing.",
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.control.next({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/tui/control/response": {
-      "post": {
-        "operationId": "tui.control.response",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "name",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Response submitted successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UnknownError"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {}
-            }
-          }
-        },
-        "summary": "Submit TUI response",
-        "description": "Submit a response to the TUI request queue to complete a pending request.",
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.tui.control.response({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.tui.selectSession({\n  ...\n})"
           }
         ]
       }
@@ -6797,14 +6509,6 @@
           },
           {
             "in": "path",
-            "name": "ptyID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
             "name": "providerID",
             "schema": {
               "type": "string"
@@ -6812,6 +6516,8 @@
             "required": true
           }
         ],
+        "summary": "Set auth credentials",
+        "description": "Set authentication credentials",
         "responses": {
           "200": {
             "description": "Successfully set authentication credentials",
@@ -6853,12 +6559,10 @@
             }
           }
         },
-        "summary": "Set auth credentials",
-        "description": "Set authentication credentials",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.auth.set({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.auth.set({\n  ...\n})"
           }
         ]
       }
@@ -6873,16 +6577,10 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "search",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Filter resources by name (case-insensitive)"
           }
         ],
+        "summary": "Subscribe to events",
+        "description": "Get events",
         "responses": {
           "200": {
             "description": "Event stream",
@@ -6905,12 +6603,10 @@
             }
           }
         },
-        "summary": "Subscribe to events",
-        "description": "Get events",
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.event.subscribe({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.event.subscribe({\n  ...\n})"
           }
         ]
       }
@@ -6918,30 +6614,6 @@
   },
   "components": {
     "schemas": {
-      "UnknownError": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "const": "UnknownError"
-          },
-          "data": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "name",
-          "data"
-        ]
-      },
       "Event.installation.updated": {
         "type": "object",
         "properties": {
@@ -7267,6 +6939,30 @@
             },
             "required": [
               "providerID",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "data"
+        ]
+      },
+      "UnknownError": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "const": "UnknownError"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
               "message"
             ]
           }
@@ -8726,11 +8422,11 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^per.*"
+            "pattern": "^per[0-9A-Za-z_]+$"
           },
           "sessionID": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[0-9A-Za-z_]+$"
           },
           "permission": {
             "type": "string"
@@ -9017,6 +8713,10 @@
             "items": {
               "$ref": "#/components/schemas/QuestionOption"
             }
+          },
+          "multiple": {
+            "description": "Allow selecting multiple choices",
+            "type": "boolean"
           }
         },
         "required": [
@@ -9030,11 +8730,11 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^que.*"
+            "pattern": "^que[0-9A-Za-z_]+$"
           },
           "sessionID": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[0-9A-Za-z_]+$"
           },
           "questions": {
             "description": "Questions to ask",
@@ -9081,6 +8781,12 @@
           "properties"
         ]
       },
+      "QuestionAnswer": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
       "Event.question.replied": {
         "type": "object",
         "properties": {
@@ -9100,7 +8806,7 @@
               "answers": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/QuestionAnswer"
                 }
               }
             },
@@ -9376,7 +9082,7 @@
               "sessionID": {
                 "description": "Session ID to navigate to",
                 "type": "string",
-                "pattern": "^ses"
+                "pattern": "^ses[0-9A-Za-z_]+$"
               }
             },
             "required": [
@@ -9428,14 +9134,14 @@
               },
               "sessionID": {
                 "type": "string",
-                "pattern": "^ses.*"
+                "pattern": "^ses[0-9A-Za-z_]+$"
               },
               "arguments": {
                 "type": "string"
               },
               "messageID": {
                 "type": "string",
-                "pattern": "^msg.*"
+                "pattern": "^msg[0-9A-Za-z_]+$"
               }
             },
             "required": [
@@ -9489,7 +9195,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[0-9A-Za-z_]+$"
           },
           "projectID": {
             "type": "string"
@@ -9499,7 +9205,7 @@
           },
           "parentID": {
             "type": "string",
-            "pattern": "^ses.*"
+            "pattern": "^ses[0-9A-Za-z_]+$"
           },
           "sessionType": {
             "default": "primary",
@@ -9520,7 +9226,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^ses.*"
+              "pattern": "^ses[0-9A-Za-z_]+$"
             }
           },
           "summary": {
@@ -9829,7 +9535,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^pty.*"
+            "pattern": "^pty[0-9A-Za-z_]+$"
           },
           "title": {
             "type": "string"
@@ -9927,7 +9633,7 @@
             "properties": {
               "id": {
                 "type": "string",
-                "pattern": "^pty.*"
+                "pattern": "^pty[0-9A-Za-z_]+$"
               },
               "exitCode": {
                 "type": "number"
@@ -9956,7 +9662,7 @@
             "properties": {
               "id": {
                 "type": "string",
-                "pattern": "^pty.*"
+                "pattern": "^pty[0-9A-Za-z_]+$"
               }
             },
             "required": [
@@ -11944,7 +11650,7 @@
             "properties": {
               "sessionID": {
                 "type": "string",
-                "pattern": "^ses.*"
+                "pattern": "^ses[0-9A-Za-z_]+$"
               }
             },
             "required": [
@@ -12954,6 +12660,9 @@
           },
           "expires": {
             "type": "number"
+          },
+          "accountId": {
+            "type": "string"
           },
           "enterpriseUrl": {
             "type": "string"

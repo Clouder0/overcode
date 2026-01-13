@@ -15,7 +15,7 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
   description:
     "Send a message to another agent session. Use this to reply to the sender or communicate with other agents.",
   parameters: z.object({
-    to: z.string().describe("Target session id (ses_...)"),
+    to: z.string().describe('Target session id (starts with "ses_")'),
     text: z.string().describe("Message content"),
   }),
   async execute(params, ctx) {
@@ -26,7 +26,7 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
       const meta: SendMessageMetadata = {
         ok: false,
         target,
-        error: `Invalid session id: ${target}`,
+        error: `Invalid session id: ${target}. Use a real session id that starts with "ses_".`,
       }
       return {
         title: "send_agent_message blocked",
@@ -41,7 +41,7 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
       const meta: SendMessageMetadata = {
         ok: false,
         target,
-        error: `Unknown session id: ${target}`,
+        error: `Unknown session id: ${target}. This tool can only message sessions that exist in the current instance/project.`,
       }
       return {
         title: "send_agent_message blocked",

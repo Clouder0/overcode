@@ -15,7 +15,7 @@ const DESCRIPTION = `Spawn subagent sessions with specific tasks.
 
 The 'prompt' parameter is injected into the subagent's SYSTEM prompt as its mission.
 The subagent will NOT automatically report back to the parent, and weak models may write a normal assistant response that never reaches the parent.
-If you want results sent back to the parent session, your prompt MUST explicitly require a tool call: send_agent_message(to=<Parent Session ID shown in the subagent system prompt (ses_...)>, text=<results>).
+If you want results sent back to the parent session, your prompt MUST explicitly require a tool call: send_agent_message(to=PARENT_SESSION_ID, text=<results>).
 
 Your prompt MUST include:
 1. Clear task description - what the subagent should accomplish

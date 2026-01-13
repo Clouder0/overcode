@@ -1,8 +1,8 @@
 import os from "node:os"
 import path from "node:path"
 import type { Provider } from "@/provider/provider"
+import { Flag } from "@/flag/flag"
 import { Config } from "../config/config"
-import { Ripgrep } from "../file/ripgrep"
 import { Global } from "../global"
 import { Instance } from "../project/instance"
 import { Filesystem } from "../util/filesystem"
@@ -11,6 +11,7 @@ import PROMPT_ANTHROPIC from "./prompt/anthropic.txt"
 import PROMPT_ANTHROPIC_SPOOF from "./prompt/anthropic_spoof.txt"
 import PROMPT_BEAST from "./prompt/beast.txt"
 import PROMPT_CODEX from "./prompt/codex.txt"
+import PROMPT_CODEX_INSTRUCTIONS from "./prompt/codex_header.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_GEMINI from "./prompt/gemini.txt"
 import PROMPT_ANTHROPIC_WITHOUT_TODO from "./prompt/qwen.txt"
@@ -21,6 +22,10 @@ export namespace SystemPrompt {
   export function header(providerID: string) {
     if (providerID.includes("anthropic")) return [PROMPT_ANTHROPIC_SPOOF.trim()]
     return []
+  }
+
+  export function instructions() {
+    return PROMPT_CODEX_INSTRUCTIONS.trim()
   }
 
   export function provider(model: Provider.Model) {
@@ -34,7 +39,6 @@ export namespace SystemPrompt {
 
   export async function environment() {
     const project = Instance.project
-    const includeTree = process.env.OPENCODE_PROMPT_INCLUDE_TREE === "1"
     return [
       [
         `Here is some useful information about the environment you are running in:`,
@@ -45,15 +49,6 @@ export namespace SystemPrompt {
         `  Today's date: ${new Date().toDateString()}`,
         `</env>`,
         `<files>`,
-        `  (File tree snapshot; may be outdated. Use tools to verify current files.)`,
-        `  ${
-          project.vcs === "git" && includeTree
-            ? await Ripgrep.tree({
-                cwd: Instance.directory,
-                limit: 200,
-              })
-            : ""
-        }`,
         `</files>`,
       ].join("\n"),
     ]
@@ -64,10 +59,14 @@ export namespace SystemPrompt {
     "CLAUDE.md",
     "CONTEXT.md", // deprecated
   ]
-  const GLOBAL_RULE_FILES = [
-    path.join(Global.Path.config, "AGENTS.md"),
-    path.join(os.homedir(), ".claude", "CLAUDE.md"),
-  ]
+  const GLOBAL_RULE_FILES = [path.join(Global.Path.config, "AGENTS.md")]
+  if (!Flag.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+    GLOBAL_RULE_FILES.push(path.join(os.homedir(), ".claude", "CLAUDE.md"))
+  }
+
+  if (Flag.OPENCODE_CONFIG_DIR) {
+    GLOBAL_RULE_FILES.push(path.join(Flag.OPENCODE_CONFIG_DIR, "AGENTS.md"))
+  }
 
   export async function custom() {
     const config = await Config.get()
@@ -90,8 +89,13 @@ export namespace SystemPrompt {
       }
     }
 
+    const urls: string[] = []
     if (config.instructions) {
       for (let instruction of config.instructions) {
+        if (instruction.startsWith("https://") || instruction.startsWith("http://")) {
+          urls.push(instruction)
+          continue
+        }
         if (instruction.startsWith("~/")) {
           instruction = path.join(os.homedir(), instruction.slice(2))
         }
@@ -113,13 +117,19 @@ export namespace SystemPrompt {
       }
     }
 
-    const found = Array.from(paths).map((p) =>
+    const foundFiles = Array.from(paths).map((p) =>
       Bun.file(p)
         .text()
         .catch(() => "")
         .then((x) => `Instructions from: ${p}\n${x}`),
     )
-    return Promise.all(found).then((result) => result.filter(Boolean))
+    const foundUrls = urls.map((url) =>
+      fetch(url, { signal: AbortSignal.timeout(5000) })
+        .then((res) => (res.ok ? res.text() : ""))
+        .catch(() => "")
+        .then((x) => (x ? `Instructions from: ${url}\n${x}` : "")),
+    )
+    return Promise.all([...foundFiles, ...foundUrls]).then((result) => result.filter(Boolean))
   }
 
   export function compaction(providerID: string) {
@@ -163,7 +173,7 @@ Agent sessions communicate by sending and receiving messages.
 
 Incoming agent messages appear in your conversation history with the format:
 \`\`\`
-Sender Agent with session id ses_... sent a message:
+Sender Agent with session id (starts with "ses_") sent a message:
 <content>
 ...
 </content>
@@ -174,9 +184,9 @@ Your outgoing agent messages are recorded as completed "send_agent_message" tool
 **Crucial Rules:**
 1. **Strict Channel Separation**:
    - **To the Human**: Your generated text output is for the human user's eyes only. Use it to explain your reasoning, provide status updates, or deliver final results to the user.
-   - **To other Agents**: All communication between agents **MUST** happen via the "send_agent_message" tool with a concrete destination session id ("ses_...") in the "to" field. Agents are blind to each other's text output.
+   - **To other Agents**: All communication between agents **MUST** happen via the "send_agent_message" tool with a concrete destination session id (starts with "ses_") in the "to" field. Agents are blind to each other's text output.
    - **Important**: If you want another agent to see text, you MUST use send_agent_message. Text in your assistant response is NOT delivered to other agents.
-   - **Replying**: When you receive an agent message that requires a response, you **MUST** use the "send_agent_message" tool targeting the sender's "ses_..." id. Writing a "reply" in your text output will not reach the agent and only clutters the human's view.
+   - **Replying**: When you receive an agent message that requires a response, you **MUST** use the "send_agent_message" tool targeting the sender's session id (it starts with "ses_"). Writing a "reply" in your text output will not reach the agent and only clutters the human's view.
 
 ### Receiving & Waking
 
@@ -206,7 +216,7 @@ that means YOUR wait deadline expired before a message arrived. It does NOT prov
 
 After a timeout, choose an action based on the other agent's status:
 - If the other agent appears to still be working, retrying, or waiting, wait again with a longer timeout.
-- If the other agent appears idle, ping for status: send_agent_message(to=<copy the ses_... from the timeout line>, text="Status? Please send progress/results so far.")
+- If the other agent appears idle, ping for status: send_agent_message(to=SESSION_ID_FROM_TIMEOUT_LINE, text="Status? Please send progress/results so far.")
 - If you're unsure, wait again first.
 - Conclude failure only with evidence (error message, explicit cancellation, repeated no-response).
 
@@ -242,8 +252,9 @@ orchestrator spawns dev and QA → orchestrator receives their session_ids → o
 - You are a spawned subagent. The parent expects results via inter-agent messaging.
 - The "Your Task" text is written by the parent but delivered as SYSTEM text (not as an incoming message).
 - Your normal assistant text output is NOT automatically delivered to the parent.
-- To report results, you MUST call send_agent_message using the exact Parent Session ID shown above (it starts with ses_...).
-  Format: send_agent_message(to=<ses_...>, text=<message>)
+- To report results, you MUST call send_agent_message using the exact Parent Session ID shown above.
+  The Parent Session ID starts with "ses_" and is a real value (do not use placeholders).
+  Format: send_agent_message(to=PARENT_SESSION_ID, text="...")
 
 If your task says "send/deliver/report back", interpret that as a requirement to call send_agent_message, not as writing to the human channel.
 If you need clarification, ask the parent via send_agent_message.

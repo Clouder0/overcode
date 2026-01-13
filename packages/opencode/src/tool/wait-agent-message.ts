@@ -26,7 +26,7 @@ type WaitMessageMetadata = {
 export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
   description: "Wait for messages from specified agent sessions. After calling, end your turn immediately.",
   parameters: z.object({
-    sources: z.array(z.string()).describe("Session ids to wait for (ses_...)"),
+    sources: z.array(z.string()).describe('Session ids to wait for (each starts with "ses_")'),
     timeout: z.coerce.number().min(1).describe("Timeout in milliseconds"),
     mode: z.enum(["all", "any"]).describe('"all" waits for every source, "any" waits for first response'),
   }),
@@ -54,7 +54,7 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
     }
 
     if (rawSources.length === 0) {
-      return blocked("sources must be a non-empty array of session ids (ses_...)")
+      return blocked('sources must be a non-empty array of session ids (each starts with "ses_")')
     }
 
     const MAX_TIMEOUT_MS = 2_147_483_647
@@ -65,7 +65,9 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
     // Validate all sources are valid session IDs
     const invalid = rawSources.filter((s) => !Identifier.schema("session").safeParse(s).success)
     if (invalid.length > 0) {
-      return blocked(`Invalid session id(s): ${Array.from(new Set(invalid)).join(", ")}`)
+      return blocked(
+        `Invalid session id(s): ${Array.from(new Set(invalid)).join(", ")}. Session ids must start with "ses_".`,
+      )
     }
 
     const sources = Array.from(new Set(rawSources))
@@ -76,7 +78,10 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
     const sessions = await Promise.all(sources.map((id) => Session.get(id).catch(() => undefined)))
     const missing = sources.filter((_, i) => !sessions[i])
     if (missing.length > 0) {
-      return blocked(`Unknown session id(s): ${missing.join(", ")}`, sources)
+      return blocked(
+        `Unknown session id(s): ${missing.join(", ")}. These must exist in the current instance/project.`,
+        sources,
+      )
     }
 
     if (!ctx.callID) {

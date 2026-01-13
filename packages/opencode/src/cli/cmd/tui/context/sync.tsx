@@ -345,15 +345,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         default: {
-          // Handle events not in the type union (e.g., session.message.delivered)
-          const eventType = (event as unknown as { type: string }).type
-          if (eventType === "session.message.delivered") {
-            // Sync the target session to ensure MessagePart is available
-            const props = (event as unknown as { properties: { message: { to: string; from: string } } }).properties
-            if (props?.message?.to && props.message.to !== "human") {
-              result.session.sync(props.message.to).catch(() => {})
-            }
-          }
+          // Handle events not in the type union.
           break
         }
       }
@@ -363,7 +355,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const args = useArgs()
 
     async function bootstrap() {
-      console.log("bootstrapping")
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
       const sessionListPromise = sdk.client.session
         .list({ start: start })

@@ -3,6 +3,7 @@ import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { Identifier } from "@/id/id"
 import { Log } from "@/util/log"
+import { Instance } from "@/project/instance"
 
 export namespace SessionMessage {
   const log = Log.create({ service: "session-message" })
@@ -34,7 +35,12 @@ export namespace SessionMessage {
     ),
   }
 
-  const pendingMessages = new Map<string, Message[]>()
+  const MAX_PENDING_PER_SESSION = 200
+
+  const pendingState = Instance.state(
+    () => new Map<string, Message[]>(),
+    async (map) => map.clear(),
+  )
 
   export async function deliver(input: {
     from: string
@@ -54,9 +60,15 @@ export namespace SessionMessage {
     log.info("delivering message", { from: message.from, to: message.to })
 
     // Add to pending queue
-    const queue = pendingMessages.get(message.to) ?? []
+    const pending = pendingState()
+    const queue = pending.get(message.to) ?? []
     queue.push(message)
-    pendingMessages.set(message.to, queue)
+
+    if (queue.length > MAX_PENDING_PER_SESSION) {
+      queue.splice(0, queue.length - MAX_PENDING_PER_SESSION)
+    }
+
+    pending.set(message.to, queue)
 
     // Wake up dormant session to process the message
     if (wakeSessionFn) {
@@ -68,13 +80,15 @@ export namespace SessionMessage {
   }
 
   export function pending(sessionID: string): Message[] {
-    const queue = pendingMessages.get(sessionID) ?? []
-    pendingMessages.set(sessionID, [])
+    const pending = pendingState()
+    const queue = pending.get(sessionID) ?? []
+    pending.set(sessionID, [])
     return queue
   }
 
   export function takePending(sessionID: string, predicate: (message: Message) => boolean): Message[] {
-    const queue = pendingMessages.get(sessionID) ?? []
+    const pending = pendingState()
+    const queue = pending.get(sessionID) ?? []
     if (queue.length === 0) return []
 
     const taken: Message[] = []
@@ -88,17 +102,17 @@ export namespace SessionMessage {
       remaining.push(msg)
     }
 
-    pendingMessages.set(sessionID, remaining)
+    pending.set(sessionID, remaining)
     return taken
   }
 
   export function hasPending(sessionID: string): boolean {
-    const queue = pendingMessages.get(sessionID)
+    const queue = pendingState().get(sessionID)
     return queue !== undefined && queue.length > 0
   }
 
   export function peekPending(sessionID: string): Message[] {
-    return pendingMessages.get(sessionID) ?? []
+    return pendingState().get(sessionID) ?? []
   }
 
   export function subscribe(sessionID: string, callback: (message: Message) => void): () => void {
@@ -110,6 +124,6 @@ export namespace SessionMessage {
   }
 
   export function clear(sessionID: string): void {
-    pendingMessages.delete(sessionID)
+    pendingState().delete(sessionID)
   }
 }
