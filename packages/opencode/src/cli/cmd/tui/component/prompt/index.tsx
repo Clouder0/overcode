@@ -30,7 +30,9 @@ import { DialogAlert } from "../../ui/dialog-alert"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
-import { deleteSpanBackward, deleteSpanForward } from "../../lib/delete-span"
+import { getBufferEndOffset as bufferEndOffset } from "../../lib/buffer-offset"
+import { locateTokensByOffset } from "../../lib/prompt-token-offset"
+import { expandPromptPastes } from "../../lib/prompt-paste"
 
 export type PromptProps = {
   sessionID?: string
@@ -385,55 +387,86 @@ export function Prompt(props: PromptProps) {
 
           input.setText(content)
 
-          // Update positions for nonTextParts based on their location in new content
-          // Filter out parts whose virtual text was deleted
-          // this handles a case where the user edits the text in the editor
-          // such that the virtual text moves around or is deleted
-          const updatedNonTextParts = nonTextParts
-            .map((part) => {
-              let virtualText = ""
-              if (part.type === "file" && part.source?.text) {
-                virtualText = part.source.text.value
-              } else if (part.type === "agent" && part.source) {
-                virtualText = part.source.value
+          // Update positions for nonTextParts based on their location in new content.
+          // IMPORTANT: extmark offsets are visual offsets (wcwidth-ish), not JS string indices.
+          const endOffset = getBufferEndOffset()
+
+          const items: { token: string; hint: number; part: PromptInfo["parts"][number] }[] = []
+
+          for (const part of nonTextParts) {
+            if (part.type === "file" && part.source?.text) {
+              items.push({ part, token: part.source.text.value, hint: part.source.text.start })
+              continue
+            }
+
+            if (part.type === "agent" && part.source) {
+              items.push({ part, token: part.source.value, hint: part.source.start })
+            }
+          }
+
+          const result = locateTokensByOffset({
+            items,
+            getTextRange: input.getTextRange.bind(input),
+            endOffset,
+          })
+
+          const positions = new Map<PromptInfo["parts"][number], { start: number; end: number }>()
+          for (const match of result.matches) {
+            positions.set(match.item.part, { start: match.start, end: match.end })
+          }
+
+          let removed = 0
+          const updatedNonTextParts = nonTextParts.flatMap((part) => {
+            if (part.type === "file" && part.source?.text) {
+              const hit = positions.get(part)
+              if (!hit) {
+                removed++
+                return []
               }
 
-              if (!virtualText) return part
-
-              const newStart = content.indexOf(virtualText)
-              // if the virtual text is deleted, remove the part
-              if (newStart === -1) return null
-
-              const newEnd = newStart + virtualText.length
-
-              if (part.type === "file" && part.source?.text) {
-                return {
+              return [
+                {
                   ...part,
                   source: {
                     ...part.source,
                     text: {
                       ...part.source.text,
-                      start: newStart,
-                      end: newEnd,
+                      start: hit.start,
+                      end: hit.end,
                     },
                   },
-                }
+                },
+              ]
+            }
+
+            if (part.type === "agent" && part.source) {
+              const hit = positions.get(part)
+              if (!hit) {
+                removed++
+                return []
               }
 
-              if (part.type === "agent" && part.source) {
-                return {
+              return [
+                {
                   ...part,
                   source: {
                     ...part.source,
-                    start: newStart,
-                    end: newEnd,
+                    start: hit.start,
+                    end: hit.end,
                   },
-                }
-              }
+                },
+              ]
+            }
 
-              return part
+            return [part]
+          })
+
+          if (removed > 0) {
+            toast.show({
+              message: `Removed ${removed} reference(s) that were deleted in editor`,
+              variant: "info",
             })
-            .filter((part) => part !== null)
+          }
 
           setStore("prompt", {
             input: content,
@@ -442,7 +475,7 @@ export function Prompt(props: PromptProps) {
             parts: updatedNonTextParts,
           })
           restoreExtmarksFromParts(updatedNonTextParts)
-          input.cursorOffset = Bun.stringWidth(content)
+          input.gotoBufferEnd()
         },
       },
     ]
@@ -889,49 +922,31 @@ export function Prompt(props: PromptProps) {
   }
 
   function textWithExpandedPastes() {
-    const base = store.prompt.input
-    const chunks: string[] = []
-    let index = 0
-    let missing = 0
+    if (!Number.isFinite(promptPartTypeId)) return store.prompt.input
 
-    const items: { start: number; token: string; text: string }[] = []
-    for (const part of store.prompt.parts) {
-      if (part.type !== "text") continue
-      const source = part.source
-      if (!source) continue
-      if (!("text" in source)) continue
-      if (source.expanded) continue
+    const result = expandPromptPastes({
+      parts: store.prompt.parts,
+      extmarkToPartIndex: store.extmarkToPartIndex,
+      extmarks: input.extmarks.getAll(),
+      promptPartTypeId,
+      endOffset: getBufferEndOffset(),
+      getTextRange: input.getTextRange.bind(input),
+      offsetToPosition: input.editBuffer.offsetToPosition.bind(input.editBuffer),
+      getTextRangeByCoords: input.editBuffer.getTextRangeByCoords.bind(input.editBuffer),
+    })
 
-      const text = source.text
-      if (!text) continue
-
-      items.push({ start: text.start, token: text.value, text: part.text })
-    }
-
-    items.sort((a, b) => a.start - b.start)
-
-    for (const item of items) {
-      const found = base.indexOf(item.token, index)
-      if (found === -1) {
-        missing++
-        continue
-      }
-
-      chunks.push(base.slice(index, found))
-      chunks.push(item.text)
-      index = found + item.token.length
-    }
-
-    chunks.push(base.slice(index))
-
-    if (missing > 0) {
+    if (result.missing > 0) {
       toast.show({
-        message: `Couldn't expand ${missing} pasted item(s); submitting placeholders as-is`,
+        message: `Couldn't expand ${result.missing} pasted item(s); submitting placeholders as-is`,
         variant: "warning",
       })
     }
 
-    return chunks.join("")
+    return result.text
+  }
+
+  function getBufferEndOffset() {
+    return bufferEndOffset(input.editBuffer)
   }
 
   function getPasteAtOffset(offset: number) {
@@ -980,6 +995,9 @@ export function Prompt(props: PromptProps) {
   function updatePaste(hit: ReturnType<typeof getPasteAtCursor>, next: { text: string; expanded: boolean }) {
     if (!hit) return
 
+    const part = store.prompt.parts[hit.partIndex]
+    if (!part || part.type !== "text" || !part.source?.text) return
+
     setStore(
       produce((draft) => {
         const part = draft.prompt.parts[hit.partIndex]
@@ -988,14 +1006,127 @@ export function Prompt(props: PromptProps) {
       }),
     )
 
-    const part = store.prompt.parts[hit.partIndex]
-    if (!part || part.type !== "text") return
+    const updated = store.prompt.parts[hit.partIndex]
+    if (!updated || updated.type !== "text" || !updated.source?.text) return
 
     setStore("partByExtmarkId", (map: Map<number, PromptInfo["parts"][number]>) => {
       const newMap = new Map(map)
-      newMap.set(hit.extmark.id, part)
+      newMap.set(hit.extmark.id, updated)
       return newMap
     })
+
+    const extmark = input.extmarks.get(hit.extmark.id)
+    if (!extmark) return
+
+    if (!extmark.virtual) {
+      setStore("suspend", true)
+      try {
+        const startPos = input.editBuffer.offsetToPosition(extmark.start)
+        const endPos = input.editBuffer.offsetToPosition(extmark.end)
+        if (!startPos || !endPos) return
+
+        input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
+        input.cursorOffset = extmark.start
+        input.insertText(next.text)
+        const newEnd = input.visualCursor.offset
+
+        const extmarkId = input.extmarks.create({
+          start: extmark.start,
+          end: newEnd,
+          virtual: false,
+          typeId: promptPartTypeId,
+        })
+
+        const value = input.plainText
+        setStore(
+          produce((draft) => {
+            draft.prompt.input = value
+
+            const part = draft.prompt.parts[hit.partIndex]
+            if (!part || part.type !== "text" || !part.source?.text) return
+
+            part.text = next.text
+            part.source.expanded = true
+            part.source.text.start = extmark.start
+            part.source.text.end = newEnd
+            part.source.text.value = input.getTextRange(extmark.start, newEnd)
+
+            draft.extmarkToPartIndex.delete(hit.extmark.id)
+            draft.extmarkToPartIndex.set(extmarkId, hit.partIndex)
+
+            draft.partByExtmarkId.delete(hit.extmark.id)
+            draft.partByExtmarkId.set(extmarkId, part)
+          }),
+        )
+
+        autocomplete?.onInput(value)
+        syncExtmarksWithPromptParts()
+
+        input.cursorOffset = newEnd
+        input.getLayoutNode().markDirty()
+        renderer.requestRender()
+      } finally {
+        setStore("suspend", false)
+      }
+      return
+    }
+
+    const token = updated.source.text.value
+    if (!token || !isPasteSummaryToken(token)) return
+
+    const nextToken = pasteSummary(next.text.trimEnd())
+    if (nextToken === token) return
+
+    setStore("suspend", true)
+    try {
+      const startPos = input.editBuffer.offsetToPosition(extmark.start)
+      const endPos = input.editBuffer.offsetToPosition(extmark.end)
+      if (!startPos || !endPos) return
+
+      input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
+      input.cursorOffset = extmark.start
+      input.insertText(nextToken)
+      const newEnd = input.visualCursor.offset
+
+      const extmarkId = input.extmarks.create({
+        start: extmark.start,
+        end: newEnd,
+        virtual: true,
+        styleId: pasteStyleId,
+        typeId: promptPartTypeId,
+      })
+
+      const value = input.plainText
+      setStore(
+        produce((draft) => {
+          draft.prompt.input = value
+
+          const part = draft.prompt.parts[hit.partIndex]
+          if (!part || part.type !== "text" || !part.source?.text) return
+
+          part.text = next.text
+          part.source.expanded = false
+          part.source.text.start = extmark.start
+          part.source.text.end = newEnd
+          part.source.text.value = nextToken
+
+          draft.extmarkToPartIndex.delete(hit.extmark.id)
+          draft.extmarkToPartIndex.set(extmarkId, hit.partIndex)
+
+          draft.partByExtmarkId.delete(hit.extmark.id)
+          draft.partByExtmarkId.set(extmarkId, part)
+        }),
+      )
+
+      autocomplete?.onInput(value)
+      syncExtmarksWithPromptParts()
+
+      input.cursorOffset = newEnd
+      input.getLayoutNode().markDirty()
+      renderer.requestRender()
+    } finally {
+      setStore("suspend", false)
+    }
   }
 
   function deletePasteChip(extmarkId: number) {
@@ -1296,7 +1427,12 @@ export function Prompt(props: PromptProps) {
         agentStyleId={agentStyleId}
         promptPartTypeId={() => promptPartTypeId}
       />
-      <box ref={(r) => (anchor = r)} visible={props.visible !== false}>
+      <box
+        ref={(r) => {
+          anchor = r
+        }}
+        visible={props.visible !== false}
+      >
         <box
           border={["left"]}
           borderColor={highlight()}
@@ -1339,7 +1475,10 @@ export function Prompt(props: PromptProps) {
                   }
 
                   if (extmark && extmark.virtual) {
-                    const left = Math.max(0, extmark.start - 1)
+                    let left = extmark.start
+                    if (extmark.start > 0 && input.getTextRange(extmark.start - 1, extmark.start) === " ") {
+                      left = extmark.start - 1
+                    }
                     let right = extmark.end
                     if (input.getTextRange(extmark.end, extmark.end + 1) === " ") right = extmark.end + 1
 
@@ -1399,56 +1538,33 @@ export function Prompt(props: PromptProps) {
                 ) {
                   const offset = input.visualCursor.offset
                   const target = e.name === "delete" ? offset : offset - 1
-                  if (target < 0) {
-                    e.preventDefault()
-                    return
-                  }
+                  if (target >= 0) {
+                    for (const mark of input.extmarks.getAtOffset(target)) {
+                      if (mark.typeId !== promptPartTypeId) continue
+                      if (!mark.virtual) continue
 
-                  for (const mark of input.extmarks.getAtOffset(target)) {
-                    if (mark.typeId !== promptPartTypeId) continue
-                    if (!mark.virtual) continue
+                      const partIndex = store.extmarkToPartIndex.get(mark.id)
+                      const part = partIndex === undefined ? undefined : store.prompt.parts[partIndex]
+                      const token = part?.type === "text" && part.source?.text ? part.source.text.value : undefined
 
-                    const partIndex = store.extmarkToPartIndex.get(mark.id)
-                    const part = partIndex === undefined ? undefined : store.prompt.parts[partIndex]
-                    const token = part?.type === "text" && part.source?.text ? part.source.text.value : undefined
+                      if (token && isPasteSummaryToken(token)) {
+                        setStore("pasteFocus", { extmarkId: mark.id, side: e.name === "delete" ? "left" : "right" })
+                        e.preventDefault()
+                        return
+                      }
 
-                    if (token && isPasteSummaryToken(token)) {
-                      setStore("pasteFocus", { extmarkId: mark.id, side: e.name === "delete" ? "left" : "right" })
+                      const startPos = input.editBuffer.offsetToPosition(mark.start)
+                      const endPos = input.editBuffer.offsetToPosition(mark.end)
+                      if (!startPos || !endPos) {
+                        e.preventDefault()
+                        return
+                      }
+
+                      input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
                       e.preventDefault()
                       return
                     }
-
-                    const startPos = input.editBuffer.offsetToPosition(mark.start)
-                    const endPos = input.editBuffer.offsetToPosition(mark.end)
-                    if (!startPos || !endPos) {
-                      e.preventDefault()
-                      return
-                    }
-
-                    input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
-                    e.preventDefault()
-                    return
                   }
-
-                  const span =
-                    e.name === "delete"
-                      ? deleteSpanForward(input.getTextRange.bind(input), offset)
-                      : deleteSpanBackward(input.getTextRange.bind(input), offset)
-                  if (!span) {
-                    e.preventDefault()
-                    return
-                  }
-
-                  const startPos = input.editBuffer.offsetToPosition(span.start)
-                  const endPos = input.editBuffer.offsetToPosition(span.end)
-                  if (!startPos || !endPos) {
-                    e.preventDefault()
-                    return
-                  }
-
-                  input.deleteRange(startPos.row, startPos.col, endPos.row, endPos.col)
-                  e.preventDefault()
-                  return
                 }
 
                 if (store.pasteFocus && plain && e.name === "x") {
@@ -1487,7 +1603,8 @@ export function Prompt(props: PromptProps) {
                       }
 
                       if (e.name === "left" && focus.side === "right") {
-                        input.cursorOffset = Math.max(0, extmark.start - 1)
+                        const space = extmark.start > 0 && input.getTextRange(extmark.start - 1, extmark.start) === " "
+                        input.cursorOffset = space ? extmark.start - 1 : extmark.start
                         clearPasteFocus()
                         e.preventDefault()
                         return
@@ -1575,7 +1692,7 @@ export function Prompt(props: PromptProps) {
                 if (!autocomplete.visible) {
                   if (
                     (keybind.match("history_previous", e) && input.cursorOffset === 0) ||
-                    (keybind.match("history_next", e) && input.cursorOffset === input.plainText.length)
+                    (keybind.match("history_next", e) && input.cursorOffset === getBufferEndOffset())
                   ) {
                     const direction = keybind.match("history_previous", e) ? -1 : 1
                     const item = history.move(direction, input.plainText)
@@ -1587,14 +1704,14 @@ export function Prompt(props: PromptProps) {
                       restoreExtmarksFromParts(item.parts)
                       e.preventDefault()
                       if (direction === -1) input.cursorOffset = 0
-                      if (direction === 1) input.cursorOffset = input.plainText.length
+                      if (direction === 1) input.gotoBufferEnd()
                     }
                     return
                   }
 
                   if (keybind.match("history_previous", e) && input.visualCursor.visualRow === 0) input.cursorOffset = 0
                   if (keybind.match("history_next", e) && input.visualCursor.visualRow === input.height - 1)
-                    input.cursorOffset = input.plainText.length
+                    input.gotoBufferEnd()
                 }
               }}
               onSubmit={submit}
@@ -1608,15 +1725,15 @@ export function Prompt(props: PromptProps) {
                 // Windows ConPTY/Terminal often sends CR-only newlines in bracketed paste
                 // Replace CRLF first, then any remaining CR
                 const normalizedText = event.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-                const pastedContent = normalizedText.trim()
-                if (!pastedContent) {
+                const candidate = normalizedText.trim()
+                if (!candidate) {
                   command.trigger("prompt.paste")
                   return
                 }
 
                 // trim ' from the beginning and end of the pasted content. just
                 // ' and nothing else
-                const filepath = pastedContent.replace(/^'+|'+$/g, "").replace(/\\ /g, " ")
+                const filepath = candidate.replace(/^'+|'+$/g, "").replace(/\\ /g, " ")
                 const isUrl = /^(https?):\/\//.test(filepath)
                 if (!isUrl) {
                   try {
@@ -1648,14 +1765,15 @@ export function Prompt(props: PromptProps) {
                   } catch {}
                 }
 
-                const lineCount = (pastedContent.match(/\n/g)?.length ?? 0) + 1
+                const countText = normalizedText.trimEnd()
+                const lineCount = (countText.match(/\n/g)?.length ?? 0) + 1
                 if (
-                  (lineCount >= 3 || pastedContent.length > 150) &&
+                  (lineCount >= 3 || countText.length > 150) &&
                   kv.get("paste_collapse_default", true) &&
                   !sync.data.config.experimental?.disable_paste_summary
                 ) {
                   event.preventDefault()
-                  pasteText(pastedContent, `[Pasted ~${lineCount} lines]`)
+                  pasteText(normalizedText, pasteSummary(countText))
                   return
                 }
 

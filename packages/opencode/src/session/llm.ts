@@ -178,6 +178,7 @@ export namespace LLM {
         ...(input.model.api.npm === "@ai-sdk/openai"
           ? {
               "x-session-id": sess,
+              session_id: sess,
             }
           : undefined),
         ...(isCodex

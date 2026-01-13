@@ -224,6 +224,13 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               <Match when={props.request.permission === "doom_loop"}>
                 <TextBody icon="⟳" title="Continue after repeated failures" />
               </Match>
+              <Match when={props.request.permission === "compaction"}>
+                <TextBody
+                  icon="⤵"
+                  title="Auto compact session"
+                  description={props.request.metadata?.cause ? `Cause: ` + props.request.metadata.cause : undefined}
+                />
+              </Match>
               <Match when={true}>
                 <TextBody icon="⚙" title={`Call tool ` + props.request.permission} />
               </Match>
@@ -269,7 +276,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
       props.onCancel()
       return
     }
-    if (evt.name === "return") {
+    if (evt.name === "return" && !evt.meta) {
       evt.preventDefault()
       props.onConfirm(input.plainText)
     }
@@ -302,7 +309,9 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
         justifyContent="space-between"
       >
         <textarea
-          ref={(val: TextareaRenderable) => (input = val)}
+          ref={(val: TextareaRenderable) => {
+            input = val
+          }}
           focused
           textColor={theme.text}
           focusedTextColor={theme.text}
@@ -337,14 +346,14 @@ function Prompt<const T extends Record<string, string>>(props: {
   })
 
   useKeyboard((evt) => {
-    if (evt.name === "left" || evt.name == "h") {
+    if (evt.name === "left" || evt.name === "h") {
       evt.preventDefault()
       const idx = keys.indexOf(store.selected)
       const next = keys[(idx - 1 + keys.length) % keys.length]
       setStore("selected", next)
     }
 
-    if (evt.name === "right" || evt.name == "l") {
+    if (evt.name === "right" || evt.name === "l") {
       evt.preventDefault()
       const idx = keys.indexOf(store.selected)
       const next = keys[(idx + 1) % keys.length]

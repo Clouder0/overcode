@@ -132,9 +132,9 @@ export function Autocomplete(props: {
     const input = props.input()
     const currentCursorOffset = input.cursorOffset
 
-    const charAfterCursor = props.value.at(currentCursorOffset)
-    const needsSpace = charAfterCursor !== " "
-    const append = "@" + text + (needsSpace ? " " : "")
+    const after = input.getTextRange(currentCursorOffset, currentCursorOffset + 1)
+    const needsSpace = after !== " "
+    const virtualText = "@" + text
 
     input.cursorOffset = store.index
     const startCursor = input.logicalCursor
@@ -142,11 +142,15 @@ export function Autocomplete(props: {
     const endCursor = input.logicalCursor
 
     input.deleteRange(startCursor.row, startCursor.col, endCursor.row, endCursor.col)
-    input.insertText(append)
+    input.cursorOffset = store.index
+    input.insertText(virtualText)
 
-    const virtualText = "@" + text
     const extmarkStart = store.index
-    const extmarkEnd = extmarkStart + Bun.stringWidth(virtualText)
+    const extmarkEnd = input.visualCursor.offset
+
+    if (needsSpace) {
+      input.insertText(" ")
+    }
 
     const styleId = part.type === "file" ? props.fileStyleId : part.type === "agent" ? props.agentStyleId : undefined
 
@@ -325,7 +329,6 @@ export function Autocomplete(props: {
           const cursor = props.input().logicalCursor
           props.input().deleteRange(0, 0, cursor.row, cursor.col)
           props.input().insertText(newText)
-          props.input().cursorOffset = Bun.stringWidth(newText)
         },
       })
     }
@@ -681,7 +684,9 @@ export function Autocomplete(props: {
       borderColor={theme.border}
     >
       <scrollbox
-        ref={(r: ScrollBoxRenderable) => (scroll = r)}
+        ref={(r: ScrollBoxRenderable) => {
+          scroll = r
+        }}
         backgroundColor={theme.backgroundMenu}
         height={height()}
         scrollbarOptions={{ visible: false }}
@@ -695,6 +700,8 @@ export function Autocomplete(props: {
           }
         >
           {(option, index) => (
+            // biome-ignore lint/a11y/noStaticElementInteractions: TUI mouse support
+            // biome-ignore lint/a11y/useKeyWithMouseEvents: TUI mouse support
             <box
               paddingLeft={1}
               paddingRight={1}

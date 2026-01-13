@@ -29,9 +29,17 @@ export namespace SessionCompaction {
     ),
   }
 
+  export type AutoPolicy = "allow" | "deny" | "ask"
+
+  export function autoPolicy(input?: Config.PermissionAction | boolean): AutoPolicy {
+    if (input === undefined) return "allow"
+    if (typeof input === "boolean") return input ? "allow" : "deny"
+    return input
+  }
+
   export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
     const config = await Config.get()
-    if (config.compaction?.auto === false) return false
+    if (autoPolicy(config.compaction?.auto) === "deny") return false
     const context = input.model.limit.context
     if (context === 0) return false
     const count = input.tokens.input + input.tokens.cache.read + input.tokens.output
@@ -92,6 +100,16 @@ export namespace SessionCompaction {
       }
       log.info("pruned", { count: toPrune.length })
     }
+  }
+
+  function omitAssistantReasoning(messages: MessageV2.WithParts[]) {
+    return messages.map((msg) => {
+      if (msg.info.role !== "assistant") return msg
+      return {
+        ...msg,
+        parts: msg.parts.filter((p) => p.type !== "reasoning"),
+      }
+    })
   }
 
   export async function process(input: {
@@ -180,7 +198,7 @@ export namespace SessionCompaction {
       system: [],
       stopWhen: stepCountIs(3),
       messages: [
-        ...MessageV2.toModelMessage(input.messages),
+        ...MessageV2.toModelMessage(omitAssistantReasoning(input.messages)),
         {
           role: "user",
           content: [
@@ -195,28 +213,137 @@ export namespace SessionCompaction {
     })
 
     if (result === "continue" && input.auto) {
-      const continueMsg = await Session.updateMessage({
-        id: Identifier.ascending("message"),
-        role: "user",
-        sessionID: input.sessionID,
-        time: {
-          created: Date.now(),
-        },
-        agent: userMessage.agent,
-        model: userMessage.model,
-      })
-      await Session.updatePart({
-        id: Identifier.ascending("part"),
-        messageID: continueMsg.id,
-        sessionID: input.sessionID,
-        type: "text",
-        synthetic: true,
-        text: "Continue if you have next steps",
-        time: {
-          start: Date.now(),
-          end: Date.now(),
-        },
-      })
+      const parentIndex = input.messages.findIndex((m) => m.info.id === input.parentID)
+      const history = parentIndex > 0 ? input.messages.slice(0, parentIndex) : []
+      const target = history
+        .slice()
+        .reverse()
+        .find((m) => {
+          if (m.info.role !== "user") return false
+          if (m.parts.some((p) => p.type === "compaction")) return false
+          return m.parts.some((p) => {
+            if (p.type === "text") return !p.ignored && !p.synthetic
+            if (p.type === "file") return true
+            return false
+          })
+        })
+
+      const targetUser = target ? (target.info as MessageV2.User) : undefined
+
+      const answered = (() => {
+        if (!targetUser) return false
+        return history.some((m) => {
+          if (m.info.role !== "assistant") return false
+          const assistant = m.info as MessageV2.Assistant
+          if (assistant.parentID !== targetUser.id) return false
+          if (!assistant.finish) return false
+          if (["tool-calls", "unknown"].includes(assistant.finish)) return false
+          if (assistant.error) return false
+          return true
+        })
+      })()
+
+      const replayable = !!target && !!targetUser && !answered
+
+      if (replayable) {
+        const now = Date.now()
+        const replayMsg = await Session.updateMessage({
+          id: Identifier.ascending("message"),
+          role: "user",
+          sessionID: input.sessionID,
+          time: {
+            created: now,
+          },
+          agent: targetUser.agent,
+          model: targetUser.model,
+          system: targetUser.system,
+          tools: targetUser.tools,
+          variant: targetUser.variant,
+        })
+
+        const meta = {
+          opencode: {
+            replay: true,
+            sourceMessageID: targetUser.id,
+          },
+        }
+
+        const texts = target.parts.filter(
+          (p): p is MessageV2.TextPart => p.type === "text" && !p.ignored && !p.synthetic,
+        )
+        if (texts.length === 0) {
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: replayMsg.id,
+            sessionID: input.sessionID,
+            type: "text",
+            text: "",
+            synthetic: true,
+            ignored: true,
+            metadata: meta,
+            time: {
+              start: now,
+              end: now,
+            },
+          })
+        }
+
+        for (const text of texts) {
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: replayMsg.id,
+            sessionID: input.sessionID,
+            type: "text",
+            text: text.text,
+            synthetic: true,
+            metadata: meta,
+            time: {
+              start: now,
+              end: now,
+            },
+          })
+        }
+
+        const files = target.parts.filter((p): p is MessageV2.FilePart => p.type === "file")
+        for (const file of files) {
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: replayMsg.id,
+            sessionID: input.sessionID,
+            type: "file",
+            mime: file.mime,
+            filename: file.filename,
+            url: file.url,
+            source: file.source,
+          })
+        }
+      }
+
+      if (!replayable) {
+        const now = Date.now()
+        const continueMsg = await Session.updateMessage({
+          id: Identifier.ascending("message"),
+          role: "user",
+          sessionID: input.sessionID,
+          time: {
+            created: now,
+          },
+          agent: userMessage.agent,
+          model: userMessage.model,
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          messageID: continueMsg.id,
+          sessionID: input.sessionID,
+          type: "text",
+          synthetic: true,
+          text: "Continue if you have next steps",
+          time: {
+            start: now,
+            end: now,
+          },
+        })
+      }
     }
     if (processor.message.error) return "stop"
     Bus.publish(Event.Compacted, { sessionID: input.sessionID })

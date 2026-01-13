@@ -115,6 +115,8 @@ export namespace Agent {
             websearch: "allow",
             codesearch: "allow",
             read: "allow",
+            send_agent_message: "allow",
+            wait_agent_message: "allow",
           }),
           user,
         ),
