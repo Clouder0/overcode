@@ -141,4 +141,40 @@ describe("session.message-v2.fromError", () => {
     expect(retryable).toBeDefined()
     expect(retryable).toBe("Connection reset by server")
   })
+
+  test("marks streamed OpenAI rate-limit errors retryable", () => {
+    const chunk = {
+      type: "error",
+      sequence_number: 2,
+      error: {
+        type: "too_many_requests",
+        code: "rate_limit_exceeded",
+        message: "Rate limit exceeded.",
+        param: "input",
+      },
+    }
+
+    const error = MessageV2.fromError(chunk, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
+  })
+
+  test("does not retry streamed OpenAI context-length errors", () => {
+    const chunk = {
+      type: "error",
+      sequence_number: 2,
+      error: {
+        type: "invalid_request_error",
+        code: "context_length_exceeded",
+        message: "Your input exceeds the context window of this model.",
+        param: "input",
+      },
+    }
+
+    const error = MessageV2.fromError(chunk, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(false)
+  })
 })

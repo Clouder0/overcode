@@ -68,6 +68,10 @@ export namespace SessionPrompt {
           }[]
           done: Promise<void>
           doneResolve: () => void
+          compaction?: {
+            requestID: string
+            startedAt: number
+          }
         }
       > = {}
       return data
@@ -97,6 +101,37 @@ export namespace SessionPrompt {
     })
   }
 
+  function compactionReminder(input: {
+    sessionID: string
+    messageID: string
+    requestID: string
+    startedAt: number
+  }): MessageV2.TextPart {
+    return {
+      id: Identifier.ascending("part", `prt_000_${input.messageID}`),
+      messageID: input.messageID,
+      sessionID: input.sessionID,
+      type: "text",
+      synthetic: true,
+      metadata: {
+        opencode: {
+          compaction: {
+            requestID: input.requestID,
+            startedAt: input.startedAt,
+          },
+        },
+      },
+      text: [
+        "<system-reminder>",
+        "This message arrived while the session was compacting.",
+        `Compaction request: ${input.requestID}`,
+        "It may not be reflected in the compaction summary.",
+        "Please treat it as new input to address after compaction.",
+        "</system-reminder>",
+      ].join("\n"),
+    }
+  }
+
   // Register wake function with SessionMessage to handle dormant session wakeup
   // This avoids circular dependency (message-routing -> prompt)
   async function persistDeliveredMessage(message: SessionMessage.Message) {
@@ -115,6 +150,19 @@ export namespace SessionPrompt {
     }
 
     await Session.updateMessage(uiMessage)
+
+    const compacting =
+      state()[sessionID]?.compaction ?? (await SessionCompaction.marker(sessionID).catch(() => undefined))
+    if (compacting) {
+      await Session.updatePart(
+        compactionReminder({
+          sessionID,
+          messageID: uiMessage.id,
+          requestID: compacting.requestID,
+          startedAt: compacting.startedAt,
+        }),
+      )
+    }
 
     const partID = uiMessage.id.replace(/^msg_/, "prt_")
     const msgPart: MessageV2.MessagePart = {
@@ -1178,14 +1226,17 @@ export namespace SessionPrompt {
       }
 
       step++
-      if (step === 1)
+      if (step === 1) {
         ensureTitle({
           session,
           modelID: lastUser.model.modelID,
           providerID: lastUser.model.providerID,
           message: msgs.find((m) => m.info.role === "user")!,
           history: msgs,
+        }).catch((error) => {
+          log.error("failed to ensure title", { sessionID, error: error?.message })
         })
+      }
 
       const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID)
       const task = tasks.pop()
@@ -1201,9 +1252,36 @@ export namespace SessionPrompt {
 
       // pending compaction
       if (task?.type === "compaction") {
+        const idx = msgs.findIndex((m) => m.info.id === task.messageID)
+        const scoped = idx >= 0 ? msgs.slice(0, idx + 1) : msgs
+
+        const startedAt =
+          idx >= 0 && msgs[idx].info.role === "user" ? (msgs[idx].info as MessageV2.User).time.created : Date.now()
+
+        await SessionCompaction.mark({
+          sessionID,
+          requestID: task.messageID,
+          startedAt,
+        })
+
+        const active = state()[sessionID]
+        if (active) {
+          active.compaction = {
+            requestID: task.messageID,
+            startedAt,
+          }
+        }
+
+        using _ = defer(() => {
+          const current = state()[sessionID]
+          if (!current?.compaction) return
+          if (current.compaction.requestID !== task.messageID) return
+          delete current.compaction
+        })
+
         const result = await SessionCompaction.process({
-          messages: msgs,
-          parentID: lastUser.id,
+          messages: scoped,
+          parentID: task.messageID,
           abort,
           sessionID,
           auto: task.auto,
@@ -1277,6 +1355,8 @@ export namespace SessionPrompt {
         SessionSummary.summarize({
           sessionID: sessionID,
           messageID: lastUser.id,
+        }).catch((error) => {
+          log.error("failed to summarize session", { sessionID, error: error?.message })
         })
       }
 
@@ -1385,7 +1465,9 @@ export namespace SessionPrompt {
 
     // Subagent messages to parent are sent via send_agent_message tool calls.
 
-    SessionCompaction.prune({ sessionID })
+    SessionCompaction.prune({ sessionID }).catch((error) => {
+      log.error("failed to prune session", { sessionID, error: error?.message })
+    })
     for await (const item of MessageV2.stream(sessionID)) {
       if (item.info.role === "user") continue
       const active = state()[sessionID]
@@ -2037,6 +2119,19 @@ export namespace SessionPrompt {
       }),
     ).then((x) => x.flat())
 
+    const compacting =
+      state()[input.sessionID]?.compaction ?? (await SessionCompaction.marker(input.sessionID).catch(() => undefined))
+    if (compacting) {
+      parts.unshift(
+        compactionReminder({
+          sessionID: input.sessionID,
+          messageID: info.id,
+          requestID: compacting.requestID,
+          startedAt: compacting.startedAt,
+        }),
+      )
+    }
+
     await Plugin.trigger(
       "chat.message",
       {
@@ -2055,6 +2150,14 @@ export namespace SessionPrompt {
     await Session.updateMessage(info)
     for (const part of parts) {
       await Session.updatePart(part)
+    }
+
+    if (parts.some((p) => p.type === "compaction")) {
+      await SessionCompaction.mark({
+        sessionID: input.sessionID,
+        requestID: info.id,
+        startedAt: info.time.created,
+      })
     }
 
     return {
