@@ -75,8 +75,7 @@
             "schema": {
               "type": "string",
               "minLength": 1
-            },
-            "required": true
+            }
           }
         ],
         "x-codeSamples": [
@@ -266,6 +265,186 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.update({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/question": {
+      "get": {
+        "operationId": "question.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List pending questions",
+        "description": "Get all pending question requests across all sessions.",
+        "responses": {
+          "200": {
+            "description": "List of pending questions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QuestionRequest"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.list({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/question/{requestID}/reply": {
+      "post": {
+        "operationId": "question.reply",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Reply to question request",
+        "description": "Provide answers to a question request from the AI assistant.",
+        "responses": {
+          "200": {
+            "description": "Question answered successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "answers": {
+                    "description": "User answers in order of questions (each answer is an array of selected labels)",
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/QuestionAnswer"
+                    }
+                  }
+                },
+                "required": ["answers"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reply({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/question/{requestID}/reject": {
+      "post": {
+        "operationId": "question.reject",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Reject question request",
+        "description": "Reject a question request from the AI assistant.",
+        "responses": {
+          "200": {
+            "description": "Question rejected successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reject({\n  ...\n})"
           }
         ]
       }
@@ -2690,38 +2869,6 @@
                   },
                   "variant": {
                     "type": "string"
-                  },
-                  "parts": {
-                    "type": "array",
-                    "items": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string"
-                            },
-                            "type": {
-                              "type": "string",
-                              "const": "file"
-                            },
-                            "mime": {
-                              "type": "string"
-                            },
-                            "filename": {
-                              "type": "string"
-                            },
-                            "url": {
-                              "type": "string"
-                            },
-                            "source": {
-                              "$ref": "#/components/schemas/FilePartSource"
-                            }
-                          },
-                          "required": ["type", "mime", "url"]
-                        }
-                      ]
-                    }
                   }
                 },
                 "required": ["arguments", "command"]
@@ -3175,186 +3322,6 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.list({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/question": {
-      "get": {
-        "operationId": "question.list",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "summary": "List pending questions",
-        "description": "Get all pending question requests across all sessions.",
-        "responses": {
-          "200": {
-            "description": "List of pending questions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/QuestionRequest"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.list({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/question/{requestID}/reply": {
-      "post": {
-        "operationId": "question.reply",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          }
-        ],
-        "summary": "Reply to question request",
-        "description": "Provide answers to a question request from the AI assistant.",
-        "responses": {
-          "200": {
-            "description": "Question answered successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "answers": {
-                    "description": "User answers in order of questions (each answer is an array of selected labels)",
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/components/schemas/QuestionAnswer"
-                    }
-                  }
-                },
-                "required": ["answers"]
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reply({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/question/{requestID}/reject": {
-      "post": {
-        "operationId": "question.reject",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "requestID",
-            "schema": {
-              "type": "string"
-            },
-            "required": true
-          }
-        ],
-        "summary": "Reject question request",
-        "description": "Reject a question request from the AI assistant.",
-        "responses": {
-          "200": {
-            "description": "Question rejected successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reject({\n  ...\n})"
           }
         ]
       }
@@ -8849,91 +8816,43 @@
         "type": "string",
         "enum": ["ask", "allow", "deny"]
       },
-      "PermissionObjectConfig": {
-        "type": "object",
-        "propertyNames": {
-          "type": "string"
-        },
-        "additionalProperties": {
-          "$ref": "#/components/schemas/PermissionActionConfig"
-        }
-      },
-      "PermissionRuleConfig": {
-        "anyOf": [
-          {
-            "$ref": "#/components/schemas/PermissionActionConfig"
-          },
-          {
-            "$ref": "#/components/schemas/PermissionObjectConfig"
-          }
-        ]
-      },
       "PermissionConfig": {
         "anyOf": [
           {
-            "type": "object",
-            "properties": {
-              "__originalKeys": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "read": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "edit": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "glob": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "grep": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "list": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "bash": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "task": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "external_directory": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "todowrite": {
-                "$ref": "#/components/schemas/PermissionActionConfig"
-              },
-              "todoread": {
-                "$ref": "#/components/schemas/PermissionActionConfig"
-              },
-              "question": {
-                "$ref": "#/components/schemas/PermissionActionConfig"
-              },
-              "webfetch": {
-                "$ref": "#/components/schemas/PermissionActionConfig"
-              },
-              "websearch": {
-                "$ref": "#/components/schemas/PermissionActionConfig"
-              },
-              "codesearch": {
-                "$ref": "#/components/schemas/PermissionActionConfig"
-              },
-              "lsp": {
-                "$ref": "#/components/schemas/PermissionRuleConfig"
-              },
-              "doom_loop": {
-                "$ref": "#/components/schemas/PermissionActionConfig"
-              }
-            },
-            "additionalProperties": {
-              "$ref": "#/components/schemas/PermissionRuleConfig"
-            }
+            "$ref": "#/components/schemas/PermissionActionConfig"
           },
           {
-            "$ref": "#/components/schemas/PermissionActionConfig"
+            "type": "array",
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "ref": "PermissionRuleConfig",
+                  "anyOf": [
+                    {
+                      "ref": "PermissionActionConfig",
+                      "type": "string",
+                      "enum": ["ask", "allow", "deny"]
+                    },
+                    {
+                      "ref": "PermissionObjectConfig",
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "ref": "PermissionActionConfig",
+                        "type": "string",
+                        "enum": ["ask", "allow", "deny"]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
           }
         ]
       },
@@ -8972,10 +8891,6 @@
           "mode": {
             "type": "string",
             "enum": ["subagent", "primary", "all"]
-          },
-          "hidden": {
-            "description": "Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)",
-            "type": "boolean"
           },
           "options": {
             "type": "object",
@@ -9280,7 +9195,7 @@
             "type": "boolean"
           },
           "timeout": {
-            "description": "Timeout in ms for fetching tools from the MCP server. Defaults to 5000 (5 seconds) if not specified.",
+            "description": "Timeout in ms for fetching tools from the MCP server. Defaults to 30000 (30 seconds) if not specified.",
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
@@ -9346,7 +9261,7 @@
             ]
           },
           "timeout": {
-            "description": "Timeout in ms for fetching tools from the MCP server. Defaults to 5000 (5 seconds) if not specified.",
+            "description": "Timeout in ms for fetching tools from the MCP server. Defaults to 30000 (30 seconds) if not specified.",
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
@@ -9735,8 +9650,15 @@
             "type": "object",
             "properties": {
               "auto": {
-                "description": "Enable automatic compaction when context is full (default: true)",
-                "type": "boolean"
+                "description": "Automatic compaction policy when context is full: allow|deny|ask (or true/false). Defaults to allow.",
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PermissionActionConfig"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
               },
               "prune": {
                 "description": "Enable pruning of old tool outputs (default: true)",

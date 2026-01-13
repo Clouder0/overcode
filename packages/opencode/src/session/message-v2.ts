@@ -695,7 +695,144 @@ export namespace MessageV2 {
     return result
   }
 
+  const OPENAI_STREAM_ERROR_BODY_MAX = 4096
+
+  function capText(value: string | undefined) {
+    if (!value) return
+    if (value.length <= OPENAI_STREAM_ERROR_BODY_MAX) return value
+    return value.slice(0, OPENAI_STREAM_ERROR_BODY_MAX)
+  }
+
+  function openAIResponseErrorChunk(value: unknown):
+    | {
+        message: string
+        code?: string
+        errorType?: string
+        param?: string
+        responseBody?: string
+      }
+    | undefined {
+    if (!isRecord(value)) return
+    if (value["type"] !== "error") return
+
+    const nested = value["error"]
+    if (isRecord(nested)) {
+      const message = nested["message"]
+      if (typeof message !== "string") return
+
+      const rawCode = nested["code"]
+      const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : undefined
+
+      const rawType = nested["type"]
+      const errorType = typeof rawType === "string" ? rawType : undefined
+
+      const rawParam = nested["param"]
+      const param = typeof rawParam === "string" ? rawParam : undefined
+
+      const responseBody = capText(
+        safeJsonStringify({
+          type: "error",
+          error: {
+            message,
+            code,
+            type: errorType,
+            param,
+          },
+        }),
+      )
+
+      return {
+        message,
+        code,
+        errorType,
+        param,
+        responseBody,
+      }
+    }
+
+    const message = value["message"]
+    if (typeof message !== "string") return
+
+    const rawCode = value["code"]
+    const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : undefined
+
+    const rawParam = value["param"]
+    const param = typeof rawParam === "string" ? rawParam : undefined
+
+    const responseBody = capText(
+      safeJsonStringify({
+        type: "error",
+        message,
+        code,
+        param,
+      }),
+    )
+
+    return {
+      message,
+      code,
+      param,
+      responseBody,
+    }
+  }
+
+  function openAIResponseErrorRetryable(input: { message: string; code?: string; errorType?: string }) {
+    const code = input.code?.toLowerCase()
+    if (code && code.includes("context_length")) return false
+
+    const msg = input.message.toLowerCase()
+    if (msg.includes("maximum context length")) return false
+    if (msg.includes("context length") && msg.includes("exceed")) return false
+    if (msg.includes("context window") && msg.includes("exceed")) return false
+
+    const type = input.errorType?.toLowerCase()
+    if (type && type.includes("rate_limit")) return true
+    if (type && type.includes("too_many_requests")) return true
+    if (type && type.includes("server_error")) return true
+
+    if (code && code.includes("rate_limit")) return true
+    if (code && code.includes("too_many_requests")) return true
+    if (code && code.includes("unavailable")) return true
+    if (code && code.includes("exhausted")) return true
+
+    if (msg.includes("overloaded")) return true
+
+    return false
+  }
+
+  function safeJsonStringify(value: unknown) {
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return
+    }
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === "object" && !Array.isArray(value)
+  }
+
   export function fromError(e: unknown, ctx: { providerID: string }) {
+    const stream = openAIResponseErrorChunk(e)
+    if (stream) {
+      const metadata: Record<string, string> = {}
+      if (stream.code !== undefined) metadata.code = stream.code
+      if (stream.param !== undefined) metadata.param = stream.param
+      if (stream.errorType !== undefined) metadata.type = stream.errorType
+
+      const retryable = openAIResponseErrorRetryable(stream)
+
+      return new MessageV2.APIError(
+        {
+          message: stream.message,
+          isRetryable: retryable,
+          responseBody: stream.responseBody,
+          metadata: Object.keys(metadata).length ? metadata : undefined,
+        },
+        { cause: e },
+      ).toObject()
+    }
+
     switch (true) {
       case e instanceof DOMException && e.name === "AbortError":
         return new MessageV2.AbortedError(

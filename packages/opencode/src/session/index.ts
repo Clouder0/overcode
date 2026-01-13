@@ -410,6 +410,7 @@ export namespace Session {
       // Clean up messaging state
       SessionMessage.clear(sessionID)
       WaitPolicy.clear(sessionID)
+      await Storage.remove(["compaction", sessionID]).catch(() => {})
       await SessionToolOverrides.clear(sessionID).catch((error) => {
         log.error("failed to clear tool overrides", { sessionID, error })
       })
