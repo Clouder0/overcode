@@ -76,7 +76,7 @@ app.message(async ({ message, say }) => {
     const { client, server } = opencode
 
     const createResult = await client.session.create({
-      body: { title: `Slack thread ${thread}` },
+      title: `Slack thread ${thread}`,
     })
 
     if (createResult.error) {
@@ -93,18 +93,20 @@ app.message(async ({ message, say }) => {
     session = { client, server, sessionId: createResult.data.id, channel, thread }
     sessions.set(sessionKey, session)
 
-    const shareResult = await client.session.share({ path: { id: createResult.data.id } })
+    const shareResult = await client.session.share({ sessionID: createResult.data.id })
     if (!shareResult.error && shareResult.data) {
-      const sessionUrl = shareResult.data.share?.url!
-      console.log("🔗 Session shared:", sessionUrl)
-      await app.client.chat.postMessage({ channel, thread_ts: thread, text: sessionUrl })
+      const sessionUrl = shareResult.data.share?.url
+      if (sessionUrl) {
+        console.log("🔗 Session shared:", sessionUrl)
+        await app.client.chat.postMessage({ channel, thread_ts: thread, text: sessionUrl })
+      }
     }
   }
 
   console.log("📝 Sending to opencode:", message.text)
   const result = await session.client.session.prompt({
-    path: { id: session.sessionId },
-    body: { parts: [{ type: "text", text: message.text }] },
+    sessionID: session.sessionId,
+    parts: [{ type: "text", text: message.text }],
   })
 
   console.log("📤 Opencode response:", JSON.stringify(result, null, 2))

@@ -58,11 +58,32 @@ export namespace Config {
     }
 
     for (const [key, value] of Object.entries(auth)) {
-      if (value.type === "wellknown") {
-        process.env[value.key] = value.token
-        const wellknown = (await fetch(`${key}/.well-known/opencode`).then((x) => x.json())) as any
-        result = mergeConfigConcatArrays(await load(JSON.stringify(wellknown.config ?? {}), process.cwd()), result)
+      if (value.type !== "wellknown") continue
+      process.env[value.key] = value.token
+
+      const url = `${key}/.well-known/opencode`
+      const response = await fetch(url).catch(() => undefined)
+      if (!response || !response.ok) {
+        log.warn("failed to fetch remote config from well-known", {
+          url: key,
+          status: response?.status,
+        })
+        continue
       }
+
+      const wellknown = (await response.json().catch(() => undefined)) as any
+      const remote = wellknown?.config ?? {}
+      const loaded = await load(JSON.stringify(remote), url).catch((err) => {
+        log.warn("failed to load remote config from well-known", {
+          url: key,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return undefined
+      })
+      if (!loaded) continue
+
+      result = mergeConfigConcatArrays(loaded, result)
+      log.debug("loaded remote config from well-known", { url: key })
     }
 
     result.agent = result.agent || {}
@@ -189,6 +210,19 @@ export namespace Config {
     await BunProc.run(["install"], { cwd: dir }).catch(() => {})
   }
 
+  function rel(item: string, patterns: string[]) {
+    for (const pattern of patterns) {
+      const index = item.indexOf(pattern)
+      if (index === -1) continue
+      return item.slice(index + pattern.length)
+    }
+  }
+
+  function trim(file: string) {
+    const ext = path.extname(file)
+    return ext.length ? file.slice(0, -ext.length) : file
+  }
+
   const COMMAND_GLOB = new Bun.Glob("{command,commands}/**/*.md")
   async function loadCommand(dir: string) {
     const result: Record<string, Command> = {}
@@ -201,16 +235,9 @@ export namespace Config {
       const md = await ConfigMarkdown.parse(item)
       if (!md.data) continue
 
-      const name = (() => {
-        const patterns = ["/.opencode/command/", "/command/"]
-        const pattern = patterns.find((p) => item.includes(p))
-
-        if (pattern) {
-          const index = item.indexOf(pattern)
-          return item.slice(index + pattern.length, -3)
-        }
-        return path.basename(item, ".md")
-      })()
+      const patterns = ["/.opencode/command/", "/.opencode/commands/", "/command/", "/commands/"]
+      const file = rel(item, patterns) ?? path.basename(item)
+      const name = trim(file)
 
       const config = {
         name,
@@ -240,20 +267,9 @@ export namespace Config {
       const md = await ConfigMarkdown.parse(item)
       if (!md.data) continue
 
-      // Extract relative path from agent folder for nested agents
-      let agentName = path.basename(item, ".md")
-      const agentFolderPath = item.includes("/.opencode/agent/")
-        ? item.split("/.opencode/agent/")[1]
-        : item.includes("/agent/")
-          ? item.split("/agent/")[1]
-          : agentName + ".md"
-
-      // If agent is in a subfolder, include folder path in name
-      if (agentFolderPath.includes("/")) {
-        const relativePath = agentFolderPath.replace(".md", "")
-        const pathParts = relativePath.split("/")
-        agentName = pathParts.slice(0, -1).join("/") + "/" + pathParts[pathParts.length - 1]
-      }
+      const patterns = ["/.opencode/agent/", "/.opencode/agents/", "/agent/", "/agents/"]
+      const file = rel(item, patterns) ?? path.basename(item)
+      const agentName = trim(file)
 
       if ("name" in md.data) {
         throw new InvalidError({
@@ -1166,7 +1182,7 @@ export namespace Config {
         parsed.data.$schema = "https://opencode.ai/config.json"
         const ext = path.extname(configFilepath)
         if (ext === ".json" || ext === ".jsonc") {
-          await Bun.write(configFilepath, JSON.stringify(parsed.data, null, 2))
+          await Bun.write(configFilepath, JSON.stringify(parsed.data, null, 2)).catch(() => {})
         }
       }
       const data = parsed.data

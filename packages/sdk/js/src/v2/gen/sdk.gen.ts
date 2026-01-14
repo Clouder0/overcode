@@ -262,12 +262,12 @@ export class Global extends HeyApiClient {
    * Subscribe to global events from the OpenCode system using server-sent events.
    */
   public event<ThrowOnError extends boolean = false>(
-    parameters: {
-      sessionID: string
+    parameters?: {
+      directory?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "sessionID" }] }])
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
     return (options?.client ?? this.client).sse.get<GlobalEventResponses, GlobalEventErrors, ThrowOnError>({
       url: "/global/event",
       ...options,

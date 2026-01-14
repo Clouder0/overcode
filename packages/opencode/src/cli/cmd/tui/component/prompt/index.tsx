@@ -201,8 +201,8 @@ export function Prompt(props: PromptProps) {
   const agentStyleId = syntax().getStyleId("extmark.agent")!
   const pasteStyleId = syntax().getStyleId("extmark.paste")!
   const pasteSelectedStyleId = syntax().getStyleId("extmark.paste.selected")!
-  let promptPartTypeId: number
-  let pasteFocusTypeId: number
+  let promptPartTypeId = 0
+  let pasteFocusTypeId = 0
   let pasteFocusOverlayId: number | undefined
 
   sdk.event.on(TuiEvent.PromptAppend.type, (evt) => {
@@ -481,52 +481,47 @@ export function Prompt(props: PromptProps) {
     ]
   })
 
+  const ref: PromptRef = {
+    get focused() {
+      return input.focused
+    },
+    get current() {
+      return store.prompt
+    },
+    focus() {
+      input.focus()
+    },
+    blur() {
+      input.blur()
+    },
+    set(prompt) {
+      input.setText(prompt.input)
+      setStore("prompt", prompt)
+      restoreExtmarksFromParts(prompt.parts)
+      input.gotoBufferEnd()
+    },
+    reset() {
+      input.clear()
+      input.extmarks.clear()
+      setStore("prompt", {
+        input: "",
+        parts: [],
+      })
+      setStore("extmarkToPartIndex", new Map())
+    },
+    submit() {
+      submit()
+    },
+  }
+
   createEffect(() => {
     if (props.visible !== false) input?.focus()
     if (props.visible === false) input?.blur()
   })
 
-  onMount(() => {
-    promptPartTypeId = input.extmarks.registerType("prompt-part")
-    pasteFocusTypeId = input.extmarks.registerType("prompt-paste-focus")
-
-    props.ref?.({
-      get focused() {
-        return input.focused
-      },
-      get current() {
-        return store.prompt
-      },
-      focus() {
-        input.focus()
-      },
-      blur() {
-        input.blur()
-      },
-      set(prompt) {
-        input.setText(prompt.input)
-        setStore("prompt", prompt)
-        restoreExtmarksFromParts(prompt.parts)
-        input.gotoBufferEnd()
-      },
-      reset() {
-        input.clear()
-        input.extmarks.clear()
-        setStore("prompt", {
-          input: "",
-          parts: [],
-        })
-        setStore("extmarkToPartIndex", new Map())
-      },
-      submit() {
-        submit()
-      },
-    })
-  })
-
   function clearPasteFocusOverlays() {
     pasteFocusOverlayId = undefined
-    if (!Number.isFinite(pasteFocusTypeId)) return
+    if (pasteFocusTypeId === 0) return
 
     const overlays = input.extmarks.getAll().filter((m) => m.typeId === pasteFocusTypeId)
     if (!overlays.length) return
@@ -555,7 +550,7 @@ export function Prompt(props: PromptProps) {
       return
     }
 
-    if (!Number.isFinite(pasteFocusTypeId)) return
+    if (pasteFocusTypeId === 0) return
 
     clearPasteFocusOverlays()
 
@@ -570,7 +565,6 @@ export function Prompt(props: PromptProps) {
       typeId: pasteFocusTypeId,
     })
   })
-
   function restoreExtmarksFromParts(parts: PromptInfo["parts"]) {
     input.extmarks.clear()
     setStore("extmarkToPartIndex", new Map())
@@ -824,33 +818,29 @@ export function Prompt(props: PromptProps) {
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
         messageID,
         variant,
-        parts: nonTextParts
-          .filter((x) => x.type === "file")
-          .map((x) => ({
-            id: Identifier.ascending("part"),
-            ...x,
-          })),
       })
     } else {
-      sdk.client.session.prompt({
-        sessionID,
-        ...selectedModel,
-        messageID,
-        agent: agentName,
-        model: selectedModel,
-        variant,
-        parts: [
-          {
-            id: Identifier.ascending("part"),
-            type: "text",
-            text: inputText,
-          },
-          ...nonTextParts.map((x) => ({
-            id: Identifier.ascending("part"),
-            ...x,
-          })),
-        ],
-      })
+      sdk.client.session
+        .prompt({
+          sessionID,
+          ...selectedModel,
+          messageID,
+          agent: agentName,
+          model: selectedModel,
+          variant,
+          parts: [
+            {
+              id: Identifier.ascending("part"),
+              type: "text",
+              text: inputText,
+            },
+            ...nonTextParts.map((x) => ({
+              id: Identifier.ascending("part"),
+              ...x,
+            })),
+          ],
+        })
+        .catch(() => {})
     }
     history.append({
       ...store.prompt,
@@ -922,7 +912,7 @@ export function Prompt(props: PromptProps) {
   }
 
   function textWithExpandedPastes() {
-    if (!Number.isFinite(promptPartTypeId)) return store.prompt.input
+    if (promptPartTypeId === 0) return store.prompt.input
 
     const result = expandPromptPastes({
       parts: store.prompt.parts,
@@ -981,7 +971,7 @@ export function Prompt(props: PromptProps) {
 
   function getPasteAtCursor() {
     if (!input) return
-    if (!Number.isFinite(promptPartTypeId)) return
+    if (promptPartTypeId === 0) return
     const offset = input.visualCursor.offset
 
     for (const i of [0, 1, 2, 3]) {
@@ -1780,12 +1770,18 @@ export function Prompt(props: PromptProps) {
                 // Force layout update and render for the pasted content
                 setTimeout(() => {
                   input.getLayoutNode().markDirty()
-                  input.gotoBufferEnd()
                   renderer.requestRender()
                 }, 0)
               }}
               ref={(r: TextareaRenderable) => {
                 input = r
+                if (promptPartTypeId === 0) {
+                  promptPartTypeId = input.extmarks.registerType("prompt-part")
+                }
+                if (pasteFocusTypeId === 0) {
+                  pasteFocusTypeId = input.extmarks.registerType("prompt-paste-focus")
+                }
+                props.ref?.(ref)
                 setTimeout(() => {
                   input.cursorColor = theme.text
                 }, 0)
@@ -1984,9 +1980,14 @@ export function Prompt(props: PromptProps) {
             <box gap={2} flexDirection="row" marginLeft="auto">
               <Switch>
                 <Match when={store.mode === "normal"}>
+                  <Show when={showVariant()}>
+                    <text fg={theme.text}>
+                      {keybind.print("variant_cycle")} <span style={{ fg: theme.textMuted }}>variants</span>
+                    </text>
+                  </Show>
                   <Show when={wide() && !lockedAgentName()}>
                     <text fg={theme.text}>
-                      {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>switch agent</span>
+                      {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
                     </text>
                   </Show>
                   <Show when={!wide()}>

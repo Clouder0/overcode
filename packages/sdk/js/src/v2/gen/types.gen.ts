@@ -604,6 +604,10 @@ export type QuestionInfo = {
    * Allow selecting multiple choices
    */
   multiple?: boolean
+  /**
+   * Allow typing a custom answer (default: true)
+   */
+  custom?: boolean
 }
 
 export type QuestionRequest = {
@@ -647,40 +651,6 @@ export type EventSessionCompacted = {
   type: "session.compacted"
   properties: {
     sessionID: string
-  }
-}
-
-export type EventFileEdited = {
-  type: "file.edited"
-  properties: {
-    file: string
-  }
-}
-
-export type Todo = {
-  /**
-   * Brief description of the task
-   */
-  content: string
-  /**
-   * Current status of the task: pending, in_progress, completed, cancelled
-   */
-  status: string
-  /**
-   * Priority level of the task: high, medium, low
-   */
-  priority: string
-  /**
-   * Unique identifier for the todo item
-   */
-  id: string
-}
-
-export type EventTodoUpdated = {
-  type: "todo.updated"
-  properties: {
-    sessionID: string
-    todos: Array<Todo>
   }
 }
 
@@ -736,6 +706,40 @@ export type EventTuiSessionSelect = {
   }
 }
 
+export type EventFileEdited = {
+  type: "file.edited"
+  properties: {
+    file: string
+  }
+}
+
+export type Todo = {
+  /**
+   * Brief description of the task
+   */
+  content: string
+  /**
+   * Current status of the task: pending, in_progress, completed, cancelled
+   */
+  status: string
+  /**
+   * Priority level of the task: high, medium, low
+   */
+  priority: string
+  /**
+   * Unique identifier for the todo item
+   */
+  id: string
+}
+
+export type EventTodoUpdated = {
+  type: "todo.updated"
+  properties: {
+    sessionID: string
+    todos: Array<Todo>
+  }
+}
+
 export type EventMcpToolsChanged = {
   type: "mcp.tools.changed"
   properties: {
@@ -765,6 +769,7 @@ export type PermissionRuleset = Array<PermissionRule>
 
 export type Session = {
   id: string
+  slug: string
   projectID: string
   directory: string
   parentID?: string
@@ -930,12 +935,12 @@ export type Event =
   | EventQuestionReplied
   | EventQuestionRejected
   | EventSessionCompacted
-  | EventFileEdited
-  | EventTodoUpdated
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
   | EventTuiSessionSelect
+  | EventFileEdited
+  | EventTodoUpdated
   | EventMcpToolsChanged
   | EventCommandExecuted
   | EventSessionCreated
@@ -1789,9 +1794,9 @@ export type Config = {
   }
   compaction?: {
     /**
-     * Enable automatic compaction when context is full (default: true)
+     * Automatic compaction policy when context is full: allow|deny|ask (or true/false). Defaults to allow.
      */
-    auto?: boolean
+    auto?: PermissionActionConfig | boolean
     /**
      * Enable pruning of old tool outputs (default: true)
      */
@@ -1827,6 +1832,26 @@ export type Config = {
      * Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)
      */
     openTelemetry?: boolean
+    /**
+     * Optional concurrency limits for LLM streaming.
+     */
+    llmConcurrency?: {
+      /**
+       * Global (machine-wide) concurrency limits for LLM streaming.
+       */
+      global?: {
+        /**
+         * Global (machine-wide) max concurrent LLM streams using pattern keys. Keys match providerID/model.api.id (e.g. openai/gpt-5) and may be globs (openai*) or regex prefixed with re:.
+         */
+        limits: {
+          [key: string]: number
+        }
+        /**
+         * Lease expiry for crash-recovery in milliseconds (min 1000). Used to prune stale global concurrency leases.
+         */
+        staleMs?: number
+      }
+    }
     /**
      * Tools that should only be available to primary agents.
      */
@@ -2205,13 +2230,10 @@ export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthRespo
 
 export type GlobalEventData = {
   body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
+  path?: never
+  query?: {
+    directory?: string
   }
-  query?: never
   url: "/global/event"
 }
 

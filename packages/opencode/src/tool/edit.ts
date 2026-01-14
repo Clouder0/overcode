@@ -140,20 +140,17 @@ export const EditTool = Tool.define("edit", {
       },
     })
 
-    let output = ""
+    let output = "Edit applied successfully."
     await LSP.touchFile(filePath, true)
     const diagnostics = await LSP.diagnostics()
     const normalizedFilePath = Filesystem.normalizePath(filePath)
     const issues = diagnostics[normalizedFilePath] ?? []
     const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
-    if (selected.selected.length > 0) {
-      const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
-      output += `\nThis file has diagnostics, please fix\n<file_diagnostics>\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</file_diagnostics>\n`
-    }
-
     const savedDiagnostics: Record<string, Diagnostic[]> = {}
     if (selected.selected.length > 0) {
       savedDiagnostics[normalizedFilePath] = selected.selected
+      const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
+      output += `\n\nLSP diagnostics detected in this file:\n<diagnostics file="${filePath}">\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
     }
 
     return {

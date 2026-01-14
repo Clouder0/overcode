@@ -3,7 +3,7 @@
   "info": {
     "title": "opencode",
     "description": "opencode api",
-    "version": "1.1.13"
+    "version": "1.1.18"
   },
   "paths": {
     "/global/health": {
@@ -93,14 +93,11 @@
         },
         "parameters": [
           {
-            "in": "path",
-            "name": "sessionID",
+            "in": "query",
+            "name": "directory",
             "schema": {
-              "type": "string",
-              "pattern": "^ses[0-9A-Za-z_]+$"
-            },
-            "required": true,
-            "description": "Session ID"
+              "type": "string"
+            }
           }
         ],
         "x-codeSamples": [
@@ -8717,6 +8714,10 @@
           "multiple": {
             "description": "Allow selecting multiple choices",
             "type": "boolean"
+          },
+          "custom": {
+            "description": "Allow typing a custom answer (default: true)",
+            "type": "boolean"
           }
         },
         "required": [
@@ -8874,88 +8875,6 @@
           "properties"
         ]
       },
-      "Event.file.edited": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "file.edited"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "file": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "file"
-            ]
-          }
-        },
-        "required": [
-          "type",
-          "properties"
-        ]
-      },
-      "Todo": {
-        "type": "object",
-        "properties": {
-          "content": {
-            "description": "Brief description of the task",
-            "type": "string"
-          },
-          "status": {
-            "description": "Current status of the task: pending, in_progress, completed, cancelled",
-            "type": "string"
-          },
-          "priority": {
-            "description": "Priority level of the task: high, medium, low",
-            "type": "string"
-          },
-          "id": {
-            "description": "Unique identifier for the todo item",
-            "type": "string"
-          }
-        },
-        "required": [
-          "content",
-          "status",
-          "priority",
-          "id"
-        ]
-      },
-      "Event.todo.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "todo.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "todos": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Todo"
-                }
-              }
-            },
-            "required": [
-              "sessionID",
-              "todos"
-            ]
-          }
-        },
-        "required": [
-          "type",
-          "properties"
-        ]
-      },
       "Event.tui.prompt.append": {
         "type": "object",
         "properties": {
@@ -9095,6 +9014,88 @@
           "properties"
         ]
       },
+      "Event.file.edited": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file.edited"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "file"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "properties"
+        ]
+      },
+      "Todo": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "description": "Brief description of the task",
+            "type": "string"
+          },
+          "status": {
+            "description": "Current status of the task: pending, in_progress, completed, cancelled",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Priority level of the task: high, medium, low",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique identifier for the todo item",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content",
+          "status",
+          "priority",
+          "id"
+        ]
+      },
+      "Event.todo.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "todo.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "todos": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Todo"
+                }
+              }
+            },
+            "required": [
+              "sessionID",
+              "todos"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "properties"
+        ]
+      },
       "Event.mcp.tools.changed": {
         "type": "object",
         "properties": {
@@ -9196,6 +9197,9 @@
           "id": {
             "type": "string",
             "pattern": "^ses[0-9A-Za-z_]+$"
+          },
+          "slug": {
+            "type": "string"
           },
           "projectID": {
             "type": "string"
@@ -9318,6 +9322,7 @@
         },
         "required": [
           "id",
+          "slug",
           "projectID",
           "directory",
           "title",
@@ -9786,12 +9791,6 @@
             "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
-            "$ref": "#/components/schemas/Event.file.edited"
-          },
-          {
-            "$ref": "#/components/schemas/Event.todo.updated"
-          },
-          {
             "$ref": "#/components/schemas/Event.tui.prompt.append"
           },
           {
@@ -9802,6 +9801,12 @@
           },
           {
             "$ref": "#/components/schemas/Event.tui.session.select"
+          },
+          {
+            "$ref": "#/components/schemas/Event.file.edited"
+          },
+          {
+            "$ref": "#/components/schemas/Event.todo.updated"
           },
           {
             "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -11425,8 +11430,15 @@
             "type": "object",
             "properties": {
               "auto": {
-                "description": "Enable automatic compaction when context is full (default: true)",
-                "type": "boolean"
+                "description": "Automatic compaction policy when context is full: allow|deny|ask (or true/false). Defaults to allow.",
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PermissionActionConfig"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
               },
               "prune": {
                 "description": "Enable pruning of old tool outputs (default: true)",
@@ -11514,6 +11526,39 @@
               "openTelemetry": {
                 "description": "Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)",
                 "type": "boolean"
+              },
+              "llmConcurrency": {
+                "description": "Optional concurrency limits for LLM streaming.",
+                "type": "object",
+                "properties": {
+                  "global": {
+                    "description": "Global (machine-wide) concurrency limits for LLM streaming.",
+                    "type": "object",
+                    "properties": {
+                      "limits": {
+                        "description": "Global (machine-wide) max concurrent LLM streams using pattern keys. Keys match providerID/model.api.id (e.g. openai/gpt-5) and may be globs (openai/*) or regex prefixed with re:.",
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "staleMs": {
+                        "description": "Lease expiry for crash-recovery in milliseconds (min 1000). Used to prune stale global concurrency leases.",
+                        "type": "integer",
+                        "minimum": 1000,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "limits"
+                    ]
+                  }
+                }
               },
               "primary_tools": {
                 "description": "Tools that should only be available to primary agents.",

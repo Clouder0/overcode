@@ -72,6 +72,7 @@ import stripAnsi from "strip-ansi"
 import { Footer } from "./footer.tsx"
 import { usePromptRef } from "../../context/prompt"
 import { Filesystem } from "@/util/filesystem"
+import { Global } from "@/global"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
@@ -235,6 +236,23 @@ export function Session() {
     if (initialPromptApplied()) return
     handle.set(initial)
     setInitialPromptApplied(true)
+  })
+
+  let lastSwitch: string | undefined = undefined
+  sdk.event.on("message.part.updated", (evt) => {
+    const part = evt.properties.part
+    if (part.type !== "tool") return
+    if (part.sessionID !== route.sessionID) return
+    if (part.state.status !== "completed") return
+    if (part.id === lastSwitch) return
+
+    if (part.tool === "plan_exit") {
+      local.agent.set("build")
+      lastSwitch = part.id
+    } else if (part.tool === "plan_enter") {
+      local.agent.set("plan")
+      lastSwitch = part.id
+    }
   })
 
   let scroll: ScrollBoxRenderable
@@ -2103,15 +2121,56 @@ function BlockTool(props: { title: string; children: JSX.Element; onClick?: () =
 }
 
 function Bash(props: ToolProps<typeof BashTool>) {
-  const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
   const { theme } = useTheme()
+  const sync = useSync()
+  const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
+  const [expanded, setExpanded] = createSignal(false)
+  const lines = createMemo(() => output().split("\n"))
+  const overflow = createMemo(() => lines().length > 10)
+  const limited = createMemo(() => {
+    if (expanded() || !overflow()) return output()
+    return [...lines().slice(0, 10), "…"].join("\n")
+  })
+
+  const workdirDisplay = createMemo(() => {
+    const workdir = props.input.workdir
+    if (!workdir || workdir === ".") return undefined
+
+    const base = sync.data.path.directory
+    if (!base) return undefined
+
+    const absolute = path.resolve(base, workdir)
+    if (absolute === base) return undefined
+
+    const home = Global.Path.home
+    if (!home) return absolute
+
+    const match = absolute === home || absolute.startsWith(home + path.sep)
+    return match ? absolute.replace(home, "~") : absolute
+  })
+
+  const title = createMemo(() => {
+    const desc = props.input.description ?? "Shell"
+    const wd = workdirDisplay()
+    if (!wd) return `# ${desc}`
+    if (desc.includes(wd)) return `# ${desc}`
+    return `# ${desc} in ${wd}`
+  })
+
   return (
     <Switch>
       <Match when={props.metadata.output !== undefined}>
-        <BlockTool title={"# " + (props.input.description ?? "Shell")} part={props.part}>
+        <BlockTool
+          title={title()}
+          part={props.part}
+          onClick={overflow() ? () => setExpanded((prev) => !prev) : undefined}
+        >
           <box gap={1}>
             <text fg={theme.text}>$ {props.input.command}</text>
-            <text fg={theme.text}>{output()}</text>
+            <text fg={theme.text}>{limited()}</text>
+            <Show when={overflow()}>
+              <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
+            </Show>
           </box>
         </BlockTool>
       </Match>
@@ -2407,7 +2466,9 @@ function Question(props: ToolProps<typeof QuestionTool>) {
 }
 
 function SubagentSpawn(props: ToolProps<any>) {
-  const { theme } = useTheme()
+  const themeState = useTheme()
+  const theme = themeState.theme
+  const syntax = themeState.syntax
   const dialog = useDialog()
 
   const pending = createMemo(() => props.part.state.status === "pending")
@@ -2446,7 +2507,13 @@ function SubagentSpawn(props: ToolProps<any>) {
               ✗ <b>Blocked</b> by machine-wide LLM concurrency limits
             </text>
             <Show when={props.output}>
-              <code filetype="markdown" drawUnstyledText={false} fg={theme.textMuted} content={props.output ?? ""} />
+              <code
+                filetype="markdown"
+                drawUnstyledText={false}
+                fg={theme.textMuted}
+                content={props.output ?? ""}
+                syntaxStyle={syntax()}
+              />
             </Show>
           </box>
         </Show>

@@ -71,7 +71,7 @@ export const WriteTool = Tool.define("write", {
       }
     })
 
-    let output = ""
+    let output = "Wrote file successfully."
     const savedDiagnostics: Record<string, Diagnostic[]> = {}
     await LSP.touchFile(filepath, true)
     const diagnostics = await LSP.diagnostics()
@@ -83,7 +83,7 @@ export const WriteTool = Tool.define("write", {
         if (selected.selected.length === 0) continue
         savedDiagnostics[file] = selected.selected
         const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
-        output += `\nThis file has diagnostics, please fix\n<file_diagnostics>\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</file_diagnostics>\n`
+        output += `\n\nLSP diagnostics detected in this file:\n<diagnostics file="${filepath}">\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
         continue
       }
 
@@ -92,7 +92,7 @@ export const WriteTool = Tool.define("write", {
       projectDiagnosticsCount++
       savedDiagnostics[file] = selected.selected
       const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""
-      output += `\n<project_diagnostics>\n${file}\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</project_diagnostics>\n`
+      output += `\n\nLSP errors detected in other files:\n<diagnostics file="${file}">\n${selected.selected.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
     }
 
     return {

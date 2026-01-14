@@ -33,11 +33,14 @@ import { useSync } from "@/context/sync"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
+import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
+import type { IconName } from "@opencode-ai/ui/icons/provider"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Select } from "@opencode-ai/ui/select"
 import { getDirectory, getFilename } from "@opencode-ai/util/path"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { ImagePreview } from "@opencode-ai/ui/image-preview"
 import { ModelSelectorPopover } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaid } from "@/components/dialog-select-model-unpaid"
 import { useProviders } from "@/hooks/use-providers"
@@ -398,6 +401,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   createEffect(() => {
     if (!isFocused()) setStore("popover", null)
+  })
+
+  // Safety: reset composing state on focus change to prevent stuck state
+  // This handles edge cases where compositionend event may not fire
+  createEffect(() => {
+    if (!isFocused()) setComposing(false)
   })
 
   type AtOption = { type: "agent"; name: string; display: string } | { type: "file"; path: string; display: string }
@@ -917,6 +926,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       }
     }
 
+    // Handle Shift+Enter BEFORE IME check - Shift+Enter is never used for IME input
+    // and should always insert a newline regardless of composition state
+    if (event.key === "Enter" && event.shiftKey) {
+      addPart({ type: "text", content: "\n", start: 0, end: 0 })
+      event.preventDefault()
+      return
+    }
+
     if (event.key === "Enter" && isImeComposing(event)) {
       return
     }
@@ -980,11 +997,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       return
     }
 
-    if (event.key === "Enter" && event.shiftKey) {
-      addPart({ type: "text", content: "\n", start: 0, end: 0 })
-      event.preventDefault()
-      return
-    }
+    // Note: Shift+Enter is handled earlier, before IME check
     if (event.key === "Enter" && !event.shiftKey) {
       handleSubmit(event)
     }
@@ -1144,13 +1157,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             agent,
             model: `${model.providerID}/${model.modelID}`,
             variant,
-            parts: images.map((attachment) => ({
-              id: Identifier.ascending("part"),
-              type: "file" as const,
-              mime: attachment.mime,
-              url: attachment.dataUrl,
-              filename: attachment.filename,
-            })),
           })
           .catch((err) => {
             showToast({
@@ -1523,7 +1529,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                     <img
                       src={attachment.dataUrl}
                       alt={attachment.filename}
-                      class="size-16 rounded-md object-cover border border-border-base"
+                      class="size-16 rounded-md object-cover border border-border-base hover:border-border-strong-base transition-colors"
+                      onClick={() =>
+                        dialog.show(() => <ImagePreview src={attachment.dataUrl} alt={attachment.filename} />)
+                      }
                     />
                   </Show>
                   <button
@@ -1612,6 +1621,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                             variant="ghost"
                             onClick={() => dialog.show(() => <DialogSelectModelUnpaid />)}
                           >
+                            <Show when={effectiveModel()?.provider?.id}>
+                              <ProviderIcon id={effectiveModel()!.provider!.id as IconName} class="size-4 shrink-0" />
+                            </Show>
                             {effectiveModel()?.name ?? "Select model"}
                             <Icon name="chevron-down" size="small" />
                           </Button>
@@ -1621,6 +1633,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                       <ModelSelectorPopover>
                         <TooltipKeybind placement="top" title="Choose model" keybind={command.keybind("model.choose")}>
                           <Button as="div" variant="ghost">
+                            <Show when={effectiveModel()?.provider?.id}>
+                              <ProviderIcon id={effectiveModel()!.provider!.id as IconName} class="size-4 shrink-0" />
+                            </Show>
                             {effectiveModel()?.name ?? "Select model"}
                             <Icon name="chevron-down" size="small" />
                           </Button>
@@ -1630,6 +1645,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                   }
                 >
                   <Button as="div" variant="ghost">
+                    <Show when={effectiveModel()?.provider?.id}>
+                      <ProviderIcon id={effectiveModel()!.provider!.id as IconName} class="size-4 shrink-0" />
+                    </Show>
                     {effectiveModel()?.name ?? "Select model"}
                   </Button>
                 </Show>
@@ -1641,10 +1659,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                   >
                     <Button
                       variant="ghost"
-                      class="text-text-base _hidden group-hover/prompt-input:inline-block"
+                      class="text-text-base _hidden group-hover/prompt-input:inline-block capitalize text-12-regular"
                       onClick={() => local.model.variant.cycle()}
                     >
-                      <span class="capitalize text-12-regular">{local.model.variant.current() ?? "Default"}</span>
+                      {local.model.variant.current() ?? "Default"}
                     </Button>
                   </TooltipKeybind>
                 </Show>

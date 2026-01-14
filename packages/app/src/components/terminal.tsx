@@ -107,6 +107,11 @@ export const Terminal = (props: TerminalProps) => {
     url.pathname = root + `/pty/${local.pty.id}/connect`
     url.searchParams.set("directory", sdk.directory)
 
+    if (window.__OPENCODE__?.serverPassword) {
+      url.username = "opencode"
+      url.password = window.__OPENCODE__?.serverPassword
+    }
+
     const socket = new WebSocket(url.toString())
     ws = socket
 

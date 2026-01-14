@@ -99,7 +99,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       mcp_resource: {},
       formatter: [],
       vcs: undefined,
-      path: { state: "", config: "", worktree: "", directory: "" },
+      path: { state: "", config: "", worktree: "", directory: "", home: "" },
     })
 
     const sdk = useSDK()
