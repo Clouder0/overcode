@@ -26,58 +26,87 @@ test("formatInbox for multiple messages", () => {
   expect(result).toContain("Sender Agent with session id ses_b did not respond before your timeout:")
 })
 
-test("formatTimeoutMessage", () => {
-  const result = MessageParser.formatTimeoutMessage(30000)
-  expect(result).toBe("Timeout after 30000ms waiting for response")
-})
-
-test("formatWaitTimeoutMessage includes idle status and ping suggestion", () => {
-  const result = MessageParser.formatWaitTimeoutMessage({
+test("formatWaitResult with timeout shows header and mode", () => {
+  const result = MessageParser.formatWaitResult({
     timeoutMs: 30000,
-    snapshot: {
-      source: "ses_child",
-      run: "idle",
-    },
+    mode: "all",
+    responded: [],
+    timedOut: [{ source: "ses_child", run: "idle" }],
   })
-  expect(result).toContain("Timeout after 30000ms waiting for response")
-  expect(result).toContain("Source status snapshot: idle")
-  expect(result).toContain("ping ses_child")
+  expect(result).toContain("Wait timed out after 30000ms")
+  expect(result).toContain("Mode: all")
 })
 
-test("formatWaitTimeoutMessage includes waiting details", () => {
-  const result = MessageParser.formatWaitTimeoutMessage({
-    timeoutMs: 1000,
-    snapshot: {
-      source: "ses_child",
-      run: "waiting",
-      waiting: {
-        sources: ["ses_a", "ses_b"],
-        mode: "all",
-        deadline: 123,
-      },
-    },
+test("formatWaitResult shows responded sources", () => {
+  const result = MessageParser.formatWaitResult({
+    timeoutMs: 30000,
+    mode: "all",
+    responded: ["ses_a", "ses_b"],
+    timedOut: [{ source: "ses_c", run: "working" }],
   })
-  expect(result).toContain("Source status snapshot: waiting")
-  expect(result).toContain("mode=all")
-  expect(result).toContain("ses_a, ses_b")
-  expect(result).toContain("Wait deadline: 123")
+  expect(result).toContain("Responded: ses_a, ses_b")
 })
 
-test("formatWaitTimeoutMessage includes retry details", () => {
-  const result = MessageParser.formatWaitTimeoutMessage({
-    timeoutMs: 1000,
-    snapshot: {
-      source: "ses_child",
-      run: "retry",
-      retry: {
-        attempt: 2,
-        message: "Provider is overloaded",
-        next: 999,
-      },
+test("formatWaitResult shows timed out sources with status", () => {
+  const result = MessageParser.formatWaitResult({
+    timeoutMs: 30000,
+    mode: "all",
+    responded: [],
+    timedOut: [
+      { source: "ses_a", run: "working" },
+      { source: "ses_b", run: "idle" },
+    ],
+  })
+  expect(result).toContain("Timed out:")
+  expect(result).toContain("ses_a: working")
+  expect(result).toContain("ses_b: idle")
+})
+
+test("formatWaitResult suggests waiting again for working/waiting/retry", () => {
+  const result = MessageParser.formatWaitResult({
+    timeoutMs: 30000,
+    mode: "all",
+    responded: [],
+    timedOut: [{ source: "ses_child", run: "working" }],
+  })
+  expect(result).toContain("ses_child is still processing - consider waiting again")
+})
+
+test("formatWaitResult suggests sending message for idle", () => {
+  const result = MessageParser.formatWaitResult({
+    timeoutMs: 30000,
+    mode: "all",
+    responded: [],
+    timedOut: [{ source: "ses_child", run: "idle" }],
+  })
+  expect(result).toContain("ses_child is idle - consider sending a message to check status")
+})
+
+test("formatWaitResult includes agent labels when provided", () => {
+  const result = MessageParser.formatWaitResult({
+    timeoutMs: 30000,
+    mode: "all",
+    responded: ["ses_a"],
+    timedOut: [{ source: "ses_b", run: "working" }],
+    agents: {
+      ses_a: "explore",
+      ses_b: "general",
     },
   })
-  expect(result).toContain("Source status snapshot: retry")
-  expect(result).toContain("attempt=2")
-  expect(result).toContain("next=999")
-  expect(result).toContain("Provider is overloaded")
+  expect(result).toContain("Responded: ses_a (explore)")
+  expect(result).toContain("ses_b (general): working")
+  expect(result).toContain("ses_b (general) is still processing")
+})
+
+test("formatWaitResult resolved without timeout", () => {
+  const result = MessageParser.formatWaitResult({
+    timeoutMs: 30000,
+    mode: "all",
+    responded: ["ses_a"],
+    timedOut: [],
+  })
+  expect(result).toContain("Wait resolved")
+  expect(result).toContain("Mode: all")
+  expect(result).toContain("Responded: ses_a")
+  expect(result).not.toContain("Timed out")
 })

@@ -178,7 +178,7 @@ export namespace MessageV2 {
     type: z.literal("message"),
     direction: z.enum(["outgoing", "incoming"]),
     peer: z.string(),
-    peerType: z.enum(["human", "agent"]),
+    peerType: z.enum(["human", "agent", "system"]),
     text: z.string(),
     timeout: z.number().optional(),
     timeoutOccurred: z.boolean().optional(),
@@ -500,6 +500,10 @@ export namespace MessageV2 {
             if (legacyInbox && part.direction === "incoming" && part.peerType === "agent") continue
 
             const text = (() => {
+              if (part.direction === "incoming" && part.peerType === "system") {
+                return [`${part.peer}:`, "<content>", part.text, "</content>"].join("\n")
+              }
+
               if (part.direction === "incoming" && part.peerType === "agent") {
                 return MessageParser.formatInbox([
                   {
@@ -564,6 +568,10 @@ export namespace MessageV2 {
             if (part.direction === "outgoing") continue
 
             const text = (() => {
+              if (part.direction === "incoming" && part.peerType === "system") {
+                return [`${part.peer}:`, "<content>", part.text, "</content>"].join("\n")
+              }
+
               if (part.direction === "incoming" && part.peerType === "agent") {
                 return MessageParser.formatInbox([
                   {

@@ -205,6 +205,24 @@ describe("transcript", () => {
       expect(result).toContain("_Message from agent ses_child:_")
       expect(result).toContain("Hello from child")
     })
+
+    test("formats system message part", () => {
+      const part: Part = {
+        id: "part_1",
+        sessionID: "ses_123",
+        messageID: "msg_123",
+        type: "message",
+        direction: "incoming",
+        peer: "Wait result",
+        peerType: "system",
+        text: "Wait timed out after 30000ms\nResponded: ses_ok\nTimed out: ses_timeout",
+        time: { created: 1000 },
+      }
+
+      const result = formatPart(part, options)
+      expect(result).toContain("_Message from system Wait result:_")
+      expect(result).toContain("Wait timed out")
+    })
   })
 
   describe("formatMessage", () => {

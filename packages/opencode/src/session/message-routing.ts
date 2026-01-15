@@ -22,7 +22,7 @@ export namespace SessionMessage {
     to: z.string(),
     text: z.string(),
     time: z.number(),
-    messageType: z.enum(["normal", "timeout", "error"]).default("normal"),
+    messageType: z.enum(["normal", "timeout", "error", "wait_result"]).default("normal"),
   })
   export type Message = z.infer<typeof Message>
 
@@ -46,7 +46,7 @@ export namespace SessionMessage {
     from: string
     to: string
     text: string
-    messageType?: "normal" | "timeout" | "error"
+    messageType?: "normal" | "timeout" | "error" | "wait_result"
   }): Promise<Message> {
     const message: Message = {
       id: Identifier.ascending("message"),

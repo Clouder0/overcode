@@ -24,7 +24,8 @@ type WaitMessageMetadata = {
 }
 
 export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
-  description: "Wait for messages from specified agent sessions. After calling, end your turn immediately.",
+  description:
+    "Wait for messages from specified agent sessions with a timeout. Wakes when wait condition is met, or on timeout. Timeout message shows the source's current status.",
   parameters: z.object({
     sources: z.array(z.string()).describe('Session ids to wait for (each starts with "ses_")'),
     timeout: z.coerce.number().min(1).describe("Timeout in milliseconds"),
@@ -120,7 +121,8 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
 
     return {
       title: "Wait registered",
-      output: "Wait registered. End your turn now.",
+      output:
+        "Wait registered. Your session is now waiting - stop generating. You'll wake when messages arrive or timeout expires.",
       metadata: meta,
     }
   },

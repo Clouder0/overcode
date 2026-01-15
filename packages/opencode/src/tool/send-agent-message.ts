@@ -12,8 +12,7 @@ type SendMessageMetadata = {
 }
 
 export const SendAgentMessageTool = Tool.define("send_agent_message", {
-  description:
-    "Send a message to another agent session. Use this to reply to the sender or communicate with other agents.",
+  description: "Send a message to another agent session.",
   parameters: z.object({
     to: z.string().describe('Target session id (starts with "ses_")'),
     text: z.string().describe("Message content"),
@@ -79,7 +78,7 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
 
     return {
       title: `Sent to ${target}`,
-      output: JSON.stringify(meta, null, 2),
+      output: `Message delivered to ${target}.\nReminder: wait_agent_message can set a timeout - if the expected reply doesn't arrive in time, you wake with timeout status.`,
       metadata: meta,
     }
   },

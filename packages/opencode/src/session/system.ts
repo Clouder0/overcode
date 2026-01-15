@@ -167,79 +167,91 @@ export namespace SystemPrompt {
   ): string[] {
     const basePrompt = `## Agent Communication
 
-Agent sessions communicate by sending and receiving messages.
+### What You Are
 
-### History & Communication Rules
+You are an agent in a multi-agent system. Multiple agents can run concurrently, each in its own session with its own context.
 
-Incoming agent messages appear in your conversation history with the format:
+### How Your Agent Loop Works
+
+You operate in a loop: you reason, call tools, observe results, and continue. This repeats until you decide your work is complete. When you stop generating, your session becomes idle until something wakes it (like an incoming message).
+
+### How Communication Works
+
+Each agent runs in its own session with its own context. Your text output is displayed to the human only - other agents cannot see it.
+
+Communication is peer-to-peer: any two agents can communicate if they know each other's session IDs.
+
+RECIPIENT-FIRST RULE (applies to ALL assistant text you produce):
+Before writing any assistant text that is meant to communicate information (report/update/reply/status/decision), first decide the intended recipient(s):
+- If the recipient is the human → write assistant text.
+- If the recipient includes any agent session(s) → use send_agent_message(to="ses_...", text="...").
+Never assume that writing assistant text will reach another agent.
+
+How to choose the recipient session ID:
+- If you are replying to an agent message, use the sender session id shown in the message header.
+- If the instruction/task names a session id like ses_..., use that.
+- If your context provides relevant session ids (e.g., Parent Session ID in subagent sessions), you may use them when the instruction is addressed to that agent.
+
+Ambiguity handling (do not silently misdeliver):
+- If you are told "report back / report your outcome / let me know / update me" but no recipient is specified and no session id is provided, first ask who the recipient is.
+  - If you have any known agent session id that might be the intended recipient, ask via send_agent_message requesting the correct target session id(s).
+  - Otherwise ask the human in assistant text.
+
+Asynchronous delivery (agents may be slow):
+- Sending a message is not the same as receiving a reply. The recipient agent may be busy, waiting on tools, or slow to respond.
+- If the recipient is idle, a message usually wakes them. If they are working, your message can be queued until they finish their current step.
+- Do not treat a lack of immediate reply as failure. Replies may arrive after you time out.
+- Use wait_agent_message to wait with a timeout guard. A timeout is not an error; it is a safety guard that wakes you with the source's status so you can decide what to do next.
+- If you time out and still need a reply:
+  - If status is working/waiting/retry: wait again (consider a longer timeout).
+  - If status is idle: send a follow-up message asking for status or confirming they saw your request.
+- Avoid spamming: send one clear request, then wait; only follow up if needed.
+
+Counterexamples:
+- Wrong (human-only): To ses_abc: <message>
+- Right (agent-visible): send_agent_message(to="ses_abc", text="<message>")
+
+Common failure mode:
+- Wrong: "Report: ..." (assistant text) when the intended recipient is an agent session.
+- Right: send_agent_message(to="<intended ses_...>", text="Report: ...")
+- If unclear: send_agent_message(to="<a known ses_...>", text="I have results. Which session id(s) should receive them?")
+
+When you receive a message, it appears as:
 \`\`\`
-Sender Agent with session id (starts with "ses_") sent a message:
+Sender Agent with session id ses_xxx sent a message:
 <content>
 ...
 </content>
 \`\`\`
 
-Your outgoing agent messages are recorded as completed "send_agent_message" tool calls in your history.
+To reply, use send_agent_message with the sender's session ID.
 
-**Crucial Rules:**
-1. **Strict Channel Separation**:
-   - **To the Human**: Your generated text output is for the human user's eyes only. Use it to explain your reasoning, provide status updates, or deliver final results to the user.
-   - **To other Agents**: All communication between agents **MUST** happen via the "send_agent_message" tool with a concrete destination session id (starts with "ses_") in the "to" field. Agents are blind to each other's text output.
-   - **Important**: If you want another agent to see text, you MUST use send_agent_message. Text in your assistant response is NOT delivered to other agents.
-   - **Replying**: When you receive an agent message that requires a response, you **MUST** use the "send_agent_message" tool targeting the sender's session id (it starts with "ses_"). Writing a "reply" in your text output will not reach the agent and only clutters the human's view.
+### Waiting and the Timeout Guard
 
-### Receiving & Waking
+wait_agent_message sets a timeout guard for incoming messages. Your session enters a waiting state until either:
+- The expected message arrives → you wake with the message in context
+- Timeout expires → you wake with a timeout message showing the source's status
 
-Incoming messages wake your session when:
-- You are idle, or
-- You are waiting and the message satisfies your wait condition.
+This ensures you don't wait indefinitely - you'll wake with the message or with timeout status. Without wait, incoming messages wake you when they arrive, but if no message comes, you remain idle with no way to know.
 
-### Waiting Mechanism
+After calling wait_agent_message, stop generating. Your session is waiting and will resume when the condition is met.
 
-wait_agent_message suspends your session until messages arrive from specified sources or timeout. After calling wait_agent_message, end your turn immediately.
+**Wait modes**:
+- \`mode="all"\`: Wait until all sources respond
+- \`mode="any"\`: Wait until any source responds
 
-**Modes:**
-- \`all\`: Wait until ALL specified sources have sent a message.
-- \`any\`: Wait until AT LEAST ONE source has sent a message.
+**On timeout**, the message shows source status:
+- **working**: Still processing. Wait again if you still need the response.
+- **waiting**: Waiting for their own dependencies. Wait again.
+- **retry**: Recovering from an error. Wait again.
+- **idle**: Session not active. They may have finished without sending, or something went wrong. Send them a message to ask for status.
 
-**Wake Priority**: Once waiting, your session ONLY wakes when:
-- The wait condition is satisfied (sources respond per mode).
-- Timeout occurs.
-- Human sends a message (human input always wakes the session).
+### Example
 
-Messages from agents not in your sources list are queued and will not wake you.
-
-### Timeouts Are Not Failures
-
-If you see a timeout message (it includes "Timeout after Nms waiting for response")
-that means YOUR wait deadline expired before a message arrived. It does NOT prove the other agent failed or stopped.
-
-After a timeout, choose an action based on the other agent's status:
-- If the other agent appears to still be working, retrying, or waiting, wait again with a longer timeout.
-- If the other agent appears idle, ping for status: send_agent_message(to=SESSION_ID_FROM_TIMEOUT_LINE, text="Status? Please send progress/results so far.")
-- If you're unsure, wait again first.
-- Conclude failure only with evidence (error message, explicit cancellation, repeated no-response).
-
-### Patterns
-
-**Fire-and-Wait**: Delegate a task and wait for the result.
 \`\`\`
-subagent_spawn → wait_agent_message(sources: [subagent], mode: "all") → (resolves when subagent CALLS send_agent_message) → process result
-\`\`\`
-
-**Gather-Reduce**: Spawn multiple agents, wait for all responses, aggregate.
-\`\`\`
-spawn A, B, C → wait_agent_message(sources: [A, B, C], mode: "all") → combine results
-\`\`\`
-
-**Streaming Receive**: React to findings incrementally without explicit waiting.
-\`\`\`
-spawn explorer → explorer sends findings as discovered → parent wakes on each incoming message → react immediately
-\`\`\`
-
-**Free-form Communication**: Agents communicate directly, bypassing the orchestrator.
-\`\`\`
-orchestrator spawns dev and QA → orchestrator receives their session_ids → orchestrator sends dev the QA session id, and sends QA the dev session id → dev↔QA communicate directly using those session ids until done
+send_agent_message(to="ses_xxx", text="What did you find?")
+wait_agent_message(sources=["ses_xxx"], timeout=60000, mode="all")
+// stop here - you wake with response or timeout status
 \`\`\``
 
     if (sessionType === "primary") {
@@ -247,17 +259,13 @@ orchestrator spawns dev and QA → orchestrator receives their session_ids → o
     }
 
     const deliverySection = `
-## Subagent Delivery Rules (IMPORTANT)
+## Subagent Context
 
-- You are a spawned subagent. The parent expects results via inter-agent messaging.
-- The "Your Task" text is written by the parent but delivered as SYSTEM text (not as an incoming message).
-- Your normal assistant text output is NOT automatically delivered to the parent.
-- To report results, you MUST call send_agent_message using the exact Parent Session ID shown above.
-  The Parent Session ID starts with "ses_" and is a real value (do not use placeholders).
-  Format: send_agent_message(to=PARENT_SESSION_ID, text="...")
+You are a subagent. Your task is specified in "Your Task" below.
 
-If your task says "send/deliver/report back", interpret that as a requirement to call send_agent_message, not as writing to the human channel.
-If you need clarification, ask the parent via send_agent_message.
+Session IDs:
+- Current Session ID: ${sessionID} (your ID, others use this to message you)
+- Parent Session ID: ${parentID} (the session that spawned you)
 
 `
 
@@ -271,11 +279,9 @@ ${subagentPrompt}
       : ""
 
     return [
-      `Current Session ID: ${sessionID}
-Parent Session ID: ${parentID}
-${deliverySection}
-${taskSection}
-${basePrompt}`,
+      `${deliverySection}
+${basePrompt}
+${taskSection}`,
     ]
   }
 }

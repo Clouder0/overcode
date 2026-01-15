@@ -210,6 +210,11 @@ export namespace SessionPrompt {
     }
 
     const partID = uiMessage.id.replace(/^msg_/, "prt_")
+    const peerType = (() => {
+      if (message.from === "human") return "human" as const
+      if (message.messageType === "wait_result") return "system" as const
+      return "agent" as const
+    })()
     const msgPart: MessageV2.MessagePart = {
       id: Identifier.ascending("part", partID),
       messageID: uiMessage.id,
@@ -217,7 +222,7 @@ export namespace SessionPrompt {
       type: "message",
       direction: "incoming",
       peer: message.from,
-      peerType: message.from === "human" ? "human" : "agent",
+      peerType,
       text: message.text,
       timeoutOccurred: message.messageType === "timeout",
       time: { created: message.time },
@@ -1072,55 +1077,70 @@ export namespace SessionPrompt {
         const respondedSources = result.respondedSources
         const timedOutSources = result.timedOut ? result.missingSources : []
 
+        // Generate ONE comprehensive wait result message (system message)
         if (timedOutSources.length > 0) {
-          const timeoutMessages = timedOutSources.map((source): SessionMessage.Message => {
-            const st = SessionStatus.get(source)
-            const snapshot: MessageParser.TimeoutSnapshot = (() => {
-              if (st.type === "idle") {
-                return { source, run: "idle" }
-              }
-              if (st.type === "busy") {
-                return { source, run: "working" }
-              }
-              if (st.type === "retry") {
-                return {
-                  source,
-                  run: "retry",
-                  retry: {
-                    attempt: st.attempt,
-                    message: st.message,
-                    next: st.next,
-                  },
-                }
-              }
-              if (st.type === "waiting") {
-                return {
-                  source,
-                  run: "waiting",
-                  waiting: {
-                    sources: st.sources,
-                    mode: st.mode,
-                    deadline: st.time.deadline,
-                  },
-                }
-              }
-              return { source, run: "unknown" }
-            })()
+          const ids = Array.from(new Set([...respondedSources, ...timedOutSources]))
+          const sessions = await Promise.all(ids.map((id) => Session.get(id).catch(() => undefined)))
 
-            return {
-              id: Identifier.ascending("message"),
-              from: source,
-              to: sessionID,
-              text: MessageParser.formatWaitTimeoutMessage({
-                timeoutMs: wait.timeout,
-                snapshot,
-              }),
-              time: Date.now(),
-              messageType: "timeout",
-            }
+          const agents: Record<string, string> = {}
+          ids.forEach((id, i) => {
+            const name = sessions[i]?.agentName
+            if (typeof name !== "string" || name.length === 0) return
+            agents[id] = name
           })
 
-          await Promise.allSettled(timeoutMessages.map((m) => persistInbound(m)))
+          const snapshots = timedOutSources.map((source): MessageParser.TimeoutSnapshot => {
+            const st = SessionStatus.get(source)
+            const agent = agents[source]
+            if (st.type === "idle") {
+              return { source, agent, run: "idle" }
+            }
+            if (st.type === "busy") {
+              return { source, agent, run: "working" }
+            }
+            if (st.type === "retry") {
+              return {
+                source,
+                agent,
+                run: "retry",
+                retry: {
+                  attempt: st.attempt,
+                  message: st.message,
+                  next: st.next,
+                },
+              }
+            }
+            if (st.type === "waiting") {
+              return {
+                source,
+                agent,
+                run: "waiting",
+                waiting: {
+                  sources: st.sources,
+                  mode: st.mode,
+                  deadline: st.time.deadline,
+                },
+              }
+            }
+            return { source, agent, run: "unknown" }
+          })
+
+          const waitResultMessage: SessionMessage.Message = {
+            id: Identifier.ascending("message"),
+            from: "Wait result",
+            to: sessionID,
+            text: MessageParser.formatWaitResult({
+              timeoutMs: wait.timeout,
+              mode: wait.mode,
+              responded: respondedSources,
+              timedOut: snapshots,
+              agents,
+            }),
+            time: Date.now(),
+            messageType: "wait_result",
+          }
+
+          await persistInbound(waitResultMessage)
         }
 
         const parts = await MessageV2.parts(wait.messageID)

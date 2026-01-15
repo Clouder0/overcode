@@ -106,7 +106,11 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
 
   if (part.type === "message") {
     const dir = part.direction === "incoming" ? "from" : "to"
-    const peer = part.peerType === "agent" ? `agent ${part.peer}` : part.peer
+    const peer = (() => {
+      if (part.peerType === "agent") return `agent ${part.peer}`
+      if (part.peerType === "system") return `system ${part.peer}`
+      return part.peer
+    })()
     const suffix = part.timeoutOccurred ? " (timed out)" : ""
 
     return `_Message ${dir} ${peer}${suffix}:_\n\n${part.text}\n\n`

@@ -15,29 +15,12 @@ import { Tool } from "./tool"
 
 const log = Log.create({ service: "tool.subagent-spawn" })
 
-const DESCRIPTION = `Spawn subagent sessions with specific tasks.
+const DESCRIPTION = `Spawn subagent sessions to run tasks in parallel.
 
-The 'prompt' parameter is injected into the subagent's SYSTEM prompt as its mission.
-The subagent will NOT automatically report back to the parent, and weak models may write a normal assistant response that never reaches the parent.
-If you want results sent back to the parent session, your prompt MUST explicitly require a tool call: send_agent_message(to=PARENT_SESSION_ID, text=<results>).
+The 'prompt' parameter becomes the subagent's task. The subagent receives your session ID as their Parent Session ID.
 
-Your prompt MUST include:
-1. Clear task description - what the subagent should accomplish
-2. Clear delivery instructions - exactly how to report results (tool name + destination + when)
-
-Common patterns:
-- Fire-and-Wait: Include "When complete, reply using send_agent_message to the Parent Session ID with your findings."
-- Streaming: Include "Send updates as you discover them using send_agent_message to the Parent Session ID."
-- Fire-and-Forget: No reply instruction needed for background tasks.
-
-The subagent's system prompt will include its Current Session ID and Parent Session ID, but you must explicitly instruct it to reply if you expect a response.
-
-Spawn permissions are evaluated from the calling agent's configuration only (session tool overrides do not apply).
-If any requested agent is invalid or denied by subagent_spawn_agent, the entire call fails.
-
-This tool may be blocked when global (machine-wide) LLM concurrency limits are configured (experimental.llmConcurrency.global).
-If blocked, no subagents are spawned and the tool returns ok:false with guidance. In that case, continue sequentially,
-wait and retry, or ask the human to adjust global concurrency limits.`
+If you want the subagent to communicate with any agent session, include the target session ID(s) and explicitly ask it to use send_agent_message.
+Example: When done, call send_agent_message(to="ses_...", text="<findings>")`
 
 const AGENT_DESC = "Agent type (e.g. general, explore)"
 const MAX_AGENT_ENUM = 32
@@ -270,6 +253,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         })
       }
 
+      const lines = [`Spawned ${spawned.length} agent(s):`, ...spawned.map((s) => `- ${s.session_id} (${s.agent})`)]
       return {
         title: `Spawned ${spawned.length} agent(s)`,
         metadata: {
@@ -278,7 +262,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
           spawned,
           errors: [] as string[],
         } as any,
-        output: JSON.stringify({ spawned }, null, 2),
+        output: lines.join("\n"),
       }
     },
   }

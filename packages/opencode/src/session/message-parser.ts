@@ -1,6 +1,7 @@
 export namespace MessageParser {
   export type TimeoutSnapshot = {
     source: string
+    agent?: string
     run: "idle" | "working" | "waiting" | "retry" | "unknown"
     waiting?: {
       sources: string[]
@@ -28,44 +29,63 @@ export namespace MessageParser {
     return parts.join("\n").trimEnd()
   }
 
-  export function formatTimeoutMessage(timeoutMs: number): string {
-    return `Timeout after ${timeoutMs}ms waiting for response`
+  export type WaitResultInput = {
+    timeoutMs: number
+    mode: "all" | "any"
+    responded: string[]
+    timedOut: TimeoutSnapshot[]
+    agents?: Record<string, string>
   }
 
-  export function formatWaitTimeoutMessage(input: { timeoutMs: number; snapshot: TimeoutSnapshot }): string {
-    const lines: string[] = [formatTimeoutMessage(input.timeoutMs)]
+  export function formatWaitResult(input: WaitResultInput): string {
+    const lines: string[] = []
 
-    lines.push(`Source status snapshot: ${input.snapshot.run}`)
+    const tag = (id: string, agent?: string) => {
+      if (!agent) return id
+      return `${id} (${agent})`
+    }
 
-    if (input.snapshot.run === "waiting" && input.snapshot.waiting) {
-      const sources = input.snapshot.waiting.sources.join(", ") || "(none)"
-      lines.push(`Source is waiting (mode=${input.snapshot.waiting.mode}) for: ${sources}`)
-      if (input.snapshot.waiting.deadline !== undefined) {
-        lines.push(`Wait deadline: ${input.snapshot.waiting.deadline}`)
+    // Header
+    if (input.timedOut.length > 0) {
+      lines.push(`Wait timed out after ${input.timeoutMs}ms`)
+    } else {
+      lines.push(`Wait resolved`)
+    }
+    lines.push(`Mode: ${input.mode}`)
+    lines.push("")
+
+    // Responded sources
+    if (input.responded.length > 0) {
+      const responded = input.responded.map((id) => tag(id, input.agents?.[id])).join(", ")
+      lines.push(`Responded: ${responded}`)
+    }
+
+    // Timed out sources with status
+    if (input.timedOut.length > 0) {
+      lines.push("Timed out:")
+      for (const snap of input.timedOut) {
+        const id = tag(snap.source, snap.agent ?? input.agents?.[snap.source])
+        lines.push(`  ${id}: ${snap.run}`)
       }
-      lines.push("Suggested action: wait again")
-      return lines.join("\n")
+      lines.push("")
+      lines.push("Note: replies can be delayed and may arrive after timeouts.")
+      lines.push("")
+
+      // Suggestions per source
+      for (const snap of input.timedOut) {
+        const id = tag(snap.source, snap.agent ?? input.agents?.[snap.source])
+        if (snap.run === "working" || snap.run === "waiting" || snap.run === "retry") {
+          lines.push(`${id} is still processing - consider waiting again.`)
+          continue
+        }
+        if (snap.run === "idle") {
+          lines.push(`${id} is idle - consider sending a message to check status.`)
+          continue
+        }
+        lines.push(`${id} status unknown - consider waiting again or checking status.`)
+      }
     }
 
-    if (input.snapshot.run === "retry" && input.snapshot.retry) {
-      lines.push(
-        `Retry: attempt=${input.snapshot.retry.attempt} next=${input.snapshot.retry.next} reason=${input.snapshot.retry.message}`,
-      )
-      lines.push("Suggested action: wait again")
-      return lines.join("\n")
-    }
-
-    if (input.snapshot.run === "idle") {
-      lines.push(`Suggested action: ping ${input.snapshot.source} for results`)
-      return lines.join("\n")
-    }
-
-    if (input.snapshot.run === "working") {
-      lines.push("Suggested action: wait again")
-      return lines.join("\n")
-    }
-
-    lines.push("Suggested action: wait again")
-    return lines.join("\n")
+    return lines.join("\n").trimEnd()
   }
 }

@@ -1403,102 +1403,6 @@ const PART_MAPPING = {
   tool: ToolPart,
   reasoning: ReasoningPart,
   message: MessagePartComponent,
-  wait: WaitPart,
-}
-
-// Type for wait parts (from message-v2.ts)
-interface WaitPartData {
-  id: string
-  sessionID: string
-  messageID: string
-  type: "wait"
-  sources: string[]
-  timeout: number
-  mode: "all" | "any"
-  status: "waiting" | "resolved" | "timedOut"
-  respondedSources: string[]
-  time: {
-    created: number
-    resolved?: number
-  }
-}
-
-function WaitPart(props: { last: boolean; part: WaitPartData; message: AssistantMessage }) {
-  const { theme } = useTheme()
-  const sync = useSync()
-
-  // Helper to get agent name from session ID (with short ID suffix)
-  const getAgentName = (id: string) => {
-    const shortId = id.slice(-4)
-    const session = sync.session.get(id)
-    if (session?.title?.startsWith("Subagent - ")) {
-      const agentType = session.title.slice(11)
-      return `${agentType}#${shortId}`
-    }
-    if (session?.title) return `${session.title}#${shortId}`
-    return `agent#${shortId}`
-  }
-
-  const sourceNames = createMemo(() => props.part.sources.map(getAgentName))
-  const respondedNames = createMemo(() => props.part.respondedSources.map(getAgentName))
-
-  // Sources that didn't respond
-  const failedSources = createMemo(() => {
-    const responded = new Set(props.part.respondedSources)
-    return props.part.sources.filter((s) => !responded.has(s)).map(getAgentName)
-  })
-
-  const duration = createMemo(() => {
-    if (!props.part.time.resolved) return null
-    const secs = (props.part.time.resolved - props.part.time.created) / 1000
-    return secs < 1 ? `${Math.round(secs * 1000)}ms` : `${secs.toFixed(1)}s`
-  })
-
-  const statusColor = createMemo(() => {
-    if (props.part.status === "waiting") return theme.warning
-    if (props.part.status === "resolved") return theme.success
-    return theme.error
-  })
-
-  // Resolved (all mode): hide entirely - responses speak for themselves
-  if (props.part.status === "resolved" && props.part.mode === "all") {
-    return null
-  }
-
-  // Resolved (any mode): show who responded, who was abandoned
-  if (props.part.status === "resolved" && props.part.mode === "any") {
-    return (
-      <box id={"wait-" + props.part.id} marginTop={1} paddingLeft={6}>
-        <text fg={statusColor()}>
-          ✓ {respondedNames().join(", ")}
-          {failedSources().length > 0 && <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>}
-          {duration() && <span style={{ fg: theme.textMuted }}> ({duration()})</span>}
-        </text>
-      </box>
-    )
-  }
-
-  // Timed out: show who failed
-  if (props.part.status === "timedOut") {
-    const timedOutNames = failedSources().length > 0 ? failedSources() : sourceNames()
-    return (
-      <box id={"wait-" + props.part.id} marginTop={1} paddingLeft={6}>
-        <text fg={statusColor()}>
-          ⏱ {timedOutNames.join(", ")} timed out
-          {respondedNames().length > 0 && <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>}
-        </text>
-      </box>
-    )
-  }
-
-  // Waiting: show what we're waiting for
-  return (
-    <box id={"wait-" + props.part.id} marginTop={1} paddingLeft={6}>
-      <text fg={statusColor()}>
-        ⏳ {sourceNames().join(", ")} ({props.part.mode}, {Math.round(props.part.timeout / 1000)}s)
-      </text>
-    </box>
-  )
 }
 
 // Type for message parts (unified protocol messages)
@@ -1509,7 +1413,7 @@ interface MessagePartData {
   type: "message"
   direction: "outgoing" | "incoming"
   peer: string
-  peerType: "human" | "agent"
+  peerType: "human" | "agent" | "system"
   text: string
   timeout?: number
   timeoutOccurred?: boolean
@@ -1537,10 +1441,13 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   const isTimeout = props.part.timeoutOccurred
   const isIncoming = props.part.direction === "incoming"
   const isHuman = props.part.peerType === "human"
+  const isSystem = props.part.peerType === "system"
+  const isWaitResult = isIncoming && isSystem && props.part.peer === "Wait result"
   const isToHuman = !isIncoming && isHuman
 
-  // For agent messages: expanded by default in subagent sessions, collapsed in primary
-  const [expanded, setExpanded] = createSignal(isSubagentSession())
+  // For agent messages: expanded by default in subagent sessions, collapsed in primary.
+  // For wait-result system messages: collapsed by default.
+  const [expanded, setExpanded] = createSignal(isSubagentSession() && !isWaitResult)
 
   const sessionStatus = createMemo(() => sync.data.session_status?.[props.part.sessionID] as any)
 
@@ -1571,6 +1478,8 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   // Peer name resolution
   const peerInfo = createMemo(() => {
     if (isHuman) return { name: "human", shortId: "" }
+    if (isSystem) return { name: props.part.peer, shortId: "" }
+
     const shortId = props.part.peer.slice(-4)
     const session = peerSession()
     if (session?.title?.startsWith("Subagent - ")) {
@@ -1580,12 +1489,12 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
     return { name: "agent", shortId }
   })
 
-  const arrow = isIncoming ? "←" : "→"
+  const arrow = isWaitResult ? "⏱" : isIncoming ? "←" : "→"
   // Colors: → human (primary/orange), → agent (secondary/blue), ← agent (info/cyan)
-  const color = isToHuman ? theme.primary : isIncoming ? theme.info : theme.secondary
+  const color = isToHuman ? theme.primary : isWaitResult ? theme.warning : isIncoming ? theme.info : theme.secondary
   const headerPad = isIncoming ? "" : "      " // 6 spaces for outgoing
 
-  // Content handling for agent messages: show up to 3 lines when collapsed
+  // Content handling for agent/system messages: show up to 3 lines when collapsed
   const contentInfo = createMemo(() => {
     const text = props.part.text.trim()
     const lines = text.split("\n")
@@ -1610,6 +1519,8 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
 
   // Check if peer is an agent that can be navigated to
   const canNavigateToPeer = createMemo(() => props.part.peerType === "agent")
+
+  const showTimeoutLabel = createMemo(() => isTimeout || isWaitResult)
 
   const handlePeerClick = () => {
     if (renderer.getSelection()?.getSelectedText()) return
@@ -1653,11 +1564,11 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
           </text>
         </Show>
         <text>
-          {isTimeout && <span style={{ fg: theme.error }}> (timed out)</span>}
+          {showTimeoutLabel() && <span style={{ fg: theme.error }}> (timed out)</span>}
           {queued() && <span style={{ bg: theme.accent, fg: theme.backgroundPanel, bold: true }}> QUEUED </span>}
         </text>
       </box>
-      {/* Expand/collapse indicator for agent messages */}
+      {/* Expand/collapse indicator for agent/system messages */}
       <Show when={!isToHuman && contentInfo().canExpand}>
         <text fg={theme.textMuted} onMouseUp={toggleExpand}>
           {expanded() ? " ▼ collapse" : " ▶ expand"}
@@ -1671,15 +1582,23 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
             when={expanded() || !contentInfo().canExpand}
             fallback={<text fg={theme.text}>{displayContent()}</text>}
           >
-            <code
-              filetype="markdown"
-              drawUnstyledText={false}
-              streaming={false}
-              syntaxStyle={syntax()}
-              content={displayContent()}
-              conceal={ctx.conceal()}
-              fg={theme.text}
-            />
+            <Show
+              when={isWaitResult}
+              fallback={
+                <code
+                  filetype="markdown"
+                  drawUnstyledText={false}
+                  streaming={false}
+                  syntaxStyle={syntax()}
+                  content={displayContent()}
+                  conceal={ctx.conceal()}
+                  fg={theme.text}
+                />
+              }
+            >
+              {/* Wait results are rendered as raw text to avoid markdown parsing issues (e.g., ses_... underscores). */}
+              <text fg={theme.text}>{displayContent()}</text>
+            </Show>
           </Show>
         }
       >
@@ -2553,6 +2472,8 @@ function SubagentSpawn(props: ToolProps<any>) {
 function WaitAgentMessage(props: ToolProps<any>) {
   const { theme } = useTheme()
   const sync = useSync()
+  const route = useRoute()
+  const renderer = useRenderer()
 
   const state = createMemo(() => props.part.state as any)
 
@@ -2657,14 +2578,15 @@ function WaitAgentMessage(props: ToolProps<any>) {
     return `agent#${shortId}`
   }
 
-  const sourceNames = createMemo(() => sources().map(getAgentName))
-  const respondedNames = createMemo(() => respondedSources().map(getAgentName))
-
   const failedSources = createMemo(() => {
     const responded = new Set(respondedSources())
+    return sources().filter((s) => !responded.has(s))
+  })
+
+  const timedOutSources = createMemo(() => {
+    const failed = failedSources()
+    if (failed.length > 0) return failed
     return sources()
-      .filter((s) => !responded.has(s))
-      .map(getAgentName)
   })
 
   const statusColor = createMemo(() => {
@@ -2674,11 +2596,47 @@ function WaitAgentMessage(props: ToolProps<any>) {
     return theme.error
   })
 
-  const timedOutNames = createMemo(() => {
-    const failed = failedSources()
-    if (failed.length > 0) return failed
-    return sourceNames()
-  })
+  const jump = (sessionID: string) => {
+    if (renderer.getSelection()?.getSelectedText()) return
+    route.navigate({ type: "session", sessionID })
+  }
+
+  const SessionLink = (props: { sessionID: string; fg: RGBA }) => {
+    return (
+      // biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler
+      // biome-ignore lint/a11y/useFocusableInteractive: TUI click handler
+      <box onMouseUp={() => jump(props.sessionID)}>
+        <text>
+          <span style={{ fg: props.fg, underline: true }}>{getAgentName(props.sessionID)}</span>
+        </text>
+      </box>
+    )
+  }
+
+  const CommaList = (props: { sessions: string[]; fg: RGBA }) => {
+    return (
+      <For each={props.sessions}>
+        {(sessionID, index) => (
+          <>
+            <Show when={index() > 0}>
+              <text fg={theme.textMuted}>, </text>
+            </Show>
+            <SessionLink sessionID={sessionID} fg={props.fg} />
+          </>
+        )}
+      </For>
+    )
+  }
+
+  const MetaLine = (props: { elapsed?: number; left?: number }) => {
+    return (
+      <text fg={theme.textMuted}>
+        ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
+        {props.elapsed !== undefined && <span> · {fmt(props.elapsed)} elapsed</span>}
+        {props.left !== undefined && <span> · {fmt(props.left)} left</span>}
+      </text>
+    )
+  }
 
   return (
     <Switch>
@@ -2690,64 +2648,69 @@ function WaitAgentMessage(props: ToolProps<any>) {
       <Match when={effectiveStatus() === "resolved" && mode() === "all"}>{null}</Match>
       <Match when={effectiveStatus() === "resolved" && mode() === "any"}>
         <box marginTop={1} paddingLeft={6}>
-          <text fg={statusColor()}>
-            ✓ {respondedNames().join(", ")}
-            {failedSources().length > 0 && (
-              <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
-            )}
-          </text>
+          <box flexDirection="row" flexWrap="wrap">
+            <text fg={statusColor()}>✓ </text>
+            <CommaList sessions={respondedSources()} fg={statusColor()} />
+            <Show when={failedSources().length > 0}>
+              <text fg={theme.textMuted}> · ○ </text>
+              <CommaList sessions={failedSources()} fg={theme.textMuted} />
+            </Show>
+          </box>
         </box>
       </Match>
       <Match when={effectiveStatus() === "interrupted"}>
         <box marginTop={1} paddingLeft={6}>
-          <text fg={statusColor()}>
-            ⏹ wait interrupted
-            {interruptedLabel() && <span style={{ fg: theme.textMuted }}> ({interruptedLabel()})</span>}
-            {respondedNames().length > 0 && (
-              <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>
-            )}
-            {failedSources().length > 0 && (
-              <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
-            )}
-            <span style={{ fg: theme.textMuted }}>
-              {" "}
-              ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
-              {interruptedElapsed() !== undefined && <span> · {fmt(interruptedElapsed())} elapsed</span>}
-              {interruptedLeft() !== undefined && <span> · {fmt(interruptedLeft())} left</span>}
-            </span>
-          </text>
+          <box flexDirection="column">
+            <box flexDirection="row" flexWrap="wrap">
+              <text fg={statusColor()}>⏹ wait interrupted</text>
+              <Show when={interruptedLabel()}>
+                <text fg={theme.textMuted}> ({interruptedLabel()})</text>
+              </Show>
+              <Show when={respondedSources().length > 0}>
+                <text fg={theme.success}> · ✓ </text>
+                <CommaList sessions={respondedSources()} fg={theme.success} />
+              </Show>
+              <Show when={failedSources().length > 0}>
+                <text fg={theme.textMuted}> · ○ </text>
+                <CommaList sessions={failedSources()} fg={theme.textMuted} />
+              </Show>
+            </box>
+            <MetaLine elapsed={interruptedElapsed()} left={interruptedLeft()} />
+          </box>
         </box>
       </Match>
       <Match when={effectiveStatus() === "timedOut"}>
         <box marginTop={1} paddingLeft={6}>
-          <text fg={statusColor()}>
-            ⏱ {timedOutNames().join(", ")} timed out
-            {respondedNames().length > 0 && (
-              <span style={{ fg: theme.success }}> · ✓ {respondedNames().join(", ")}</span>
-            )}
-          </text>
+          <box flexDirection="row" flexWrap="wrap">
+            <text fg={statusColor()}>⏱ </text>
+            <CommaList sessions={timedOutSources()} fg={statusColor()} />
+            <text fg={statusColor()}> timed out</text>
+            <Show when={respondedSources().length > 0}>
+              <text fg={theme.success}> · ✓ </text>
+              <CommaList sessions={respondedSources()} fg={theme.success} />
+            </Show>
+          </box>
         </box>
       </Match>
       <Match when={true}>
         <box marginTop={1} paddingLeft={6}>
-          <text fg={statusColor()}>
-            ⏳{" "}
-            <Show
-              when={respondedNames().length > 0}
-              fallback={<span style={{ fg: theme.textMuted }}>{sourceNames().join(", ")}</span>}
-            >
-              <span style={{ fg: theme.success }}>✓ {respondedNames().join(", ")}</span>
-              {failedSources().length > 0 && (
-                <span style={{ fg: theme.textMuted }}> · ○ {failedSources().join(", ")}</span>
-              )}
-            </Show>
-            <span style={{ fg: theme.textMuted }}>
-              {" "}
-              ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
-              {elapsed() !== undefined && <span> · {fmt(elapsed())} elapsed</span>}
-              {remaining() !== undefined && <span> · {fmt(remaining())} left</span>}
-            </span>
-          </text>
+          <box flexDirection="column">
+            <box flexDirection="row" flexWrap="wrap">
+              <text fg={statusColor()}>⏳ </text>
+              <Show
+                when={respondedSources().length > 0}
+                fallback={<CommaList sessions={sources()} fg={theme.textMuted} />}
+              >
+                <text fg={theme.success}>✓ </text>
+                <CommaList sessions={respondedSources()} fg={theme.success} />
+                <Show when={failedSources().length > 0}>
+                  <text fg={theme.textMuted}> · ○ </text>
+                  <CommaList sessions={failedSources()} fg={theme.textMuted} />
+                </Show>
+              </Show>
+            </box>
+            <MetaLine elapsed={elapsed()} left={remaining()} />
+          </box>
         </box>
       </Match>
     </Switch>
@@ -2830,6 +2793,7 @@ function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => 
   })
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler
     <box marginTop={1} onMouseUp={props.onSelect}>
       {/* Status + Agent name */}
       <text>
