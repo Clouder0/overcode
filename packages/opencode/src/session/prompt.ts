@@ -1516,29 +1516,7 @@ export namespace SessionPrompt {
       })
 
       // Agent↔agent messaging and waiting are handled via tools (send_agent_message / wait_agent_message).
-
-      if (currentSession.sessionType === "subagent") {
-        const parts = await MessageV2.parts(processor.message.id)
-        const sends = parts.filter(
-          (p): p is MessageV2.ToolPart =>
-            p.type === "tool" && p.tool === "send_agent_message" && p.state.status === "completed",
-        )
-        const okSends = sends.filter((p) => {
-          if (p.state.status !== "completed") return false
-          return (p.state.metadata as { ok?: boolean } | undefined)?.ok === true
-        })
-
-        const waits = parts.filter((p): p is MessageV2.ToolPart => p.type === "tool" && p.tool === "wait_agent_message")
-        const hasWait = waits.some((p) => {
-          if (p.state.status !== "completed") return false
-          return (p.state.metadata as { ok?: boolean } | undefined)?.ok === true
-        })
-
-        const hasPending = SessionMessage.hasPending(sessionID)
-        if (okSends.length > 0 && !hasWait && !hasPending) {
-          break
-        }
-      }
+      // Note: send_agent_message is just a side-effect; it should not implicitly end the loop.
 
       if (result === "stop") break
       if (result === "compact") {
