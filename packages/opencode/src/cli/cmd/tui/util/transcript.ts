@@ -111,9 +111,15 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
       if (part.peerType === "system") return `system ${part.peer}`
       return part.peer
     })()
+
+    const meta = (part as any).metadata
+    const opencode = meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
+    const seq = opencode && typeof opencode === "object" ? (opencode as { seq?: unknown }).seq : undefined
+    const seqLabel = typeof seq === "number" ? ` seq: ${seq}` : ""
+
     const suffix = part.timeoutOccurred ? " (timed out)" : ""
 
-    return `_Message ${dir} ${peer}${suffix}:_\n\n${part.text}\n\n`
+    return `_Message ${dir} ${peer}${seqLabel}${suffix}:_\n\n${part.text}\n\n`
   }
 
   return ""

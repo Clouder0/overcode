@@ -87,6 +87,36 @@ describe("session.retry.retryable", () => {
     expect(SessionRetry.retryable(err)).toBe("Network error")
   })
 
+  test("retries unknown certificate verification errors", () => {
+    const err = new NamedError.Unknown({ message: "Error: unknown certificate verification error" }).toObject()
+    expect(SessionRetry.retryable(err)).toBe("Network error (TLS)")
+  })
+
+  test("retries common TLS verification errors", () => {
+    const errors = [
+      "Error: self signed certificate",
+      "Error: self signed certificate in certificate chain",
+      "Error: unable to get local issuer certificate",
+      "Error: unable to verify the first certificate",
+      "Error: certificate has expired",
+      "Error: ERR_TLS_CERT_ALTNAME_INVALID fetching https://example.com",
+    ]
+
+    for (const message of errors) {
+      const err = new NamedError.Unknown({ message }).toObject()
+      expect(SessionRetry.retryable(err)).toBe("Network error (TLS)")
+    }
+  })
+
+  test("retries TLS errors even when APIError isRetryable is false", () => {
+    const err = new MessageV2.APIError({
+      message: "unknown certificate verification error",
+      isRetryable: false,
+    }).toObject()
+
+    expect(SessionRetry.retryable(err)).toBe("unknown certificate verification error")
+  })
+
   test("does not retry unrelated unknown errors", () => {
     const err = new NamedError.Unknown({ message: "TypeError: undefined is not a function" }).toObject()
     expect(SessionRetry.retryable(err)).toBeUndefined()
@@ -100,7 +130,7 @@ describe("session.message-v2.fromError", () => {
       using server = Bun.serve({
         port: 0,
         idleTimeout: 8,
-        async fetch(req) {
+        async fetch(_req) {
           return new Response(
             new ReadableStream({
               async pull(controller) {

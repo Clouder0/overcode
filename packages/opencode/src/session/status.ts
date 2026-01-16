@@ -51,6 +51,18 @@ export namespace SessionStatus {
     ),
   }
 
+  type Subscriber = (event: { sessionID: string; status: Info }) => void
+  const subscribers: Subscriber[] = []
+
+  export function subscribe(fn: Subscriber) {
+    subscribers.push(fn)
+    return () => {
+      const idx = subscribers.indexOf(fn)
+      if (idx === -1) return
+      subscribers.splice(idx, 1)
+    }
+  }
+
   const state = Instance.state(() => {
     const data: Record<string, Info> = {}
     return data
@@ -69,10 +81,15 @@ export namespace SessionStatus {
   }
 
   export function set(sessionID: string, status: Info) {
+    for (const sub of subscribers) {
+      sub({ sessionID, status })
+    }
+
     Bus.publish(Event.Status, {
       sessionID,
       status,
     })
+
     if (status.type === "idle") {
       // deprecated
       Bus.publish(Event.Idle, {

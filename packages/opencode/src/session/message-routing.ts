@@ -18,11 +18,12 @@ export namespace SessionMessage {
 
   export const Message = z.object({
     id: z.string(),
+    seq: z.number().int().nonnegative(),
     from: z.string(),
     to: z.string(),
     text: z.string(),
     time: z.number(),
-    messageType: z.enum(["normal", "timeout", "error", "wait_result"]).default("normal"),
+    messageType: z.enum(["normal", "timeout", "error", "wait_result", "notice"]).default("normal"),
   })
   export type Message = z.infer<typeof Message>
 
@@ -42,19 +43,98 @@ export namespace SessionMessage {
     async (map) => map.clear(),
   )
 
+  const seqState = Instance.state(
+    () => {
+      return {
+        value: 0,
+      }
+    },
+    async () => {},
+  )
+
+  const inboxState = Instance.state(
+    () => new Map<string, Map<string, number>>(),
+    async (map) => map.clear(),
+  )
+
+  export function nowSeq() {
+    return seqState().value
+  }
+
+  export function nextSeq() {
+    const next = nowSeq() + 1
+    seqState().value = next
+    return next
+  }
+
+  export function resolveSince(input: number) {
+    if (input === 0) return nowSeq()
+    if (input < 0) return 0
+    return input
+  }
+
+  export function lastSeq(to: string, from: string) {
+    return inboxState().get(to)?.get(from) ?? 0
+  }
+
+  export function anyAfter(to: string, since: number) {
+    const froms = inboxState().get(to)
+    if (!froms) return false
+    for (const seq of froms.values()) {
+      if (seq > since) return true
+    }
+    return false
+  }
+
+  export function responded(input: { to: string; sources: string[]; since: number }) {
+    const wildcard = input.sources.length === 1 && input.sources[0] === "*"
+
+    if (wildcard) {
+      const froms = inboxState().get(input.to)
+      if (!froms) return new Set<string>()
+
+      const result = new Set<string>()
+      for (const [from, seq] of froms.entries()) {
+        if (seq > input.since) {
+          result.add(from)
+        }
+      }
+      return result
+    }
+
+    const result = new Set<string>()
+    for (const from of input.sources) {
+      if (lastSeq(input.to, from) > input.since) {
+        result.add(from)
+      }
+    }
+    return result
+  }
+
   export async function deliver(input: {
     from: string
     to: string
     text: string
-    messageType?: "normal" | "timeout" | "error" | "wait_result"
+    messageType?: "normal" | "timeout" | "error" | "wait_result" | "notice"
   }): Promise<Message> {
     const message: Message = {
       id: Identifier.ascending("message"),
+      seq: nextSeq(),
       from: input.from,
       to: input.to,
       text: input.text,
       time: Date.now(),
       messageType: input.messageType ?? "normal",
+    }
+
+    if (message.messageType !== "notice") {
+      const inbox = inboxState()
+      const byFrom = inbox.get(message.to) ?? new Map<string, number>()
+      const prev = byFrom.get(message.from) ?? 0
+      if (message.seq > prev) {
+        byFrom.set(message.from, message.seq)
+      }
+      inbox.set(message.to, byFrom)
     }
 
     log.info("delivering message", { from: message.from, to: message.to })

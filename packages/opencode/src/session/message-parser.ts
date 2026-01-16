@@ -15,12 +15,15 @@ export namespace MessageParser {
     }
   }
 
-  export function formatInbox(messages: Array<{ from: string; text: string; messageType?: string }>): string {
+  export function formatInbox(
+    messages: Array<{ from: string; text: string; messageType?: string; seq?: number }>,
+  ): string {
     const parts: string[] = []
 
     for (const msg of messages) {
       const label = msg.messageType === "timeout" ? "did not respond before your timeout" : "sent a message"
-      parts.push(`Sender Agent with session id ${msg.from} ${label}:`)
+      const suffix = typeof msg.seq === "number" && msg.seq > 0 ? ` (seq: ${msg.seq})` : ""
+      parts.push(`Sender Agent with session id ${msg.from}${suffix} ${label}:`)
       parts.push("<content>")
       parts.push(msg.text)
       parts.push("</content>")
@@ -35,6 +38,7 @@ export namespace MessageParser {
     responded: string[]
     timedOut: TimeoutSnapshot[]
     agents?: Record<string, string>
+    wildcard?: boolean
   }
 
   export function formatWaitResult(input: WaitResultInput): string {
@@ -45,13 +49,18 @@ export namespace MessageParser {
       return `${id} (${agent})`
     }
 
+    const wildcard = input.wildcard === true
+
     // Header
-    if (input.timedOut.length > 0) {
+    if (input.timedOut.length > 0 || wildcard) {
       lines.push(`Wait timed out after ${input.timeoutMs}ms`)
     } else {
       lines.push(`Wait resolved`)
     }
     lines.push(`Mode: ${input.mode}`)
+    if (wildcard) {
+      lines.push(`Sources: any agent`)
+    }
     lines.push("")
 
     // Responded sources
@@ -84,6 +93,10 @@ export namespace MessageParser {
         }
         lines.push(`${id} status unknown - consider waiting again or checking status.`)
       }
+    }
+
+    if (wildcard && input.timedOut.length === 0) {
+      lines.push("No agent message was received before the timeout.")
     }
 
     return lines.join("\n").trimEnd()

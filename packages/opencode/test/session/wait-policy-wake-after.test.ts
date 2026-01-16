@@ -167,6 +167,7 @@ test("WaitPolicy timeout wake is not dropped while SessionPrompt.loop is active"
             sources: [source.id],
             timeout,
             mode: "all",
+            since: 0,
           })
 
           await SessionPrompt.loop(session.id)

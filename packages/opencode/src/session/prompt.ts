@@ -48,6 +48,7 @@ import { LLM } from "./llm"
 import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
 import { iife } from "@/util/iife"
 import { SessionMessage } from "./message-routing"
+import { WaitNotice } from "./wait-notice"
 import { WaitPolicy } from "./wait-policy"
 import { MessageParser } from "./message-parser"
 
@@ -213,6 +214,7 @@ export namespace SessionPrompt {
     const peerType = (() => {
       if (message.from === "human") return "human" as const
       if (message.messageType === "wait_result") return "system" as const
+      if (message.messageType === "notice") return "system" as const
       return "agent" as const
     })()
     const msgPart: MessageV2.MessagePart = {
@@ -226,6 +228,11 @@ export namespace SessionPrompt {
       text: message.text,
       timeoutOccurred: message.messageType === "timeout",
       time: { created: message.time },
+      metadata: {
+        opencode: {
+          seq: message.seq,
+        },
+      },
     }
 
     await Session.updatePart(msgPart)
@@ -281,12 +288,15 @@ export namespace SessionPrompt {
     const current = WaitPolicy.get(sessionID)
     if (!current || current.callID !== policy.callID) return
 
-    const pending = SessionMessage.peekPending(sessionID)
-    const pendingFromSources = new Set(pending.filter((m) => policy.sources.includes(m.from)).map((m) => m.from))
+    const respondedFromSources = SessionMessage.responded({
+      to: sessionID,
+      sources: policy.sources,
+      since: policy.since,
+    })
 
     const result = WaitPolicy.evaluate({
       policy,
-      pendingFromSources,
+      respondedFromSources,
     })
 
     const parts = await MessageV2.parts(policy.messageID)
@@ -302,6 +312,7 @@ export namespace SessionPrompt {
       timeout: policy.timeout,
       mode: policy.mode,
       allReceived: false,
+      since: policy.since,
       createdAt: policy.time.created,
       deadline: policy.time.deadline,
     }
@@ -423,11 +434,15 @@ export namespace SessionPrompt {
           })
       }
 
-      const pendingFromSources = new Set(pending.filter((m) => sources.has(m.from)).map((m) => m.from))
+      const respondedFromSources = SessionMessage.responded({
+        to: sessionID,
+        sources: policy.sources,
+        since: policy.since,
+      })
 
       const result = WaitPolicy.evaluate({
         policy,
-        pendingFromSources,
+        respondedFromSources,
       })
 
       if (!result.ready) return
@@ -442,6 +457,8 @@ export namespace SessionPrompt {
       wake(sessionID)
     }
   })
+
+  WaitNotice.init()
 
   // Allow WaitPolicy timers (timeout/debounce) to wake sessions.
   WaitPolicy.setWakeFn((sessionID) => {
@@ -882,13 +899,13 @@ export namespace SessionPrompt {
         return
       }
 
-      const pending = SessionMessage.peekPending(sessionID)
-      const pendingFromSources = new Set(pending.filter((m) => policy.sources.includes(m.from)).map((m) => m.from))
-
-      const result = WaitPolicy.evaluate({
-        policy,
-        pendingFromSources,
+      const respondedFromSources = SessionMessage.responded({
+        to: sessionID,
+        sources: policy.sources,
+        since: policy.since,
       })
+
+      const result = WaitPolicy.evaluate({ policy, respondedFromSources })
 
       if (!result.ready) return
 
@@ -1043,12 +1060,15 @@ export namespace SessionPrompt {
 
       const wait = WaitPolicy.get(sessionID)
       if (wait) {
-        const pending = SessionMessage.peekPending(sessionID)
-        const pendingFromSources = new Set(pending.filter((m) => wait.sources.includes(m.from)).map((m) => m.from))
+        const respondedFromSources = SessionMessage.responded({
+          to: sessionID,
+          sources: wait.sources,
+          since: wait.since,
+        })
 
         const result = WaitPolicy.evaluate({
           policy: wait,
-          pendingFromSources,
+          respondedFromSources,
         })
 
         if (!result.ready) {
@@ -1065,6 +1085,8 @@ export namespace SessionPrompt {
         WaitPolicy.clear(sessionID)
         SessionStatus.set(sessionID, { type: "busy" })
 
+        const pending = SessionMessage.peekPending(sessionID)
+
         const settled = await Promise.allSettled(pending.map((m) => persistInbound(m)))
         const ok = new Set<string>()
         for (const [i, msg] of pending.entries()) {
@@ -1078,8 +1100,10 @@ export namespace SessionPrompt {
         const timedOutSources = result.timedOut ? result.missingSources : []
 
         // Generate ONE comprehensive wait result message (system message)
-        if (timedOutSources.length > 0) {
-          const ids = Array.from(new Set([...respondedSources, ...timedOutSources]))
+        if (result.timedOut) {
+          const wildcard = wait.sources.length === 1 && wait.sources[0] === "*"
+
+          const ids = wildcard ? respondedSources : Array.from(new Set([...respondedSources, ...timedOutSources]))
           const sessions = await Promise.all(ids.map((id) => Session.get(id).catch(() => undefined)))
 
           const agents: Record<string, string> = {}
@@ -1089,44 +1113,47 @@ export namespace SessionPrompt {
             agents[id] = name
           })
 
-          const snapshots = timedOutSources.map((source): MessageParser.TimeoutSnapshot => {
-            const st = SessionStatus.get(source)
-            const agent = agents[source]
-            if (st.type === "idle") {
-              return { source, agent, run: "idle" }
-            }
-            if (st.type === "busy") {
-              return { source, agent, run: "working" }
-            }
-            if (st.type === "retry") {
-              return {
-                source,
-                agent,
-                run: "retry",
-                retry: {
-                  attempt: st.attempt,
-                  message: st.message,
-                  next: st.next,
-                },
-              }
-            }
-            if (st.type === "waiting") {
-              return {
-                source,
-                agent,
-                run: "waiting",
-                waiting: {
-                  sources: st.sources,
-                  mode: st.mode,
-                  deadline: st.time.deadline,
-                },
-              }
-            }
-            return { source, agent, run: "unknown" }
-          })
+          const snapshots = wildcard
+            ? ([] as MessageParser.TimeoutSnapshot[])
+            : timedOutSources.map((source): MessageParser.TimeoutSnapshot => {
+                const st = SessionStatus.get(source)
+                const agent = agents[source]
+                if (st.type === "idle") {
+                  return { source, agent, run: "idle" }
+                }
+                if (st.type === "busy") {
+                  return { source, agent, run: "working" }
+                }
+                if (st.type === "retry") {
+                  return {
+                    source,
+                    agent,
+                    run: "retry",
+                    retry: {
+                      attempt: st.attempt,
+                      message: st.message,
+                      next: st.next,
+                    },
+                  }
+                }
+                if (st.type === "waiting") {
+                  return {
+                    source,
+                    agent,
+                    run: "waiting",
+                    waiting: {
+                      sources: st.sources,
+                      mode: st.mode,
+                      deadline: st.time.deadline,
+                    },
+                  }
+                }
+                return { source, agent, run: "unknown" }
+              })
 
           const waitResultMessage: SessionMessage.Message = {
             id: Identifier.ascending("message"),
+            seq: SessionMessage.nextSeq(),
             from: "Wait result",
             to: sessionID,
             text: MessageParser.formatWaitResult({
@@ -1135,6 +1162,7 @@ export namespace SessionPrompt {
               responded: respondedSources,
               timedOut: snapshots,
               agents,
+              wildcard,
             }),
             time: Date.now(),
             messageType: "wait_result",
@@ -1657,7 +1685,11 @@ export namespace SessionPrompt {
       abort: options.abortSignal!,
       messageID: input.processor.message.id,
       callID: options.toolCallId,
-      extra: { model: input.model, session: input.session },
+      extra: {
+        model: input.model,
+        session: input.session,
+        waitSince: input.processor.waitSince(options.toolCallId),
+      },
       agent: input.agent.name,
       metadata: async (val: { title?: string; metadata?: any }) => {
         const match = input.processor.partFromToolCall(options.toolCallId)

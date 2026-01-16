@@ -31,6 +31,7 @@ test("WaitPolicy timeout can be missed if wall clock goes backward (Date.now is 
             sources: [source.id],
             timeout: timeoutMs,
             mode: "all",
+            since: 0,
           })
 
           // Real time passes...
@@ -41,7 +42,7 @@ test("WaitPolicy timeout can be missed if wall clock goes backward (Date.now is 
 
           const evaluated = WaitPolicy.evaluate({
             policy,
-            pendingFromSources: new Set(),
+            respondedFromSources: new Set(),
           })
 
           // Desired behavior: wait timeouts should be based on elapsed (monotonic) time.

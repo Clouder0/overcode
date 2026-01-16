@@ -87,6 +87,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         .describe("Agents to spawn with their task prompts"),
     }),
     async execute(params: { agents: Array<{ agent: string; prompt: string }> }, ctx) {
+      const seq = SessionMessage.nowSeq()
       const spawned: Array<{ session_id: string; agent: string }> = []
 
       const caller = await Agent.get(ctx.agent).catch(() => undefined)
@@ -261,6 +262,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
           status: "spawned",
           spawned,
           errors: [] as string[],
+          seq,
         } as any,
         output: lines.join("\n"),
       }

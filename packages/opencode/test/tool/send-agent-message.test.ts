@@ -102,6 +102,8 @@ describe("tool.send_agent_message validation", () => {
 
         expect(result.metadata.ok).toBe(true)
         expect(result.metadata.target).toBe(receiver.id)
+        expect(typeof result.metadata.seq).toBe("number")
+        expect((result.metadata.seq ?? 0) > 0).toBe(true)
       },
     })
   })

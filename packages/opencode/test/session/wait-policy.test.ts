@@ -28,12 +28,13 @@ test("evaluate() all mode requires all sources", async () => {
       sources: ["a", "b"],
       timeout: 0,
       mode: "all",
+      since: 0,
     })
 
     const partial = WaitPolicy.evaluate({
       policy,
       now: policy.time.created,
-      pendingFromSources: new Set(["a"]),
+      respondedFromSources: new Set(["a"]),
     })
     expect(partial.ready).toBe(false)
     expect(partial.timedOut).toBe(false)
@@ -41,7 +42,7 @@ test("evaluate() all mode requires all sources", async () => {
     const full = WaitPolicy.evaluate({
       policy,
       now: policy.time.created,
-      pendingFromSources: new Set(["a", "b"]),
+      respondedFromSources: new Set(["a", "b"]),
     })
     expect(full.ready).toBe(true)
     expect(full.timedOut).toBe(false)
@@ -57,12 +58,13 @@ test("evaluate() any mode resolves immediately on first response", async () => {
       sources: ["a", "b"],
       timeout: 0,
       mode: "any",
+      since: 0,
     })
 
     const result = WaitPolicy.evaluate({
       policy,
       now: policy.time.created,
-      pendingFromSources: new Set(["a"]),
+      respondedFromSources: new Set(["a"]),
     })
 
     expect(result.ready).toBe(true)
@@ -87,6 +89,7 @@ test("register() timeout wakes via callback", async () => {
         sources: ["a"],
         timeout: 30,
         mode: "all",
+        since: 0,
       })
 
       await Bun.sleep(60)

@@ -48,6 +48,7 @@ describe("tool.wait_agent_message validation", () => {
             sources: [],
             timeout: 1000,
             mode: "all",
+            since: 0,
           },
           {
             ...ctxBase,
@@ -79,6 +80,7 @@ describe("tool.wait_agent_message validation", () => {
               sources: [source.id],
               timeout: 0,
               mode: "all",
+              since: 0,
             },
             {
               ...ctxBase,
@@ -106,6 +108,7 @@ describe("tool.wait_agent_message validation", () => {
             sources: ["not_a_session_id"],
             timeout: 1000,
             mode: "all",
+            since: 0,
           },
           {
             ...ctxBase,
@@ -132,6 +135,7 @@ describe("tool.wait_agent_message validation", () => {
             sources: ["ses_missing"],
             timeout: 1000,
             mode: "all",
+            since: 0,
           },
           {
             ...ctxBase,
@@ -159,6 +163,7 @@ describe("tool.wait_agent_message validation", () => {
             sources: [source.id, source.id],
             timeout: 1000,
             mode: "all",
+            since: 0,
           },
           {
             ...ctxBase,
@@ -186,6 +191,7 @@ describe("tool.wait_agent_message validation", () => {
             sources: [source.id],
             timeout: 1000,
             mode: "all",
+            since: 0,
           },
           {
             ...ctxBase,

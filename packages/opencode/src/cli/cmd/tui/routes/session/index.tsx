@@ -1415,6 +1415,7 @@ interface MessagePartData {
   peer: string
   peerType: "human" | "agent" | "system"
   text: string
+  metadata?: unknown
   timeout?: number
   timeoutOccurred?: boolean
   time: {
@@ -1522,6 +1523,16 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
 
   const showTimeoutLabel = createMemo(() => isTimeout || isWaitResult)
 
+  const seq = createMemo(() => {
+    const meta = props.part.metadata
+    if (!meta || typeof meta !== "object") return undefined
+    const data = (meta as { opencode?: unknown }).opencode
+    if (!data || typeof data !== "object") return undefined
+    const value = (data as any).seq
+    if (typeof value !== "number") return undefined
+    return value
+  })
+
   const handlePeerClick = () => {
     if (renderer.getSelection()?.getSelectedText()) return
     if (canNavigateToPeer()) {
@@ -1564,6 +1575,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
           </text>
         </Show>
         <text>
+          {seq() !== undefined && <span style={{ fg: theme.textMuted }}> seq: {seq()}</span>}
           {showTimeoutLabel() && <span style={{ fg: theme.error }}> (timed out)</span>}
           {queued() && <span style={{ bg: theme.accent, fg: theme.backgroundPanel, bold: true }}> QUEUED </span>}
         </text>
@@ -2401,6 +2413,7 @@ function SubagentSpawn(props: ToolProps<any>) {
           blocked?: string[]
           spawned?: Array<{ session_id: string; agent: string }>
           errors?: string[]
+          seq?: number
         }
       | undefined
   })
@@ -2416,6 +2429,8 @@ function SubagentSpawn(props: ToolProps<any>) {
     const count = spawned().length || requested()
     return `# Spawned ${count} subagent${count === 1 ? "" : "s"}`
   })
+
+  const seq = createMemo(() => metadata()?.seq)
 
   return (
     <BlockTool title={title()} part={props.part}>
@@ -2438,6 +2453,10 @@ function SubagentSpawn(props: ToolProps<any>) {
         </Show>
 
         <Show when={!blocked()}>
+          <Show when={seq() !== undefined}>
+            <text fg={theme.textMuted}>checkpoint seq: {seq()}</text>
+          </Show>
+
           <Show when={pending() && !spawned().length && requested() > 0}>
             <For each={input()!.agents}>
               {(agent) => (
@@ -2500,10 +2519,13 @@ function WaitAgentMessage(props: ToolProps<any>) {
     if (Array.isArray(raw)) return raw
     return []
   })
+
+  const isWildcard = createMemo(() => sources().length === 1 && sources()[0] === "*")
   const respondedSources = createMemo(() => (meta()?.respondedSources as string[] | undefined) ?? [])
 
   const createdAt = createMemo(() => meta()?.createdAt as number | undefined)
   const deadline = createMemo(() => meta()?.deadline as number | undefined)
+  const since = createMemo(() => (meta()?.since as number | undefined) ?? (input()?.since as number | undefined))
   const interruptedAt = createMemo(() => meta()?.interruptedAt as number | undefined)
   const interruptedBy = createMemo(() => meta()?.interruptedBy as "prompt" | "abort" | undefined)
 
@@ -2579,11 +2601,13 @@ function WaitAgentMessage(props: ToolProps<any>) {
   }
 
   const failedSources = createMemo(() => {
+    if (isWildcard()) return []
     const responded = new Set(respondedSources())
     return sources().filter((s) => !responded.has(s))
   })
 
   const timedOutSources = createMemo(() => {
+    if (isWildcard()) return []
     const failed = failedSources()
     if (failed.length > 0) return failed
     return sources()
@@ -2598,10 +2622,21 @@ function WaitAgentMessage(props: ToolProps<any>) {
 
   const jump = (sessionID: string) => {
     if (renderer.getSelection()?.getSelectedText()) return
+    if (!sessionID.startsWith("ses_")) return
     route.navigate({ type: "session", sessionID })
   }
 
   const SessionLink = (props: { sessionID: string; fg: RGBA }) => {
+    const isLink = props.sessionID.startsWith("ses_")
+
+    if (!isLink) {
+      return (
+        <text>
+          <span style={{ fg: props.fg }}>{props.sessionID}</span>
+        </text>
+      )
+    }
+
     return (
       // biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler
       // biome-ignore lint/a11y/useFocusableInteractive: TUI click handler
@@ -2631,7 +2666,7 @@ function WaitAgentMessage(props: ToolProps<any>) {
   const MetaLine = (props: { elapsed?: number; left?: number }) => {
     return (
       <text fg={theme.textMuted}>
-        ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s)
+        ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s{since() !== undefined ? `, since: ${since()}` : ""})
         {props.elapsed !== undefined && <span> · {fmt(props.elapsed)} elapsed</span>}
         {props.left !== undefined && <span> · {fmt(props.left)} left</span>}
       </text>
@@ -2699,7 +2734,13 @@ function WaitAgentMessage(props: ToolProps<any>) {
               <text fg={statusColor()}>⏳ </text>
               <Show
                 when={respondedSources().length > 0}
-                fallback={<CommaList sessions={sources()} fg={theme.textMuted} />}
+                fallback={
+                  isWildcard() ? (
+                    <text fg={theme.textMuted}>any agent</text>
+                  ) : (
+                    <CommaList sessions={sources()} fg={theme.textMuted} />
+                  )
+                }
               >
                 <text fg={theme.success}>✓ </text>
                 <CommaList sessions={respondedSources()} fg={theme.success} />

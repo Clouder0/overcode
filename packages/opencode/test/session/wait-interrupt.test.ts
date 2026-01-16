@@ -116,6 +116,7 @@ async function seedWait(root: string): Promise<SeededWait> {
     sources: [source.id],
     timeout,
     mode: "all",
+    since: 0,
   })
 
   SessionStatus.set(session.id, {

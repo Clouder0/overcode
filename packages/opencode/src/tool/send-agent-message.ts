@@ -8,6 +8,7 @@ import { Tool } from "./tool"
 type SendMessageMetadata = {
   ok: boolean
   target: string
+  seq?: number
   error?: string
 }
 
@@ -49,7 +50,7 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
       }
     }
 
-    await SessionMessage.deliver({
+    const delivered = await SessionMessage.deliver({
       from: ctx.sessionID,
       to: target,
       text: params.text,
@@ -67,6 +68,11 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
       time: {
         created: Date.now(),
       },
+      metadata: {
+        opencode: {
+          seq: delivered.seq,
+        },
+      },
     }
 
     await Session.updatePart(part)
@@ -74,6 +80,7 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
     const meta: SendMessageMetadata = {
       ok: true,
       target,
+      seq: delivered.seq,
     }
 
     return {

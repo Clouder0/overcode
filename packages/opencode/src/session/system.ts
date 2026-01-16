@@ -207,14 +207,13 @@ Asynchronous delivery (agents may be slow):
   - If status is idle: send a follow-up message asking for status or confirming they saw your request.
 - Avoid spamming: send one clear request, then wait; only follow up if needed.
 
-Counterexamples:
-- Wrong (human-only): To ses_abc: <message>
-- Right (agent-visible): send_agent_message(to="ses_abc", text="<message>")
+Good: send_agent_message(to="ses_abc", text="<message>")  -> correctly sends to agent
+Bad: To ses_abc: <message>  -> only shows to human, not to agent
 
 Common failure mode:
 - Wrong: "Report: ..." (assistant text) when the intended recipient is an agent session.
 - Right: send_agent_message(to="<intended ses_...>", text="Report: ...")
-- If unclear: send_agent_message(to="<a known ses_...>", text="I have results. Which session id(s) should receive them?")
+- If unclear: send_agent_message(to="<a known ses_..., usually parent>", text="I have results. Which session id(s) should receive them?")
 
 When you receive a message, it appears as:
 \`\`\`
@@ -237,21 +236,70 @@ This ensures you don't wait indefinitely - you'll wake with the message or with 
 After calling wait_agent_message, stop generating. Your session is waiting and will resume when the condition is met.
 
 **Wait modes**:
-- \`mode="all"\`: Wait until all sources respond
-- \`mode="any"\`: Wait until any source responds
+- mode="all": Wait until all sources respond
+- mode="any": Wait until any source responds
+
+**seq / since**:
+- Some incoming agent messages may show a seq number.
+- since is a cursor: the wait counts messages with seq > since.
+- since=-1 means session start (counts any earlier messages).
+- since=0 means current position: only incoming messages after this wait tool call would count. Usually you will wait on a previous checkpoint (for example, after subagent_spawn or send_agent_message).
+- sources=["*"] means any agent; "*" is not a session id.
+The major reason for introducing seq/since is to handle spurious messages that arrive while you are working. 
+By setting since to the last known checkpoint, you ensure you can consider all messages that arrive after that point into wait condition.
+
+<example>
+Good: subagent_spawn(seq=1), agent message comes in(seq=2), wait_agent_message(since=1) → counts the agent message.
+Bad: subagent_spawn(seq=1), agent message comes in(seq=2), wait_agent_message(since=0) -> since=0 means current position(seq=3), fails to count the agent message (it arrived before the wait).
+
+Good:
+A: send_agent_message(to="ses_B", text="Please analyze the data.") (seq=2)
+A: received agent message from ses_B (seq=3)
+A: wait_agent_message(sources=["ses_B"], since=2) → counts the message from ses_B.
+Bad:
+A: send_agent_message(to="ses_B", text="Please analyze the data.") (seq=2)
+A: received agent message from ses_B (seq=3)
+A: wait_agent_message(sources=["ses_B"], since=0) → since=0 means current position(seq=3), fails to count the message from ses_B.
+Bad:
+A: send_agent_message(to="ses_B", text="Please analyze the data.") (seq=2)
+A: received agent message from ses_B (seq=3)
+A: wait_agent_message(sources=["ses_B"], since=3) → since is exclusive, fails to count the earlier message from ses_B.
+Bad:
+A: send_agent_message(to="ses_B", text="Please analyze the data.") (seq=2)
+A: received agent message from ses_B (seq=3)
+A: wait_agent_message(sources=["ses_B"], since=1) → too far back, counts the earlier message from ses_B, wait may resolve immediately instead of waiting for new message.
+
+Good:
+A: send_agent_message(to="ses_B", text="Please analyze the data and streamingly send to \`ses_A\` to report.") (seq=1)
+A: wait_agent_message(sources=["ses_A"], since=1) → counts the streamed messages from ses_A.
+A: receives message from B (seq=2), decides to wait more
+A: wait_agent_message(sources=["ses_A"], since=2) → counts further streamed messages from ses_A.
+Bad:
+A: send_agent_message(to="ses_B", text="Please analyze the data and streamingly send to \`ses_A\` to report.") (seq=1)
+A: wait_agent_message(sources=["ses_A"], since=1) → counts the streamed messages from ses_A.
+A: receives message from B (seq=2), decides to wait more
+A: wait_agent_message(sources=["ses_A"], since=1) -> since=1 would be met by the earlier messages from ses_A, fails to count further streamed messages.
+
+Good:
+A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for parent to send you agent B's session id."
+A: wait_agent_message(sources=["ses_p"], since=-1) → counts messages from parent session.
+Bad:
+A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for parent to send you agent B's session id."
+A: wait_agent_message(sources=["ses_p"], since=0) → since=0 means current position, fails to count messages from parent session that arrived before the wait.
+
+Good:
+A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for agent B to handshake with you."
+A: wait_agent_message(sources=["*"], since=-1) → don't know agent B's session id yet, so wait on any agent message from session start.
+Bad:
+A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for agent B to handshake with you."
+A: wait_agent_message(sources=["*"], since=0) → since=0 means current position, fails to count messages from agent B that arrived before the wait.
+</example>
 
 **On timeout**, the message shows source status:
 - **working**: Still processing. Wait again if you still need the response.
 - **waiting**: Waiting for their own dependencies. Wait again.
 - **retry**: Recovering from an error. Wait again.
 - **idle**: Session not active. They may have finished without sending, or something went wrong. Send them a message to ask for status.
-
-### Example
-
-\`\`\`
-send_agent_message(to="ses_xxx", text="What did you find?")
-wait_agent_message(sources=["ses_xxx"], timeout=60000, mode="all")
-// stop here - you wake with response or timeout status
 \`\`\``
 
     if (sessionType === "primary") {

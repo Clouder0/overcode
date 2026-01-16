@@ -113,6 +113,7 @@ function describeWaitDrain() {
         sources,
         timeout: 10_000,
         mode: "all",
+        since: 0,
       })
 
       SessionStatus.set(sessionID, {

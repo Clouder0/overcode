@@ -9,6 +9,14 @@ Hello
 </content>`)
 })
 
+test("formatInbox includes seq when provided", () => {
+  const result = MessageParser.formatInbox([{ from: "ses_a", text: "Hello", seq: 42 }])
+  expect(result).toBe(`Sender Agent with session id ses_a (seq: 42) sent a message:
+<content>
+Hello
+</content>`)
+})
+
 test("formatInbox for timeout message", () => {
   const result = MessageParser.formatInbox([{ from: "ses_b", text: "Timeout", messageType: "timeout" }])
   expect(result).toBe(`Sender Agent with session id ses_b did not respond before your timeout:

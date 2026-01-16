@@ -8,6 +8,7 @@ import { SessionSummary } from "./summary"
 import { Bus } from "@/bus"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
+import { SessionMessage } from "./message-routing"
 import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
@@ -31,6 +32,7 @@ export namespace SessionProcessor {
     abort: AbortSignal
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
+    const waits = new Map<string, number>()
     let snapshot: string | undefined
     let blocked = false
     let attempt = 0
@@ -47,11 +49,15 @@ export namespace SessionProcessor {
       partFromToolCall(toolCallID: string) {
         return toolcalls[toolCallID]
       },
+      waitSince(toolCallID: string) {
+        return waits.get(toolCallID)
+      },
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         needsCompaction = false
         compactionRequest = undefined
-        const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
+        const config = await Config.get()
+        const shouldBreak = config.experimental?.continue_loop_on_deny !== true
 
         let ignoredOpenAIReasoning = false
 
@@ -207,7 +213,15 @@ export namespace SessionProcessor {
                       raw: "",
                     },
                   })
+
                   toolcalls[value.id] = part as MessageV2.ToolPart
+
+                  // Tool args can stream in over time; snapshot a baseline at the moment a wait call begins.
+                  // This avoids a lost-wake when an agent message arrives before the wait tool executes.
+                  if (value.toolName === "wait_agent_message") {
+                    waits.set(value.id, SessionMessage.nowSeq())
+                  }
+
                   break
                 }
 
@@ -446,25 +460,30 @@ export namespace SessionProcessor {
               stack: JSON.stringify(e.stack),
             })
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
+            const cfg = config
             const retry = SessionRetry.retryable(error)
+
             if (retry !== undefined && retrySafe) {
-              attempt++
-              const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
-              SessionStatus.set(input.sessionID, {
-                type: "retry",
-                attempt,
-                message: retry,
-                next: Date.now() + delay,
-              })
-              await cleanup(preserve).catch(() => {})
-              await SessionRetry.sleep(delay, input.abort).catch(() => {})
-              continue
+              const max = cfg.experimental?.chatMaxRetries
+              const limited = max !== undefined && attempt >= max
+              if (!limited) {
+                attempt++
+                const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
+                SessionStatus.set(input.sessionID, {
+                  type: "retry",
+                  attempt,
+                  message: retry,
+                  next: Date.now() + delay,
+                })
+                await cleanup(preserve).catch(() => {})
+                await SessionRetry.sleep(delay, input.abort).catch(() => {})
+                continue
+              }
             }
 
             const compactOnContextLengthError = await (async () => {
               if (streamInput.agent.name === "compaction") return false
               if (!isContextLengthError(error)) return false
-              const cfg = await Config.get()
               if (SessionCompaction.autoPolicy(cfg.compaction?.auto) === "deny") return false
               if (await isReplayPrompt(streamInput.user.id)) return false
               return true

@@ -40,6 +40,7 @@ export namespace MessageV2 {
     id: z.string(),
     sessionID: z.string(),
     messageID: z.string(),
+    metadata: z.record(z.string(), z.any()).optional(),
   })
 
   export const SnapshotPart = PartBase.extend({
@@ -505,10 +506,22 @@ export namespace MessageV2 {
               }
 
               if (part.direction === "incoming" && part.peerType === "agent") {
+                const seq = (() => {
+                  const meta = part.metadata
+                  const opencode =
+                    meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
+                  if (!opencode || typeof opencode !== "object") return
+                  const value = (opencode as { seq?: unknown }).seq
+                  if (typeof value !== "number") return
+                  if (!Number.isInteger(value) || value <= 0) return
+                  return value
+                })()
+
                 return MessageParser.formatInbox([
                   {
                     from: part.peer,
                     text: part.text,
+                    seq,
                     messageType: part.timeoutOccurred ? "timeout" : "normal",
                   },
                 ])
@@ -573,10 +586,22 @@ export namespace MessageV2 {
               }
 
               if (part.direction === "incoming" && part.peerType === "agent") {
+                const seq = (() => {
+                  const meta = part.metadata
+                  const opencode =
+                    meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
+                  if (!opencode || typeof opencode !== "object") return
+                  const value = (opencode as { seq?: unknown }).seq
+                  if (typeof value !== "number") return
+                  if (!Number.isInteger(value) || value <= 0) return
+                  return value
+                })()
+
                 return MessageParser.formatInbox([
                   {
                     from: part.peer,
                     text: part.text,
+                    seq,
                     messageType: part.timeoutOccurred ? "timeout" : "normal",
                   },
                 ])

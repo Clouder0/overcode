@@ -10,6 +10,7 @@ export namespace WaitPolicy {
     sources: string[]
     timeout: number
     mode: Mode
+    since: number
     time: {
       created: number
       deadline?: number
@@ -26,6 +27,7 @@ export namespace WaitPolicy {
   type State = {
     policy: Policy
     timeoutTimer?: ReturnType<typeof setTimeout>
+    noticed: Set<string>
     mono: {
       created: number
       deadline?: number
@@ -38,6 +40,13 @@ export namespace WaitPolicy {
       for (const item of map.values()) {
         if (item.timeoutTimer) clearTimeout(item.timeoutTimer)
       }
+      map.clear()
+    },
+  )
+
+  const waitersBySource = Instance.state(
+    () => new Map<string, Set<string>>(),
+    async (map) => {
       map.clear()
     },
   )
@@ -69,6 +78,21 @@ export namespace WaitPolicy {
     const existing = state().get(sessionID)
     if (!existing) return
     if (existing.timeoutTimer) clearTimeout(existing.timeoutTimer)
+
+    const policy = existing.policy
+    const wildcard = policy.sources.length === 1 && policy.sources[0] === "*"
+    if (!wildcard) {
+      const lookup = waitersBySource()
+      for (const source of policy.sources) {
+        const waiters = lookup.get(source)
+        if (!waiters) continue
+        waiters.delete(sessionID)
+        if (waiters.size === 0) {
+          lookup.delete(source)
+        }
+      }
+    }
+
     state().delete(sessionID)
   }
 
@@ -79,6 +103,7 @@ export namespace WaitPolicy {
     sources: string[]
     timeout: number
     mode: Mode
+    since: number
   }): Policy {
     clear(input.sessionID)
 
@@ -94,6 +119,7 @@ export namespace WaitPolicy {
       sources: input.sources,
       timeout: input.timeout,
       mode: input.mode,
+      since: input.since,
       time: {
         created: now,
         deadline,
@@ -102,6 +128,7 @@ export namespace WaitPolicy {
 
     const next: State = {
       policy,
+      noticed: new Set(),
       mono: {
         created: createdMono,
         deadline: deadlineMono,
@@ -120,6 +147,16 @@ export namespace WaitPolicy {
       }, input.timeout)
     }
 
+    const wildcard = policy.sources.length === 1 && policy.sources[0] === "*"
+    if (!wildcard) {
+      const lookup = waitersBySource()
+      for (const source of policy.sources) {
+        const waiters = lookup.get(source) ?? new Set<string>()
+        waiters.add(input.sessionID)
+        lookup.set(source, waiters)
+      }
+    }
+
     state().set(input.sessionID, next)
     return policy
   }
@@ -128,9 +165,29 @@ export namespace WaitPolicy {
     return state().get(policy.sessionID)?.mono
   }
 
-  export function evaluate(input: { policy: Policy; now?: number; pendingFromSources: Set<string> }): EvaluateResult {
-    const respondedSources = input.policy.sources.filter((s) => input.pendingFromSources.has(s))
-    const missingSources = input.policy.sources.filter((s) => !input.pendingFromSources.has(s))
+  export function dependents(source: string): string[] {
+    const waiters = waitersBySource().get(source)
+    if (!waiters) return []
+    return Array.from(waiters)
+  }
+
+  export function markNoticed(input: { waiter: string; callID: string; source: string }): boolean {
+    const current = state().get(input.waiter)
+    if (!current) return false
+    if (current.policy.callID !== input.callID) return false
+    if (current.noticed.has(input.source)) return false
+    current.noticed.add(input.source)
+    return true
+  }
+
+  export function evaluate(input: { policy: Policy; now?: number; respondedFromSources: Set<string> }): EvaluateResult {
+    const wildcard = input.policy.sources.length === 1 && input.policy.sources[0] === "*"
+
+    const respondedSources = wildcard
+      ? Array.from(input.respondedFromSources)
+      : input.policy.sources.filter((s) => input.respondedFromSources.has(s))
+
+    const missingSources = wildcard ? [] : input.policy.sources.filter((s) => !input.respondedFromSources.has(s))
 
     const ready = input.policy.mode === "any" ? respondedSources.length > 0 : missingSources.length === 0
 

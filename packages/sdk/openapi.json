@@ -8106,7 +8106,8 @@
             "type": "string",
             "enum": [
               "human",
-              "agent"
+              "agent",
+              "system"
             ]
           },
           "text": {
@@ -8373,6 +8374,11 @@
                   "id": {
                     "type": "string"
                   },
+                  "seq": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
                   "from": {
                     "type": "string"
                   },
@@ -8391,12 +8397,14 @@
                     "enum": [
                       "normal",
                       "timeout",
-                      "error"
+                      "error",
+                      "wait_result"
                     ]
                   }
                 },
                 "required": [
                   "id",
+                  "seq",
                   "from",
                   "to",
                   "text",

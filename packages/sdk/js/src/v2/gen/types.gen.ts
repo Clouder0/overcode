@@ -427,7 +427,7 @@ export type MessagePart = {
   type: "message"
   direction: "outgoing" | "incoming"
   peer: string
-  peerType: "human" | "agent"
+  peerType: "human" | "agent" | "system"
   text: string
   timeout?: number
   timeoutOccurred?: boolean
@@ -499,11 +499,12 @@ export type EventSessionMessageDelivered = {
   properties: {
     message: {
       id: string
+      seq: number
       from: string
       to: string
       text: string
       time: number
-      messageType?: "normal" | "timeout" | "error"
+      messageType?: "normal" | "timeout" | "error" | "wait_result"
     }
   }
 }
