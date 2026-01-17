@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { NamedError } from "@opencode-ai/util/error"
+import { TypeValidationError } from "ai"
 
 function apiError(headers?: Record<string, string>): MessageV2.APIError {
   return new MessageV2.APIError({
@@ -206,5 +207,44 @@ describe("session.message-v2.fromError", () => {
 
     expect(MessageV2.APIError.isInstance(error)).toBe(true)
     expect((error as MessageV2.APIError).data.isRetryable).toBe(false)
+  })
+
+  test("converts gateway-style Responses errors in TypeValidationError.value to retryable APIError", () => {
+    const error = new TypeValidationError({
+      value: {
+        error: {
+          message: "stream error: stream ID 137; INTERNAL_ERROR; received from peer",
+          type: "server_error",
+          code: "internal_server_error",
+        },
+      },
+      cause: new Error("schema mismatch"),
+    })
+
+    const result = MessageV2.fromError(error, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toInclude("received from peer")
+    expect((result as MessageV2.APIError).data.metadata?.code).toBe("internal_server_error")
+    expect((result as MessageV2.APIError).data.metadata?.type).toBe("server_error")
+  })
+
+  test("does not retry gateway-style context-length errors in TypeValidationError.value", () => {
+    const error = new TypeValidationError({
+      value: {
+        error: {
+          message: "This model's maximum context length is 8192 tokens.",
+          type: "invalid_request_error",
+          code: "context_length_exceeded",
+        },
+      },
+      cause: new Error("schema mismatch"),
+    })
+
+    const result = MessageV2.fromError(error, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(false)
   })
 })

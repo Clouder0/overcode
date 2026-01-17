@@ -1,7 +1,14 @@
 import { BusEvent } from "@/bus/bus-event"
 import z from "zod"
 import { NamedError } from "@opencode-ai/util/error"
-import { APICallError, convertToModelMessages, LoadAPIKeyError, type ModelMessage, type UIMessage } from "ai"
+import {
+  APICallError,
+  convertToModelMessages,
+  LoadAPIKeyError,
+  TypeValidationError,
+  type ModelMessage,
+  type UIMessage,
+} from "ai"
 import { Identifier } from "../id/id"
 import { LSP } from "../lsp"
 import { Snapshot } from "@/snapshot"
@@ -809,6 +816,51 @@ export namespace MessageV2 {
     }
   }
 
+  function openAIResponseErrorEnvelope(value: unknown):
+    | {
+        message: string
+        code?: string
+        errorType?: string
+        param?: string
+        responseBody?: string
+      }
+    | undefined {
+    if (!isRecord(value)) return
+    const nested = value["error"]
+    if (!isRecord(nested)) return
+
+    const message = nested["message"]
+    if (typeof message !== "string") return
+
+    const rawCode = nested["code"]
+    const code = typeof rawCode === "string" || typeof rawCode === "number" ? String(rawCode) : undefined
+
+    const rawType = nested["type"]
+    const errorType = typeof rawType === "string" ? rawType : undefined
+
+    const rawParam = nested["param"]
+    const param = typeof rawParam === "string" ? rawParam : undefined
+
+    const responseBody = capText(
+      safeJsonStringify({
+        error: {
+          message,
+          code,
+          type: errorType,
+          param,
+        },
+      }),
+    )
+
+    return {
+      message,
+      code,
+      errorType,
+      param,
+      responseBody,
+    }
+  }
+
   function openAIResponseErrorRetryable(input: { message: string; code?: string; errorType?: string }) {
     const code = input.code?.toLowerCase()
     if (code && code.includes("context_length")) return false
@@ -827,6 +879,7 @@ export namespace MessageV2 {
     if (code && code.includes("too_many_requests")) return true
     if (code && code.includes("unavailable")) return true
     if (code && code.includes("exhausted")) return true
+    if (code && code.includes("internal")) return true
 
     if (msg.includes("overloaded")) return true
 
@@ -864,6 +917,48 @@ export namespace MessageV2 {
         },
         { cause: e },
       ).toObject()
+    }
+
+    const gateway = openAIResponseErrorEnvelope(e)
+    if (gateway) {
+      const metadata: Record<string, string> = {}
+      if (gateway.code !== undefined) metadata.code = gateway.code
+      if (gateway.param !== undefined) metadata.param = gateway.param
+      if (gateway.errorType !== undefined) metadata.type = gateway.errorType
+
+      const retryable = openAIResponseErrorRetryable(gateway)
+
+      return new MessageV2.APIError(
+        {
+          message: gateway.message,
+          isRetryable: retryable,
+          responseBody: gateway.responseBody,
+          metadata: Object.keys(metadata).length ? metadata : undefined,
+        },
+        { cause: e },
+      ).toObject()
+    }
+
+    if (TypeValidationError.isInstance(e)) {
+      const nested = openAIResponseErrorEnvelope(e.value)
+      if (nested) {
+        const metadata: Record<string, string> = {}
+        if (nested.code !== undefined) metadata.code = nested.code
+        if (nested.param !== undefined) metadata.param = nested.param
+        if (nested.errorType !== undefined) metadata.type = nested.errorType
+
+        const retryable = openAIResponseErrorRetryable(nested)
+
+        return new MessageV2.APIError(
+          {
+            message: nested.message,
+            isRetryable: retryable,
+            responseBody: nested.responseBody,
+            metadata: Object.keys(metadata).length ? metadata : undefined,
+          },
+          { cause: e },
+        ).toObject()
+      }
     }
 
     switch (true) {
