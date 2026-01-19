@@ -3,13 +3,14 @@ import { useTheme, selectedForeground } from "@tui/context/theme"
 import { entries, filter, flatMap, groupBy, pipe, take } from "remeda"
 import { batch, createEffect, createMemo, For, Show, type JSX, on } from "solid-js"
 import { createStore } from "solid-js/store"
-import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { useKeyboard, useTerminalDimensions, useRenderer } from "@opentui/solid"
 import * as fuzzysort from "fuzzysort"
 import { isDeepEqual } from "remeda"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { useKeybind } from "@tui/context/keybind"
 import { Keybind } from "@/util/keybind"
 import { Locale } from "@/util/locale"
+import { truncateEnd } from "@tui/lib/cols"
 
 export interface DialogSelectProps<T> {
   title: string
@@ -328,7 +329,10 @@ function Option(props: {
         overflow="hidden"
         paddingLeft={3}
       >
-        {Locale.truncate(props.title, 61)}
+        {(() => {
+          const renderer = useRenderer()
+          return truncateEnd({ method: renderer.widthMethod, text: props.title, max: 61 })
+        })()}
         <Show when={props.description}>
           <span style={{ fg: props.active ? fg : theme.textMuted }}> {props.description}</span>
         </Show>

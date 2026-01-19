@@ -2,6 +2,8 @@ import { useDialog } from "@tui/ui/dialog"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { createMemo, createSignal } from "solid-js"
 import { Locale } from "@/util/locale"
+import { truncateEnd } from "@tui/lib/cols"
+import { useRenderer } from "@opentui/solid"
 import { Keybind } from "@/util/keybind"
 import { useTheme } from "../context/theme"
 import { usePromptStash, type StashEntry } from "./prompt/stash"
@@ -21,15 +23,20 @@ function getRelativeTime(timestamp: number): string {
   return Locale.datetime(timestamp)
 }
 
-function getStashPreview(input: string, maxLength: number = 50): string {
+function getStashPreview(
+  renderer: { widthMethod: "wcwidth" | "unicode" },
+  input: string,
+  maxLength: number = 50,
+): string {
   const firstLine = input.split("\n")[0].trim()
-  return Locale.truncate(firstLine, maxLength)
+  return truncateEnd({ method: renderer.widthMethod, text: firstLine, max: maxLength })
 }
 
 export function DialogStash(props: { onSelect: (entry: StashEntry) => void }) {
   const dialog = useDialog()
   const stash = usePromptStash()
   const { theme } = useTheme()
+  const renderer = useRenderer()
 
   const [toDelete, setToDelete] = createSignal<number>()
 
@@ -41,7 +48,7 @@ export function DialogStash(props: { onSelect: (entry: StashEntry) => void }) {
         const isDeleting = toDelete() === index
         const lineCount = (entry.input.match(/\n/g)?.length ?? 0) + 1
         return {
-          title: isDeleting ? "Press ctrl+d again to confirm" : getStashPreview(entry.input),
+          title: isDeleting ? "Press ctrl+d again to confirm" : getStashPreview(renderer, entry.input),
           bg: isDeleting ? theme.error : undefined,
           value: index,
           description: getRelativeTime(entry.timestamp),

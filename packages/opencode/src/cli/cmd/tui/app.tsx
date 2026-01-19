@@ -4,6 +4,8 @@ import { render, useKeyboard, useRenderer, useTerminalDimensions } from "@opentu
 import "opentui-spinner/solid"
 import { Clipboard } from "@tui/util/clipboard"
 import { TextAttributes } from "@opentui/core"
+import { destroy as destroyCols, truncateEnd } from "@tui/lib/cols"
+import { WidthProvider } from "@tui/context/width"
 import { RouteProvider, useRoute } from "@tui/context/route"
 import { Switch, Match, createEffect, untrack, ErrorBoundary, createSignal, onMount, batch, Show, on } from "solid-js"
 import { Installation } from "@/installation"
@@ -114,8 +116,24 @@ export function tui(input: {
   return new Promise<void>(async (resolve) => {
     const mode = await getTerminalBackgroundColor()
     const onExit = async () => {
+      destroyCols()
       await input.onExit?.()
       resolve()
+    }
+
+    // Ensure a stable width method across the session.
+    // OpenTUI can update terminal capabilities asynchronously, which can otherwise
+    // lead to mixed width semantics (unicode vs wcwidth) across renderables.
+    const forced = Object.entries({
+      OPENTUI_FORCE_WCWIDTH: process.env.OPENTUI_FORCE_WCWIDTH,
+      OPENTUI_FORCE_UNICODE: process.env.OPENTUI_FORCE_UNICODE,
+      OPENTUI_FORCE_NOZWJ: process.env.OPENTUI_FORCE_NOZWJ,
+    }).find(([, value]) => (value ?? "").toLowerCase() === "true" || value === "1" || value === "on" || value === "yes")
+
+    const widthMethod = forced?.[0] === "OPENTUI_FORCE_WCWIDTH" ? "wcwidth" : "unicode"
+
+    if (!forced) {
+      process.env.OPENTUI_FORCE_UNICODE = "1"
     }
 
     render(
@@ -129,34 +147,36 @@ export function tui(input: {
                 <KVProvider>
                   <ToastProvider>
                     <RouteProvider>
-                      <SDKProvider
-                        url={input.url}
-                        directory={input.directory}
-                        fetch={input.fetch}
-                        events={input.events}
-                      >
-                        <SyncProvider>
-                          <ThemeProvider mode={mode}>
-                            <LocalProvider>
-                              <KeybindProvider>
-                                <PromptStashProvider>
-                                  <DialogProvider>
-                                    <CommandProvider>
-                                      <FrecencyProvider>
-                                        <PromptHistoryProvider>
-                                          <PromptRefProvider>
-                                            <App />
-                                          </PromptRefProvider>
-                                        </PromptHistoryProvider>
-                                      </FrecencyProvider>
-                                    </CommandProvider>
-                                  </DialogProvider>
-                                </PromptStashProvider>
-                              </KeybindProvider>
-                            </LocalProvider>
-                          </ThemeProvider>
-                        </SyncProvider>
-                      </SDKProvider>
+                      <WidthProvider method={widthMethod}>
+                        <SDKProvider
+                          url={input.url}
+                          directory={input.directory}
+                          fetch={input.fetch}
+                          events={input.events}
+                        >
+                          <SyncProvider>
+                            <ThemeProvider mode={mode}>
+                              <LocalProvider>
+                                <KeybindProvider>
+                                  <PromptStashProvider>
+                                    <DialogProvider>
+                                      <CommandProvider>
+                                        <FrecencyProvider>
+                                          <PromptHistoryProvider>
+                                            <PromptRefProvider>
+                                              <App />
+                                            </PromptRefProvider>
+                                          </PromptHistoryProvider>
+                                        </FrecencyProvider>
+                                      </CommandProvider>
+                                    </DialogProvider>
+                                  </PromptStashProvider>
+                                </KeybindProvider>
+                              </LocalProvider>
+                            </ThemeProvider>
+                          </SyncProvider>
+                        </SDKProvider>
+                      </WidthProvider>
                     </RouteProvider>
                   </ToastProvider>
                 </KVProvider>
@@ -229,8 +249,8 @@ function App() {
       return
     }
 
-    // Truncate title to 40 chars max
-    const truncated = session.title.length > 40 ? session.title.slice(0, 37) + "..." : session.title
+    // Truncate title to 40 columns max
+    const truncated = truncateEnd({ method: renderer.widthMethod, text: session.title, max: 40, tail: "..." })
     renderer.setTerminalTitle(`OC | ${truncated}`)
   })
 

@@ -46,6 +46,7 @@ import type { EditTool } from "@/tool/edit"
 import type { PatchTool } from "@/tool/patch"
 import type { WebFetchTool } from "@/tool/webfetch"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { truncateEnd } from "@tui/lib/cols"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "@tui/context/keybind"
@@ -2762,6 +2763,7 @@ function WaitAgentMessage(props: ToolProps<any>) {
 function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => void }) {
   const { theme } = useTheme()
   const sync = useSync()
+  const renderer = useRenderer()
 
   onMount(() => {
     sync.session.sync(props.sessionID).catch(() => {})
@@ -2786,7 +2788,7 @@ function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => 
     const msgPart = parts.find((p) => (p as any).type === "message" && (p as any).direction === "incoming") as any
     if (msgPart?.text) {
       const text = msgPart.text.trim()
-      return text.length > 60 ? text.slice(0, 60) + "..." : text
+      return truncateEnd({ method: renderer.widthMethod, text, max: 60, tail: "..." })
     }
     const textPart = parts.find((p) => p.type === "text" && "synthetic" in p && p.synthetic)
     if (textPart && textPart.type === "text") {
@@ -2805,7 +2807,7 @@ function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => 
 
         return raw
       })()
-      return text.length > 60 ? text.slice(0, 60) + "..." : text
+      return truncateEnd({ method: renderer.widthMethod, text, max: 60, tail: "..." })
     }
     return undefined
   })
@@ -2822,12 +2824,12 @@ function SubagentRow(props: { sessionID: string; agent: string; onSelect: () => 
       ) as any
       if (msgPart?.text) {
         const text = msgPart.text.trim()
-        return text.length > 60 ? text.slice(0, 60) + "..." : text
+        return truncateEnd({ method: renderer.widthMethod, text, max: 60, tail: "..." })
       }
       const textPart = parts.find((p) => p.type === "text" && !("synthetic" in p && p.synthetic))
       if (textPart && textPart.type === "text") {
         const text = textPart.text.trim()
-        return text.length > 60 ? text.slice(0, 60) + "..." : text
+        return truncateEnd({ method: renderer.widthMethod, text, max: 60, tail: "..." })
       }
     }
     return undefined

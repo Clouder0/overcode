@@ -3,6 +3,8 @@ import { createMemo, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { Locale } from "@/util/locale"
+import { truncateMiddle, cols } from "@tui/lib/cols"
+import { useRenderer } from "@opentui/solid"
 import path from "path"
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { Installation } from "@/installation"
@@ -18,6 +20,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
   const { theme } = useTheme()
   const { navigate } = useRoute()
+  const renderer = useRenderer()
   const session = createMemo(() => sync.session.get(props.sessionID)!)
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
   const todo = createMemo(() => sync.data.todo[props.sessionID] ?? [])
@@ -369,7 +372,11 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                         const last = splits.at(-1)!
                         const rest = splits.slice(0, -1).join(path.sep)
                         if (!rest) return last
-                        return Locale.truncateMiddle(rest, 30 - last.length) + "/" + last
+                        const tail = "/" + last
+                        const tailw = cols(renderer.widthMethod, tail)
+                        const restMax = Math.max(0, 30 - tailw)
+                        const head = truncateMiddle({ method: renderer.widthMethod, text: rest, max: restMax })
+                        return head + tail
                       })
                       return (
                         <box flexDirection="row" gap={1} justifyContent="space-between">

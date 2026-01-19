@@ -32,6 +32,8 @@ import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { getBufferEndOffset as bufferEndOffset } from "../../lib/buffer-offset"
 import { locateTokensByOffset } from "../../lib/prompt-token-offset"
+import { cols, maxLineCols } from "../../lib/cols"
+import { truncateEnd, truncateMiddle } from "../../lib/cols"
 import { expandPromptPastes } from "../../lib/prompt-paste"
 
 export type PromptProps = {
@@ -408,6 +410,7 @@ export function Prompt(props: PromptProps) {
             items,
             getTextRange: input.getTextRange.bind(input),
             endOffset,
+            widthMethod: renderer.widthMethod,
           })
 
           const positions = new Map<PromptInfo["parts"][number], { start: number; end: number }>()
@@ -1444,6 +1447,8 @@ export function Prompt(props: PromptProps) {
               placeholder={props.sessionID ? undefined : `Ask anything... "${PLACEHOLDERS[store.placeholder]}"`}
               textColor={keybind.leader ? theme.textMuted : theme.text}
               focusedTextColor={keybind.leader ? theme.textMuted : theme.text}
+              overflow="hidden"
+              width="100%"
               minHeight={1}
               maxHeight={6}
               onContentChange={() => {
@@ -1757,8 +1762,9 @@ export function Prompt(props: PromptProps) {
 
                 const countText = normalizedText.trimEnd()
                 const lineCount = (countText.match(/\n/g)?.length ?? 0) + 1
+                const long = maxLineCols(renderer.widthMethod, countText) > 150
                 if (
-                  (lineCount >= 3 || countText.length > 150) &&
+                  (lineCount >= 3 || long) &&
                   kv.get("paste_collapse_default", true) &&
                   !sync.data.config.experimental?.disable_paste_summary
                 ) {
@@ -1896,13 +1902,18 @@ export function Prompt(props: PromptProps) {
                         if (!r) return
                         if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
                           return "gemini is way too hot right now"
-                        if (r.message.length > 80) return r.message.slice(0, 80) + "..."
-                        return r.message
+
+                        return truncateEnd({
+                          method: renderer.widthMethod,
+                          text: r.message,
+                          max: 80,
+                          tail: "...",
+                        })
                       })
                       const isTruncated = createMemo(() => {
                         const r = retry()
                         if (!r) return false
-                        return r.message.length > 120
+                        return cols(renderer.widthMethod, r.message) > 120
                       })
                       const [seconds, setSeconds] = createSignal(0)
                       onMount(() => {

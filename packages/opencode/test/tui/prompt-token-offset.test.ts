@@ -12,6 +12,7 @@ describe("locateTokensByOffset", () => {
       items: [{ token: "@file", hint: 0 }],
       getTextRange: buf.getTextRange.bind(buf),
       endOffset: getBufferEndOffset(buf),
+      widthMethod: "wcwidth",
     })
 
     expect(result.missing).toBe(0)
@@ -33,6 +34,7 @@ describe("locateTokensByOffset", () => {
       ],
       getTextRange: buf.getTextRange.bind(buf),
       endOffset: getBufferEndOffset(buf),
+      widthMethod: "wcwidth",
     })
 
     expect(result.missing).toBe(0)
@@ -53,6 +55,7 @@ describe("locateTokensByOffset", () => {
       items: [{ token: "@missing", hint: 0 }],
       getTextRange: buf.getTextRange.bind(buf),
       endOffset: getBufferEndOffset(buf),
+      widthMethod: "wcwidth",
     })
 
     expect(result.matches.length).toBe(0)

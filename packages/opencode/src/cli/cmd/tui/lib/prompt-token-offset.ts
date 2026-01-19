@@ -1,4 +1,4 @@
-import { EditBuffer } from "@opentui/core"
+import { EditBuffer, type WidthMethod } from "@opentui/core"
 
 export type TokenLocateItem = {
   token: string
@@ -11,8 +11,8 @@ export type TokenLocateMatch<TItem> = {
   end: number
 }
 
-function offsetLength(token: string) {
-  const buf = EditBuffer.create("wcwidth")
+function offsetLength(token: string, method: WidthMethod) {
+  const buf = EditBuffer.create(method)
   buf.setText(token)
   return buf.getEOL().offset
 }
@@ -27,6 +27,7 @@ export function locateTokensByOffset<TItem extends TokenLocateItem>(args: {
   items: TItem[]
   getTextRange: (start: number, end: number) => string
   endOffset: number
+  widthMethod: WidthMethod
 }): { matches: TokenLocateMatch<TItem>[]; missing: number } {
   const cached = new Map<string, { len: number; starts: number[] }>()
 
@@ -43,7 +44,7 @@ export function locateTokensByOffset<TItem extends TokenLocateItem>(args: {
     const info =
       existing ??
       (() => {
-        const len = offsetLength(item.token)
+        const len = offsetLength(item.token, args.widthMethod)
         const first = firstCodePoint(item.token)
         const starts: number[] = []
         if (len > 0 && args.endOffset >= len) {
