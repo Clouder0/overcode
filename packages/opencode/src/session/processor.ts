@@ -464,8 +464,8 @@ export namespace SessionProcessor {
             const retry = SessionRetry.retryable(error)
 
             if (retry !== undefined && retrySafe) {
-              const max = cfg.experimental?.chatMaxRetries
-              const limited = max !== undefined && attempt >= max
+              const max = cfg.experimental?.chatMaxRetries ?? 3
+              const limited = attempt >= max
               if (!limited) {
                 attempt++
                 const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)

@@ -4,6 +4,7 @@ import { NamedError } from "@opencode-ai/util/error"
 import {
   APICallError,
   convertToModelMessages,
+  JSONParseError,
   LoadAPIKeyError,
   TypeValidationError,
   type ModelMessage,
@@ -874,6 +875,7 @@ export namespace MessageV2 {
     if (type && type.includes("rate_limit")) return true
     if (type && type.includes("too_many_requests")) return true
     if (type && type.includes("server_error")) return true
+    if (type && type.includes("stream_error")) return true
 
     if (code && code.includes("rate_limit")) return true
     if (code && code.includes("too_many_requests")) return true
@@ -882,6 +884,13 @@ export namespace MessageV2 {
     if (code && code.includes("internal")) return true
 
     if (msg.includes("overloaded")) return true
+
+    // Some gateways misclassify broken SSE streams as invalid_request_error.
+    if (msg.includes("sse") && msg.includes("response.completed")) return true
+    if (msg.includes("stream") && msg.includes("response.completed")) return true
+    if (msg.includes("stream") && msg.includes("closed") && msg.includes("response.completed")) return true
+    if (msg.includes("消息流出现异常")) return true
+    if (msg.includes("流在收到") && msg.includes("response.completed")) return true
 
     return false
   }
@@ -959,6 +968,22 @@ export namespace MessageV2 {
           { cause: e },
         ).toObject()
       }
+    }
+
+    if (JSONParseError.isInstance(e)) {
+      const responseBody = typeof e.text === "string" ? capText(e.text) : undefined
+
+      return new MessageV2.APIError(
+        {
+          message: "Provider stream interrupted",
+          isRetryable: true,
+          responseBody,
+          metadata: {
+            type: "json_parse_error",
+          },
+        },
+        { cause: e },
+      ).toObject()
     }
 
     switch (true) {

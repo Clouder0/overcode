@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { NamedError } from "@opencode-ai/util/error"
-import { TypeValidationError } from "ai"
+import { JSONParseError, TypeValidationError } from "ai"
 
 function apiError(headers?: Record<string, string>): MessageV2.APIError {
   return new MessageV2.APIError({
@@ -189,6 +189,34 @@ describe("session.message-v2.fromError", () => {
 
     expect(MessageV2.APIError.isInstance(error)).toBe(true)
     expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
+  })
+
+  test("marks OpenAI stream_error chunks retryable", () => {
+    const chunk = {
+      type: "error",
+      error: {
+        type: "stream_error",
+        message: "SSE stream closed before receiving response.completed",
+      },
+    }
+
+    const error = MessageV2.fromError(chunk, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
+  })
+
+  test("marks JSONParseError retryable", () => {
+    const err = new JSONParseError({
+      text: '{"a":1}{"b":2}',
+      cause: new Error("Unexpected token"),
+    })
+
+    const error = MessageV2.fromError(err, { providerID: "openai" })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect((error as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((error as MessageV2.APIError).data.metadata?.type).toBe("json_parse_error")
   })
 
   test("does not retry streamed OpenAI context-length errors", () => {
