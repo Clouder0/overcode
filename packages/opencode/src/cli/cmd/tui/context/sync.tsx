@@ -130,6 +130,17 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       }
     }
 
+    const pins = (permission: typeof store.permission) => {
+      const out = new Set<string>()
+      for (const list of Object.values(permission)) {
+        for (const req of list) {
+          const id = req.tool?.messageID
+          if (id) out.add(id)
+        }
+      }
+      return out
+    }
+
     sdk.event.listen((e) => {
       const event = e.details
       switch (event.type) {
@@ -275,46 +286,85 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             setStore("message", event.properties.info.sessionID, result.index, reconcile(event.properties.info))
             break
           }
-          setStore(
-            "message",
-            event.properties.info.sessionID,
-            produce((draft) => {
-              draft.splice(result.index, 0, event.properties.info)
-              if (draft.length > 100) draft.shift()
-            }),
-          )
+          const gone: { id?: string } = {}
+
+          const protectedIDs = pins(store.permission)
+
+          batch(() => {
+            setStore(
+              "message",
+              event.properties.info.sessionID,
+              produce((draft) => {
+                draft.splice(result.index, 0, event.properties.info)
+                if (draft.length <= 100) return
+                gone.id = draft.shift()?.id
+              }),
+            )
+
+            const id = gone.id
+            if (!id) return
+            if (protectedIDs.has(id)) return
+
+            setStore(
+              produce((draft) => {
+                delete draft.part[id]
+              }),
+            )
+          })
           break
         }
         case "message.removed": {
           const messages = store.message[event.properties.sessionID]
-          const result = Binary.search(messages, event.properties.messageID, (m) => m.id)
-          if (result.found) {
+          const result = messages ? Binary.search(messages, event.properties.messageID, (m) => m.id) : undefined
+
+          const protectedIDs = pins(store.permission)
+
+          batch(() => {
+            if (result?.found) {
+              setStore(
+                "message",
+                event.properties.sessionID,
+                produce((draft) => {
+                  draft.splice(result.index, 1)
+                }),
+              )
+            }
+
+            if (protectedIDs.has(event.properties.messageID)) return
+
             setStore(
-              "message",
-              event.properties.sessionID,
               produce((draft) => {
-                draft.splice(result.index, 1)
+                delete draft.part[event.properties.messageID]
               }),
             )
-          }
+          })
           break
         }
         case "message.part.updated": {
-          const parts = store.part[event.properties.part.messageID]
+          const part = event.properties.part
+
+          const protectedIDs = pins(store.permission)
+
+          const messages = store.message[part.sessionID] ?? []
+          const live = messages.some((m) => m.id === part.messageID) || protectedIDs.has(part.messageID)
+
+          if (!live) break
+
+          const parts = store.part[part.messageID]
           if (!parts) {
-            setStore("part", event.properties.part.messageID, [event.properties.part])
+            setStore("part", part.messageID, [part])
             break
           }
-          const result = Binary.search(parts, event.properties.part.id, (p) => p.id)
+          const result = Binary.search(parts, part.id, (p) => p.id)
           if (result.found) {
-            setStore("part", event.properties.part.messageID, result.index, reconcile(event.properties.part))
+            setStore("part", part.messageID, result.index, reconcile(part))
             break
           }
           setStore(
             "part",
-            event.properties.part.messageID,
+            part.messageID,
             produce((draft) => {
-              draft.splice(result.index, 0, event.properties.part)
+              draft.splice(result.index, 0, part)
             }),
           )
           break
@@ -516,16 +566,29 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
           const promise = Promise.race([req, t.timeout])
             .then(([session, messages, todo, diff]) => {
+              const protectedIDs = pins(store.permission)
+
               setStore(
                 produce((draft) => {
                   const match = Binary.search(draft.session, sessionID, (s) => s.id)
                   if (match.found) draft.session[match.index] = session.data!
                   if (!match.found) draft.session.splice(match.index, 0, session.data!)
                   draft.todo[sessionID] = todo.data ?? []
+
+                  const previous = new Set((draft.message[sessionID] ?? []).map((m) => m.id))
+                  const next = new Set(messages.data!.map((x) => x.info.id))
+
                   draft.message[sessionID] = messages.data!.map((x) => x.info)
                   for (const message of messages.data!) {
                     draft.part[message.info.id] = message.parts
                   }
+
+                  for (const id of previous) {
+                    if (next.has(id)) continue
+                    if (protectedIDs.has(id)) continue
+                    delete draft.part[id]
+                  }
+
                   draft.session_diff[sessionID] = diff.data ?? []
                 }),
               )
