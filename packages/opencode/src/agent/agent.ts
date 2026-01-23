@@ -16,6 +16,7 @@ import PROMPT_TITLE from "./prompt/title.txt"
 import { PermissionNext } from "@/permission/next"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
+import { ProviderRequestContext } from "@/provider/request-context"
 import path from "path"
 
 export namespace Agent {
@@ -316,22 +317,24 @@ export namespace Agent {
       }),
     } satisfies Parameters<typeof generateObject>[0]
 
-    if (defaultModel.providerID === "openai" && (await Auth.get(defaultModel.providerID))?.type === "oauth") {
-      const result = streamObject({
-        ...params,
-        providerOptions: ProviderTransform.providerOptions(model, {
-          instructions: SystemPrompt.instructions(),
-          store: false,
-        }),
-        onError: () => {},
-      })
-      for await (const part of result.fullStream) {
-        if (part.type === "error") throw part.error
+    return ProviderRequestContext.provide({ sessionID: "ses_agent_generate" }, async () => {
+      if (defaultModel.providerID === "openai" && (await Auth.get(defaultModel.providerID))?.type === "oauth") {
+        const result = streamObject({
+          ...params,
+          providerOptions: ProviderTransform.providerOptions(model, {
+            instructions: SystemPrompt.instructions(),
+            store: false,
+          }),
+          onError: () => {},
+        })
+        for await (const part of result.fullStream) {
+          if (part.type === "error") throw part.error
+        }
+        return result.object
       }
-      return result.object
-    }
 
-    const result = await generateObject(params)
-    return result.object
+      const result = await generateObject(params)
+      return result.object
+    })
   }
 }

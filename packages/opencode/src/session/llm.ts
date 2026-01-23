@@ -16,6 +16,7 @@ import {
 } from "ai"
 import { clone, mergeDeep, pipe } from "remeda"
 import { ProviderTransform } from "@/provider/transform"
+import { ProviderRequestContext } from "@/provider/request-context"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
 import type { Agent } from "@/agent/agent"
@@ -271,9 +272,11 @@ export namespace LLM {
     }
 
     if (!limits) {
-      return streamText({
-        ...args,
-      })
+      return ProviderRequestContext.provide({ sessionID: input.sessionID }, () =>
+        streamText({
+          ...args,
+        }),
+      )
     }
 
     const lease = await LLMConcurrencyMachine.enter({
@@ -292,12 +295,14 @@ export namespace LLM {
 
     const stream = await Promise.resolve()
       .then(() =>
-        streamText({
-          onFinish() {
-            release()
-          },
-          ...args,
-        }),
+        ProviderRequestContext.provide({ sessionID: input.sessionID }, () =>
+          streamText({
+            onFinish() {
+              release()
+            },
+            ...args,
+          }),
+        ),
       )
       .catch(async (error) => {
         await release()

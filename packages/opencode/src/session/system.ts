@@ -121,13 +121,13 @@ export namespace SystemPrompt {
       Bun.file(p)
         .text()
         .catch(() => "")
-        .then((x) => `Instructions from: ${p}\n${x}`),
+        .then((x) => `Instructions:\n${x}`),
     )
     const foundUrls = urls.map((url) =>
       fetch(url, { signal: AbortSignal.timeout(5000) })
         .then((res) => (res.ok ? res.text() : ""))
         .catch(() => "")
-        .then((x) => (x ? `Instructions from: ${url}\n${x}` : "")),
+        .then((x) => (x ? `Instructions:\n${x}` : "")),
     )
     return Promise.all([...foundFiles, ...foundUrls]).then((result) => result.filter(Boolean))
   }

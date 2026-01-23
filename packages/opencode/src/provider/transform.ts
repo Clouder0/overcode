@@ -245,22 +245,32 @@ export namespace ProviderTransform {
     const system = msgs.filter((msg) => msg.role === "system").slice(0, 2)
     const final = msgs.filter((msg) => msg.role !== "system").slice(-2)
 
-    const providerOptions = {
-      anthropic: {
-        cacheControl: { type: "ephemeral" },
-      },
-      openrouter: {
-        cacheControl: { type: "ephemeral" },
-      },
-      bedrock: {
-        cachePoint: { type: "ephemeral" },
-      },
-      openaiCompatible: {
-        cache_control: { type: "ephemeral" },
-      },
-    }
-
     for (const msg of unique([...system, ...final])) {
+      const isSystem = msg.role === "system"
+      const isTail = msg.role !== "system" && final.includes(msg)
+
+      const providerOptions = {
+        anthropic: {
+          cacheControl: isSystem ? { type: "ephemeral", ttl: "1h" } : isTail ? { type: "ephemeral" } : undefined,
+        },
+        openrouter: {
+          cacheControl: { type: "ephemeral" },
+        },
+        bedrock: {
+          cachePoint: { type: "ephemeral" },
+        },
+        openaiCompatible: {
+          cache_control: { type: "ephemeral" },
+        },
+      }
+
+      // Nothing to apply for this message.
+      if (
+        !providerOptions.anthropic.cacheControl &&
+        !providerOptions.openrouter.cacheControl &&
+        !providerOptions.bedrock.cachePoint
+      )
+        continue
       const shouldUseContentOptions = providerID !== "anthropic" && Array.isArray(msg.content) && msg.content.length > 0
 
       if (shouldUseContentOptions) {
@@ -331,6 +341,7 @@ export namespace ProviderTransform {
       model.api.npm === "@ai-sdk/anthropic"
     ) {
       msgs = ensureToolResults(msgs)
+
       msgs = applyCaching(msgs, model.providerID)
     }
 
