@@ -47,6 +47,14 @@ export namespace MCP {
     }),
   )
 
+  export const BrowserOpenFailed = BusEvent.define(
+    "mcp.browser.open.failed",
+    z.object({
+      mcpName: z.string(),
+      url: z.string(),
+    }),
+  )
+
   export const Failed = NamedError.create(
     "MCPFailed",
     z.object({
@@ -110,7 +118,7 @@ export namespace MCP {
   }
 
   // Convert MCP tool definition to AI SDK Tool type
-  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient): Promise<Tool> {
+  async function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Promise<Tool> {
     const inputSchema = mcpTool.inputSchema
 
     // Spread first, then override type to ensure it's always "object"
@@ -120,7 +128,6 @@ export namespace MCP {
       properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
       additionalProperties: false,
     }
-    const config = await Config.get()
 
     return dynamicTool({
       description: mcpTool.description ?? "",
@@ -134,7 +141,7 @@ export namespace MCP {
           CallToolResultSchema,
           {
             resetTimeoutOnProgress: true,
-            timeout: config.experimental?.mcp_timeout,
+            timeout,
           },
         )
       },
@@ -557,7 +564,10 @@ export namespace MCP {
   export async function tools() {
     const result: Record<string, Tool> = {}
     const s = await state()
+    const cfg = await Config.get()
+    const config = cfg.mcp ?? {}
     const clientsSnapshot = await clients()
+    const defaultTimeout = cfg.experimental?.mcp_timeout
 
     const entries = Object.entries(clientsSnapshot).sort(([a], [b]) => compareMcpNames(a, b))
 
@@ -580,9 +590,17 @@ export namespace MCP {
       if (!toolsResult) {
         continue
       }
+      const mcpConfig = config[clientName]
+      const entry = isMcpConfigured(mcpConfig) ? mcpConfig : undefined
+      const timeout = entry?.timeout ?? defaultTimeout
+
       for (const mcpTool of stableMcpToolOrder(toolsResult.tools)) {
         const key = mcpToolKey(clientName, mcpTool.name)
-        result[key] = await convertMcpTool(mcpTool, client)
+        const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
+        const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
+        const sanitizedKey = sanitizedClientName + "_" + sanitizedToolName
+        result[key] = await convertMcpTool(mcpTool, client, timeout)
+        result[sanitizedKey] = result[key]
       }
     }
     return result
@@ -784,7 +802,32 @@ export namespace MCP {
     // The SDK has already added the state parameter to the authorization URL
     // We just need to open the browser
     log.info("opening browser for oauth", { mcpName, url: authorizationUrl, state: oauthState })
-    await open(authorizationUrl)
+    try {
+      const subprocess = await open(authorizationUrl)
+      // The open package spawns a detached process and returns immediately.
+      // We need to listen for errors which fire asynchronously:
+      // - "error" event: command not found (ENOENT)
+      // - "exit" with non-zero code: command exists but failed (e.g., no display)
+      await new Promise<void>((resolve, reject) => {
+        // Give the process a moment to fail if it's going to
+        const timeout = setTimeout(() => resolve(), 500)
+        subprocess.on("error", (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        })
+        subprocess.on("exit", (code) => {
+          if (code !== null && code !== 0) {
+            clearTimeout(timeout)
+            reject(new Error(`Browser open failed with exit code ${code}`))
+          }
+        })
+      })
+    } catch (error) {
+      // Browser opening failed (e.g., in remote/headless sessions like SSH, devcontainers)
+      // Emit event so CLI can display the URL for manual opening
+      log.warn("failed to open browser, user must open URL manually", { mcpName, error })
+      Bus.publish(BrowserOpenFailed, { mcpName, url: authorizationUrl })
+    }
 
     // Wait for callback using the OAuth state parameter
     const code = await McpOAuthCallback.waitForCallback(oauthState)

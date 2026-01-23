@@ -280,7 +280,7 @@ export function Prompt(props: PromptProps) {
         title: "Clear prompt",
         value: "prompt.clear",
         category: "Prompt",
-        disabled: true,
+        hidden: true,
         onSelect: (dialog) => {
           input.extmarks.clear()
           input.clear()
@@ -290,7 +290,7 @@ export function Prompt(props: PromptProps) {
       {
         title: "Submit prompt",
         value: "prompt.submit",
-        disabled: true,
+        hidden: true,
         keybind: "input_submit",
         category: "Prompt",
         onSelect: (dialog) => {
@@ -302,7 +302,7 @@ export function Prompt(props: PromptProps) {
       {
         title: "Paste",
         value: "prompt.paste",
-        disabled: true,
+        hidden: true,
         keybind: "input_paste",
         category: "Prompt",
         onSelect: async () => {
@@ -376,6 +376,9 @@ export function Prompt(props: PromptProps) {
         category: "Session",
         keybind: "editor_open",
         value: "prompt.editor",
+        slash: {
+          name: "editor",
+        },
         onSelect: async (dialog, trigger) => {
           dialog.clear()
 

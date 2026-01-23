@@ -149,8 +149,8 @@ test("subagent loop continues after send_agent_message", async () => {
         })
 
         const originalTools = ToolRegistry.tools
-        const registrySpy = spyOn(ToolRegistry, "tools").mockImplementation(async (providerID: string, agent: any) => {
-          const base = await originalTools(providerID, agent)
+        const registrySpy = spyOn(ToolRegistry, "tools").mockImplementation(async (model: any, agent: any) => {
+          const base = await originalTools(model, agent)
           const wanted = new Set(["send_agent_message"])
           return base.filter((t) => wanted.has(t.id))
         })

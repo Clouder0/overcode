@@ -1,174 +1,115 @@
-# Overcode
+<p align="center">
+  <a href="https://opencode.ai">
+    <picture>
+      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
+      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
+      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
+    </picture>
+  </a>
+</p>
+<p align="center">The open source AI coding agent.</p>
+<p align="center">
+  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
+  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
+  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
+</p>
 
-> **A power-user fork of [OpenCode](https://github.com/sst/opencode)** — async subagents, nested sessions, TUI-focused.
-
-https://github.com/user-attachments/assets/e111ba85-9757-4d82-8a77-20a1266790d8
-
----
-
-## Philosophy
-
-| Principle                       | What It Means                                                                                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **GPT / Claude / Gemini First** | We explicitly focus on these three providers. Others may work (synced from upstream) but are not actively maintained.      |
-| **TUI First**                   | Only the Terminal UI is actively maintained. SDK, API endpoints, Desktop App, etc. may have issues — use at your own risk. |
-| **Flexibility**                 | Configurable agents, models, permissions, prompts — everything bends to your workflow.                                     |
-| **Power First**                 | Advanced features for power users who demand full control.                                                                 |
-
----
-
-## Maintenance Scope
-
-| Component     | Status                                  |
-| ------------- | --------------------------------------- |
-| **TUI**       | ✅ Actively maintained                  |
-| SDK           | ⚠️ Synced from upstream, not maintained |
-| API Endpoints | ⚠️ Synced from upstream, not maintained |
-| Desktop App   | ⚠️ Synced from upstream, not maintained |
-| Web Console   | ⚠️ Synced from upstream, not maintained |
-
-| Provider                | Status                                  |
-| ----------------------- | --------------------------------------- |
-| **OpenAI (GPT, Codex)** | ✅ Actively maintained                  |
-| **Anthropic (Claude)**  | ✅ Actively maintained                  |
-| **Google (Gemini)**     | ✅ Actively maintained                  |
-| Others                  | ⚠️ Synced from upstream, not maintained |
+[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
 
 ---
 
-## Key Features
-
-### 1. Async Subagent System
-
-The flagship feature. A complete rework of agent orchestration:
-
-- **Nested sessions** — Spawn subagents that can spawn their own subagents
-- **True async execution** — Multiple agents run in parallel, not sequentially
-- **Inter-agent messaging** — Agents communicate via `send_agent_message` / `wait_agent_message`
-- **Flexible patterns** — Fire-and-wait, streaming updates, fire-and-forget
-
-```
-Primary Session
- ├─ Subagent A (exploring)
- │   └─ Sub-subagent A1 (deep dive)
- └─ Subagent B (testing)
-```
-
-**New tools:**
-
-| Tool                 | Purpose                                           |
-| -------------------- | ------------------------------------------------- |
-| `subagent_spawn`     | Spawn subagents with custom prompts               |
-| `send_agent_message` | Send messages to other sessions                   |
-| `wait_agent_message` | Wait for responses (`all` / `any` mode + timeout) |
-
----
-
-### 2. GPT/Codex Session Cache Fix
-
-The most critical optimization: **`x-session-id` header for OpenAI requests**.
-
-```typescript
-// Enables OpenAI's server-side prompt caching
-headers: {
-  "x-session-id": sessionID.replace(/^ses_/, "sess_"),
-}
-```
-
-This allows OpenAI to cache prompts across requests within the same session, significantly reducing:
-
-- **Token costs** — Cached tokens are cheaper
-- **Latency** — Cached prompts process faster
-
-Additional optimizations:
-
-- **Stable tool ordering** — Tools sorted deterministically to maximize cache reuse
-- **Environment caching** — System environment pinned during active sessions
-- **Cache stats in TUI** — Monitor hit percentage in the sidebar
-
----
-
-### 3. Enhanced TUI Experience
-
-- **Nested session navigation** — Visual tree view of all spawned agents
-- **Session state indicators** — See which agents are working / waiting / done
-- **Click-to-jump** — Click subsession references to navigate directly
-- **Subagent session picker** — Browse and switch between sessions in the hierarchy
-- **Paste collapse/expand** — Toggle large pasted content between collapsed and expanded view
-
----
-
-### 4. Error Handling & Recovery
-
-- **Orphan thinking handling** — Interrupted runs can leave an assistant turn with only thinking and no final output. We keep that thinking in the local transcript, but omit it from the next model prompt (to avoid providers rejecting empty messages) and clearly mark it in the UI/transcript export.
-  - **Why:** some providers (eg, Claude) require every message to be non-empty; unsupported thinking/reasoning parts may be dropped by adapters, turning a thinking-only assistant turn into an empty message and failing the request.
-- **Hardened crash recovery** — Better handling of interrupted sessions and missing tool results
-- **Trash recovery fixes** — Improved resilience for corrupted session state
-
----
-
-### 5. Provider Fixes
-
-| Provider               | Fix                                                          |
-| ---------------------- | ------------------------------------------------------------ |
-| **OpenAI (GPT/Codex)** | Session ID header for caching, orphan reasoning sanitization |
-| **Anthropic (Claude)** | Tool ID normalization, cache control                         |
-| **Google (Gemini)**    | Temperature/topP defaults                                    |
-
----
-
-## Installation
-
-### Pre-built Binaries
-
-Download from [GitHub Releases](https://github.com/Clouder0/overcode/releases), extract, and copy to your PATH:
+### Installation
 
 ```bash
-# Example for Linux x64
-tar -xzf opencode-linux-x64.tar.gz
-cp opencode-linux-x64/bin/opencode ~/.local/bin/
+# YOLO
+curl -fsSL https://opencode.ai/install | bash
+
+# Package managers
+npm i -g opencode-ai@latest        # or bun/pnpm/yarn
+scoop install opencode             # Windows
+choco install opencode             # Windows
+brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
+brew install opencode              # macOS and Linux (official brew formula, updated less)
+paru -S opencode-bin               # Arch Linux
+mise use -g opencode               # Any OS
+nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
 ```
 
-### Build from Source
+> [!TIP]
+> Remove versions older than 0.1.x before installing.
+
+### Desktop App (BETA)
+
+OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
+
+| Platform              | Download                              |
+| --------------------- | ------------------------------------- |
+| macOS (Apple Silicon) | `opencode-desktop-darwin-aarch64.dmg` |
+| macOS (Intel)         | `opencode-desktop-darwin-x64.dmg`     |
+| Windows               | `opencode-desktop-windows-x64.exe`    |
+| Linux                 | `.deb`, `.rpm`, or AppImage           |
 
 ```bash
-git clone https://github.com/Clouder0/overcode.git
-cd overcode
-bun install
-
-# Build for current platform
-cd packages/opencode
-bun run build --single
-
-# Binary will be at dist/opencode-<os>-<arch>/bin/opencode
-# Copy to your PATH, e.g.:
-cp dist/opencode-linux-x64/bin/opencode ~/.local/bin/
-# or
-cp dist/opencode-darwin-arm64/bin/opencode ~/.local/bin/
+# macOS (Homebrew)
+brew install --cask opencode-desktop
+# Windows (Scoop)
+scoop bucket add extras; scoop install extras/opencode-desktop
 ```
 
-### Configuration
+#### Installation Directory
 
-You can check https://gist.github.com/Clouder0/3323da04017e9aff25729032a55421ce for config showcase.
+The install script respects the following priority order for the installation path:
 
-Verified support by various third party providers.
+1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
+2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
+3. `$HOME/bin` - Standard user binary directory (if exists or can be created)
+4. `$HOME/.opencode/bin` - Default fallback
+
+```bash
+# Examples
+OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
+XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
+```
+
+### Agents
+
+OpenCode includes two built-in agents you can switch between with the `Tab` key.
+
+- **build** - Default, full access agent for development work
+- **plan** - Read-only agent for analysis and code exploration
+  - Denies file edits by default
+  - Asks permission before running bash commands
+  - Ideal for exploring unfamiliar codebases or planning changes
+
+Also, included is a **general** subagent for complex searches and multistep tasks.
+This is used internally and can be invoked using `@general` in messages.
+
+Learn more about [agents](https://opencode.ai/docs/agents).
+
+### Documentation
+
+For more info on how to configure OpenCode [**head over to our docs**](https://opencode.ai/docs).
+
+### Contributing
+
+If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
+
+### Building on OpenCode
+
+If you are working on a project that's related to OpenCode and is using "opencode" as a part of its name; for example, "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
+
+### FAQ
+
+#### How is this different from Claude Code?
+
+It's very similar to Claude Code in terms of capability. Here are the key differences:
+
+- 100% open source
+- Not coupled to any provider. Although we recommend the models we provide through [OpenCode Zen](https://opencode.ai/zen); OpenCode can be used with Claude, OpenAI, Google or even local models. As models evolve the gaps between them will close and pricing will drop so being provider-agnostic is important.
+- Out of the box LSP support
+- A focus on TUI. OpenCode is built by neovim users and the creators of [terminal.shop](https://terminal.shop); we are going to push the limits of what's possible in the terminal.
+- A client/server architecture. This for example can allow OpenCode to run on your computer, while you can drive it remotely from a mobile app. Meaning that the TUI frontend is just one of the possible clients.
 
 ---
 
-## Relationship to Upstream
-
-This is a **personal fork** with significant divergence from [OpenCode](https://github.com/sst/opencode).
-
-- **Does not track upstream directly** — Cherry-picks specific bug fixes and security patches
-- **Narrow maintenance scope** — TUI + GPT/Claude/Gemini only
-- **Different architecture** — Nested session model with async subagents
-
----
-
-## License
-
-Same license as upstream OpenCode. See [LICENSE](./LICENSE).
-
----
-
-<sub>Based on [OpenCode](https://github.com/sst/opencode). This is a personal fork — not affiliated with or endorsed by the OpenCode team.</sub>
+**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)

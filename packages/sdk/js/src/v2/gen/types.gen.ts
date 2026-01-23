@@ -62,6 +62,13 @@ export type EventLspUpdated = {
   }
 }
 
+export type EventFileEdited = {
+  type: "file.edited"
+  properties: {
+    file: string
+  }
+}
+
 export type FileDiff = {
   file: string
   before: string
@@ -192,6 +199,9 @@ export type TextPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "text"
   text: string
   synthetic?: boolean
@@ -200,21 +210,18 @@ export type TextPart = {
     start: number
     end?: number
   }
-  metadata?: {
-    [key: string]: unknown
-  }
 }
 
 export type ReasoningPart = {
   id: string
   sessionID: string
   messageID: string
-  type: "reasoning"
-  text: string
-  ignored?: boolean
   metadata?: {
     [key: string]: unknown
   }
+  type: "reasoning"
+  text: string
+  ignored?: boolean
   time: {
     start: number
     end?: number
@@ -266,6 +273,9 @@ export type FilePart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "file"
   mime: string
   filename?: string
@@ -334,19 +344,22 @@ export type ToolPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "tool"
   callID: string
   tool: string
   state: ToolState
-  metadata?: {
-    [key: string]: unknown
-  }
 }
 
 export type StepStartPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "step-start"
   snapshot?: string
 }
@@ -355,6 +368,9 @@ export type StepFinishPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "step-finish"
   reason: string
   snapshot?: string
@@ -374,6 +390,9 @@ export type SnapshotPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "snapshot"
   snapshot: string
 }
@@ -382,6 +401,9 @@ export type PatchPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "patch"
   hash: string
   files: Array<string>
@@ -391,6 +413,9 @@ export type AgentPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "agent"
   name: string
   source?: {
@@ -404,6 +429,9 @@ export type RetryPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "retry"
   attempt: number
   error: ApiError
@@ -416,6 +444,9 @@ export type CompactionPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "compaction"
   auto: boolean
 }
@@ -424,6 +455,9 @@ export type MessagePart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "message"
   direction: "outgoing" | "incoming"
   peer: string
@@ -440,6 +474,9 @@ export type WaitPart = {
   id: string
   sessionID: string
   messageID: string
+  metadata?: {
+    [key: string]: unknown
+  }
   type: "wait"
   sources: Array<string>
   timeout: number
@@ -458,10 +495,17 @@ export type Part =
       id: string
       sessionID: string
       messageID: string
+      metadata?: {
+        [key: string]: unknown
+      }
       type: "subtask"
       prompt: string
       description: string
       agent: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
       command?: string
     }
   | ReasoningPart
@@ -504,7 +548,7 @@ export type EventSessionMessageDelivered = {
       to: string
       text: string
       time: number
-      messageType?: "normal" | "timeout" | "error" | "wait_result"
+      messageType?: "normal" | "timeout" | "error" | "wait_result" | "notice"
     }
   }
 }
@@ -594,7 +638,7 @@ export type QuestionInfo = {
    */
   question: string
   /**
-   * Very short label (max 12 chars)
+   * Very short label (max 30 chars)
    */
   header: string
   /**
@@ -673,6 +717,8 @@ export type EventTuiCommandExecute = {
       | "session.compact"
       | "session.page.up"
       | "session.page.down"
+      | "session.line.up"
+      | "session.line.down"
       | "session.half.page.up"
       | "session.half.page.down"
       | "session.first"
@@ -707,13 +753,6 @@ export type EventTuiSessionSelect = {
   }
 }
 
-export type EventFileEdited = {
-  type: "file.edited"
-  properties: {
-    file: string
-  }
-}
-
 export type Todo = {
   /**
    * Brief description of the task
@@ -741,10 +780,26 @@ export type EventTodoUpdated = {
   }
 }
 
+export type EventFileWatcherUpdated = {
+  type: "file.watcher.updated"
+  properties: {
+    file: string
+    event: "add" | "change" | "unlink"
+  }
+}
+
 export type EventMcpToolsChanged = {
   type: "mcp.tools.changed"
   properties: {
     server: string
+  }
+}
+
+export type EventMcpBrowserOpenFailed = {
+  type: "mcp.browser.open.failed"
+  properties: {
+    mcpName: string
+    url: string
   }
 }
 
@@ -841,14 +896,6 @@ export type EventSessionError = {
   }
 }
 
-export type EventFileWatcherUpdated = {
-  type: "file.watcher.updated"
-  properties: {
-    file: string
-    event: "add" | "change" | "unlink"
-  }
-}
-
 export type EventVcsBranchUpdated = {
   type: "vcs.branch.updated"
   properties: {
@@ -895,13 +942,6 @@ export type EventPtyDeleted = {
   }
 }
 
-export type EventServerConnected = {
-  type: "server.connected"
-  properties: {
-    [key: string]: unknown
-  }
-}
-
 export type EventGlobalDisposed = {
   type: "global.disposed"
   properties: {
@@ -909,8 +949,8 @@ export type EventGlobalDisposed = {
   }
 }
 
-export type EventServerHeartbeat = {
-  type: "server.heartbeat"
+export type EventServerConnected = {
+  type: "server.connected"
   properties: {
     [key: string]: unknown
   }
@@ -923,6 +963,7 @@ export type Event =
   | EventServerInstanceDisposed
   | EventLspClientDiagnostics
   | EventLspUpdated
+  | EventFileEdited
   | EventMessageUpdated
   | EventMessageRemoved
   | EventMessagePartUpdated
@@ -940,24 +981,23 @@ export type Event =
   | EventTuiCommandExecute
   | EventTuiToastShow
   | EventTuiSessionSelect
-  | EventFileEdited
   | EventTodoUpdated
+  | EventFileWatcherUpdated
   | EventMcpToolsChanged
+  | EventMcpBrowserOpenFailed
   | EventCommandExecuted
   | EventSessionCreated
   | EventSessionUpdated
   | EventSessionDeleted
   | EventSessionDiff
   | EventSessionError
-  | EventFileWatcherUpdated
   | EventVcsBranchUpdated
   | EventPtyCreated
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
-  | EventServerConnected
   | EventGlobalDisposed
-  | EventServerHeartbeat
+  | EventServerConnected
 
 export type GlobalEvent = {
   directory: string
@@ -1066,6 +1106,22 @@ export type KeybindsConfig = {
    */
   session_rename?: string
   /**
+   * Delete session
+   */
+  session_delete?: string
+  /**
+   * Delete stash entry
+   */
+  stash_delete?: string
+  /**
+   * Open provider list from model dialog
+   */
+  model_provider_list?: string
+  /**
+   * Toggle model favorite status
+   */
+  model_favorite_toggle?: string
+  /**
    * Share current session
    */
   session_share?: string
@@ -1089,6 +1145,14 @@ export type KeybindsConfig = {
    * Scroll messages down by one page
    */
   messages_page_down?: string
+  /**
+   * Scroll messages up by one line
+   */
+  messages_line_up?: string
+  /**
+   * Scroll messages down by one line
+   */
+  messages_line_down?: string
   /**
    * Scroll messages up by half page
    */
@@ -1496,6 +1560,7 @@ export type ProviderConfig = {
       }
       limit?: {
         context: number
+        input?: number
         output: number
       }
       modalities?: {
@@ -1568,7 +1633,7 @@ export type McpLocalConfig = {
    */
   enabled?: boolean
   /**
-   * Timeout in ms for fetching tools from the MCP server. Defaults to 30000 (30 seconds) if not specified.
+   * Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.
    */
   timeout?: number
 }
@@ -1612,7 +1677,7 @@ export type McpRemoteConfig = {
    */
   oauth?: McpOAuthConfig | false
   /**
-   * Timeout in ms for fetching tools from the MCP server. Defaults to 30000 (30 seconds) if not specified.
+   * Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.
    */
   timeout?: number
 }
@@ -1718,7 +1783,7 @@ export type Config = {
     [key: string]: AgentConfig | undefined
   }
   /**
-   * Agent configuration, see https://opencode.ai/docs/agent
+   * Agent configuration, see https://opencode.ai/docs/agents
    */
   agent?: {
     plan?: AgentConfig
@@ -1872,101 +1937,6 @@ export type Config = {
   }
 }
 
-export type ToolIds = Array<string>
-
-export type ToolListItem = {
-  id: string
-  description: string
-  parameters: unknown
-}
-
-export type ToolList = Array<ToolListItem>
-
-export type Path = {
-  home: string
-  state: string
-  config: string
-  worktree: string
-  directory: string
-}
-
-export type Worktree = {
-  name: string
-  branch: string
-  directory: string
-}
-
-export type WorktreeCreateInput = {
-  name?: string
-  startCommand?: string
-}
-
-export type VcsInfo = {
-  branch: string
-}
-
-export type SessionBusyError = {
-  name: "SessionBusyError"
-  data: {
-    sessionID: string
-  }
-}
-
-export type TextPartInput = {
-  id?: string
-  type: "text"
-  text: string
-  synthetic?: boolean
-  ignored?: boolean
-  time?: {
-    start: number
-    end?: number
-  }
-  metadata?: {
-    [key: string]: unknown
-  }
-}
-
-export type FilePartInput = {
-  id?: string
-  type: "file"
-  mime: string
-  filename?: string
-  url: string
-  source?: FilePartSource
-}
-
-export type AgentPartInput = {
-  id?: string
-  type: "agent"
-  name: string
-  source?: {
-    value: string
-    start: number
-    end: number
-  }
-}
-
-export type SubtaskPartInput = {
-  id?: string
-  type: "subtask"
-  prompt: string
-  description: string
-  agent: string
-  command?: string
-}
-
-export type Command = {
-  name: string
-  description?: string
-  agent?: string
-  model?: string
-  mcp?: boolean
-  template: string
-  subtask?: boolean
-  hints: Array<string>
-}
-
 export type Model = {
   id: string
   providerID: string
@@ -2020,6 +1990,7 @@ export type Model = {
   }
   limit: {
     context: number
+    input?: number
     output: number
   }
   status: "alpha" | "beta" | "deprecated" | "active"
@@ -2049,6 +2020,92 @@ export type Provider = {
   models: {
     [key: string]: Model
   }
+}
+
+export type ToolIds = Array<string>
+
+export type ToolListItem = {
+  id: string
+  description: string
+  parameters: unknown
+}
+
+export type ToolList = Array<ToolListItem>
+
+export type Worktree = {
+  name: string
+  branch: string
+  directory: string
+}
+
+export type WorktreeCreateInput = {
+  name?: string
+  startCommand?: string
+}
+
+export type McpResource = {
+  name: string
+  uri: string
+  description?: string
+  mimeType?: string
+  client: string
+}
+
+export type TextPartInput = {
+  id?: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "text"
+  text: string
+  synthetic?: boolean
+  ignored?: boolean
+  time?: {
+    start: number
+    end?: number
+  }
+}
+
+export type FilePartInput = {
+  id?: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "file"
+  mime: string
+  filename?: string
+  url: string
+  source?: FilePartSource
+}
+
+export type AgentPartInput = {
+  id?: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "agent"
+  name: string
+  source?: {
+    value: string
+    start: number
+    end: number
+  }
+}
+
+export type SubtaskPartInput = {
+  id?: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "subtask"
+  prompt: string
+  description: string
+  agent: string
+  model?: {
+    providerID: string
+    modelID: string
+  }
+  command?: string
 }
 
 export type ProviderAuthMethod = {
@@ -2108,27 +2165,6 @@ export type File = {
   status: "added" | "deleted" | "modified"
 }
 
-export type Agent = {
-  name: string
-  description?: string
-  mode: "subagent" | "primary" | "all"
-  native?: boolean
-  hidden?: boolean
-  topP?: number
-  temperature?: number
-  color?: string
-  permission: PermissionRuleset
-  model?: {
-    modelID: string
-    providerID: string
-  }
-  prompt?: string
-  options: {
-    [key: string]: unknown
-  }
-  steps?: number
-}
-
 export type McpStatusConnected = {
   status: "connected"
 }
@@ -2158,12 +2194,48 @@ export type McpStatus =
   | McpStatusNeedsAuth
   | McpStatusNeedsClientRegistration
 
-export type McpResource = {
+export type Path = {
+  home: string
+  state: string
+  config: string
+  worktree: string
+  directory: string
+}
+
+export type VcsInfo = {
+  branch: string
+}
+
+export type Command = {
   name: string
-  uri: string
   description?: string
-  mimeType?: string
-  client: string
+  agent?: string
+  model?: string
+  mcp?: boolean
+  template: string
+  subtask?: boolean
+  hints: Array<string>
+}
+
+export type Agent = {
+  name: string
+  description?: string
+  mode: "subagent" | "primary" | "all"
+  native?: boolean
+  hidden?: boolean
+  topP?: number
+  temperature?: number
+  color?: string
+  permission: PermissionRuleset
+  model?: {
+    modelID: string
+    providerID: string
+  }
+  prompt?: string
+  options: {
+    [key: string]: unknown
+  }
+  steps?: number
 }
 
 export type LspStatus = {
@@ -2208,15 +2280,6 @@ export type GlobalHealthData = {
   url: "/global/health"
 }
 
-export type GlobalHealthErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type GlobalHealthError = GlobalHealthErrors[keyof GlobalHealthErrors]
-
 export type GlobalHealthResponses = {
   /**
    * Health information
@@ -2232,24 +2295,9 @@ export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthRespo
 export type GlobalEventData = {
   body?: never
   path?: never
-  query?: {
-    directory?: string
-  }
+  query?: never
   url: "/global/event"
 }
-
-export type GlobalEventErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type GlobalEventError = GlobalEventErrors[keyof GlobalEventErrors]
 
 export type GlobalEventResponses = {
   /**
@@ -2266,15 +2314,6 @@ export type GlobalDisposeData = {
   query?: never
   url: "/global/dispose"
 }
-
-export type GlobalDisposeErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type GlobalDisposeError = GlobalDisposeErrors[keyof GlobalDisposeErrors]
 
 export type GlobalDisposeResponses = {
   /**
@@ -2294,15 +2333,6 @@ export type ProjectListData = {
   url: "/project"
 }
 
-export type ProjectListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProjectListError = ProjectListErrors[keyof ProjectListErrors]
-
 export type ProjectListResponses = {
   /**
    * List of projects
@@ -2320,15 +2350,6 @@ export type ProjectCurrentData = {
   }
   url: "/project/current"
 }
-
-export type ProjectCurrentErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProjectCurrentError = ProjectCurrentErrors[keyof ProjectCurrentErrors]
 
 export type ProjectCurrentResponses = {
   /**
@@ -2382,112 +2403,6 @@ export type ProjectUpdateResponses = {
 
 export type ProjectUpdateResponse = ProjectUpdateResponses[keyof ProjectUpdateResponses]
 
-export type QuestionListData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/question"
-}
-
-export type QuestionListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type QuestionListError = QuestionListErrors[keyof QuestionListErrors]
-
-export type QuestionListResponses = {
-  /**
-   * List of pending questions
-   */
-  200: Array<QuestionRequest>
-}
-
-export type QuestionListResponse = QuestionListResponses[keyof QuestionListResponses]
-
-export type QuestionReplyData = {
-  body?: {
-    /**
-     * User answers in order of questions (each answer is an array of selected labels)
-     */
-    answers: Array<QuestionAnswer>
-  }
-  path: {
-    requestID: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/question/{requestID}/reply"
-}
-
-export type QuestionReplyErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type QuestionReplyError = QuestionReplyErrors[keyof QuestionReplyErrors]
-
-export type QuestionReplyResponses = {
-  /**
-   * Question answered successfully
-   */
-  200: boolean
-}
-
-export type QuestionReplyResponse = QuestionReplyResponses[keyof QuestionReplyResponses]
-
-export type QuestionRejectData = {
-  body?: never
-  path: {
-    requestID: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/question/{requestID}/reject"
-}
-
-export type QuestionRejectErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type QuestionRejectError = QuestionRejectErrors[keyof QuestionRejectErrors]
-
-export type QuestionRejectResponses = {
-  /**
-   * Question rejected successfully
-   */
-  200: boolean
-}
-
-export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejectResponses]
-
 export type PtyListData = {
   body?: never
   path?: never
@@ -2496,15 +2411,6 @@ export type PtyListData = {
   }
   url: "/pty"
 }
-
-export type PtyListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type PtyListError = PtyListErrors[keyof PtyListErrors]
 
 export type PtyListResponses = {
   /**
@@ -2643,10 +2549,6 @@ export type PtyUpdateErrors = {
    */
   400: BadRequest
   /**
-   * Not found
-   */
-  404: NotFoundError
-  /**
    * Internal server error
    */
   500: UnknownError
@@ -2687,6 +2589,15 @@ export type PtyConnectErrors = {
 
 export type PtyConnectError = PtyConnectErrors[keyof PtyConnectErrors]
 
+export type PtyConnectResponses = {
+  /**
+   * Connected session
+   */
+  200: boolean
+}
+
+export type PtyConnectResponse = PtyConnectResponses[keyof PtyConnectResponses]
+
 export type ConfigGetData = {
   body?: never
   path?: never
@@ -2695,15 +2606,6 @@ export type ConfigGetData = {
   }
   url: "/config"
 }
-
-export type ConfigGetErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ConfigGetError = ConfigGetErrors[keyof ConfigGetErrors]
 
 export type ConfigGetResponses = {
   /**
@@ -2744,6 +2646,29 @@ export type ConfigUpdateResponses = {
 }
 
 export type ConfigUpdateResponse = ConfigUpdateResponses[keyof ConfigUpdateResponses]
+
+export type ConfigProvidersData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/config/providers"
+}
+
+export type ConfigProvidersResponses = {
+  /**
+   * List of providers
+   */
+  200: {
+    providers: Array<Provider>
+    default: {
+      [key: string]: string
+    }
+  }
+}
+
+export type ConfigProvidersResponse = ConfigProvidersResponses[keyof ConfigProvidersResponses]
 
 export type ToolIdsData = {
   body?: never
@@ -2809,60 +2734,6 @@ export type ToolListResponses = {
 
 export type ToolListResponse = ToolListResponses[keyof ToolListResponses]
 
-export type InstanceDisposeData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/instance/dispose"
-}
-
-export type InstanceDisposeErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type InstanceDisposeError = InstanceDisposeErrors[keyof InstanceDisposeErrors]
-
-export type InstanceDisposeResponses = {
-  /**
-   * Instance disposed
-   */
-  200: boolean
-}
-
-export type InstanceDisposeResponse = InstanceDisposeResponses[keyof InstanceDisposeResponses]
-
-export type PathGetData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/path"
-}
-
-export type PathGetErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type PathGetError = PathGetErrors[keyof PathGetErrors]
-
-export type PathGetResponses = {
-  /**
-   * Path
-   */
-  200: Path
-}
-
-export type PathGetResponse = PathGetResponses[keyof PathGetResponses]
-
 export type WorktreeListData = {
   body?: never
   path?: never
@@ -2871,15 +2742,6 @@ export type WorktreeListData = {
   }
   url: "/experimental/worktree"
 }
-
-export type WorktreeListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type WorktreeListError = WorktreeListErrors[keyof WorktreeListErrors]
 
 export type WorktreeListResponses = {
   /**
@@ -2921,38 +2783,39 @@ export type WorktreeCreateResponses = {
 
 export type WorktreeCreateResponse = WorktreeCreateResponses[keyof WorktreeCreateResponses]
 
-export type VcsGetData = {
+export type ExperimentalResourceListData = {
   body?: never
   path?: never
   query?: {
     directory?: string
   }
-  url: "/vcs"
+  url: "/experimental/resource"
 }
 
-export type VcsGetErrors = {
+export type ExperimentalResourceListResponses = {
   /**
-   * Internal server error
+   * MCP resources
    */
-  500: UnknownError
+  200: {
+    [key: string]: McpResource
+  }
 }
 
-export type VcsGetError = VcsGetErrors[keyof VcsGetErrors]
-
-export type VcsGetResponses = {
-  /**
-   * VCS info
-   */
-  200: VcsInfo
-}
-
-export type VcsGetResponse = VcsGetResponses[keyof VcsGetResponses]
+export type ExperimentalResourceListResponse =
+  ExperimentalResourceListResponses[keyof ExperimentalResourceListResponses]
 
 export type SessionListData = {
   body?: never
   path?: never
   query?: {
+    /**
+     * Filter sessions by project directory
+     */
     directory?: string
+    /**
+     * Only return root sessions (no parentID)
+     */
+    roots?: boolean
     /**
      * Filter sessions updated on or after this timestamp (milliseconds since epoch)
      */
@@ -2968,15 +2831,6 @@ export type SessionListData = {
   }
   url: "/session"
 }
-
-export type SessionListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type SessionListError = SessionListErrors[keyof SessionListErrors]
 
 export type SessionListResponses = {
   /**
@@ -3095,9 +2949,6 @@ export type SessionDeleteResponse = SessionDeleteResponses[keyof SessionDeleteRe
 export type SessionGetData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3140,9 +2991,6 @@ export type SessionUpdateData = {
     }
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3234,6 +3082,10 @@ export type SessionTodoErrors = {
    */
   400: BadRequest
   /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
    * Internal server error
    */
   500: UnknownError
@@ -3307,15 +3159,6 @@ export type SessionForkData = {
   url: "/session/{sessionID}/fork"
 }
 
-export type SessionForkErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type SessionForkError = SessionForkErrors[keyof SessionForkErrors]
-
 export type SessionForkResponses = {
   /**
    * 200
@@ -3328,9 +3171,6 @@ export type SessionForkResponse = SessionForkResponses[keyof SessionForkResponse
 export type SessionAbortData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3344,6 +3184,10 @@ export type SessionAbortErrors = {
    * Bad request
    */
   400: BadRequest
+  /**
+   * Not found
+   */
+  404: NotFoundError
   /**
    * Internal server error
    */
@@ -3401,9 +3245,6 @@ export type SessionUnshareResponse = SessionUnshareResponses[keyof SessionUnshar
 export type SessionShareData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3437,6 +3278,27 @@ export type SessionShareResponses = {
 }
 
 export type SessionShareResponse = SessionShareResponses[keyof SessionShareResponses]
+
+export type SessionDiffData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    messageID?: string
+  }
+  url: "/session/{sessionID}/diff"
+}
+
+export type SessionDiffResponses = {
+  /**
+   * Successfully retrieved diff
+   */
+  200: Array<FileDiff>
+}
+
+export type SessionDiffResponse = SessionDiffResponses[keyof SessionDiffResponses]
 
 export type SessionSummarizeData = {
   body?: {
@@ -3502,6 +3364,10 @@ export type SessionMessagesErrors = {
    * Bad request
    */
   400: BadRequest
+  /**
+   * Not found
+   */
+  404: NotFoundError
   /**
    * Internal server error
    */
@@ -3582,42 +3448,6 @@ export type SessionPromptResponses = {
 
 export type SessionPromptResponse = SessionPromptResponses[keyof SessionPromptResponses]
 
-export type SessionDiffData = {
-  body?: never
-  path: {
-    /**
-     * Session ID
-     */
-    sessionID: string
-  }
-  query?: {
-    directory?: string
-  }
-  url: "/session/{sessionID}/diff"
-}
-
-export type SessionDiffErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type SessionDiffError = SessionDiffErrors[keyof SessionDiffErrors]
-
-export type SessionDiffResponses = {
-  /**
-   * List of diffs
-   */
-  200: Array<FileDiff>
-}
-
-export type SessionDiffResponse = SessionDiffResponses[keyof SessionDiffResponses]
-
 export type SessionMessageData = {
   body?: never
   path: {
@@ -3697,10 +3527,6 @@ export type PartDeleteErrors = {
    */
   404: NotFoundError
   /**
-   * Conflict
-   */
-  409: SessionBusyError
-  /**
    * Internal server error
    */
   500: UnknownError
@@ -3748,10 +3574,6 @@ export type PartUpdateErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
   /**
    * Internal server error
    */
@@ -3834,6 +3656,17 @@ export type SessionCommandData = {
     arguments: string
     command: string
     variant?: string
+    parts?: Array<{
+      id?: string
+      metadata?: {
+        [key: string]: unknown
+      }
+      type: "file"
+      mime: string
+      filename?: string
+      url: string
+      source?: FilePartSource
+    }>
   }
   path: {
     /**
@@ -3907,10 +3740,6 @@ export type SessionShellErrors = {
    */
   404: NotFoundError
   /**
-   * Conflict
-   */
-  409: SessionBusyError
-  /**
    * Internal server error
    */
   500: UnknownError
@@ -3933,9 +3762,6 @@ export type SessionRevertData = {
     partID?: string
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3953,10 +3779,6 @@ export type SessionRevertErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
   /**
    * Internal server error
    */
@@ -3977,9 +3799,6 @@ export type SessionRevertResponse = SessionRevertResponses[keyof SessionRevertRe
 export type SessionUnrevertData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3997,10 +3816,6 @@ export type SessionUnrevertErrors = {
    * Not found
    */
   404: NotFoundError
-  /**
-   * Conflict
-   */
-  409: SessionBusyError
   /**
    * Internal server error
    */
@@ -4023,9 +3838,6 @@ export type PermissionRespondData = {
     response: "once" | "always" | "reject"
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
     permissionID: string
   }
@@ -4110,15 +3922,6 @@ export type PermissionListData = {
   url: "/permission"
 }
 
-export type PermissionListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type PermissionListError = PermissionListErrors[keyof PermissionListErrors]
-
 export type PermissionListResponses = {
   /**
    * List of pending permissions
@@ -4128,64 +3931,102 @@ export type PermissionListResponses = {
 
 export type PermissionListResponse = PermissionListResponses[keyof PermissionListResponses]
 
-export type CommandListData = {
+export type QuestionListData = {
   body?: never
   path?: never
   query?: {
     directory?: string
   }
-  url: "/command"
+  url: "/question"
 }
 
-export type CommandListErrors = {
+export type QuestionListResponses = {
+  /**
+   * List of pending questions
+   */
+  200: Array<QuestionRequest>
+}
+
+export type QuestionListResponse = QuestionListResponses[keyof QuestionListResponses]
+
+export type QuestionReplyData = {
+  body?: {
+    /**
+     * User answers in order of questions (each answer is an array of selected labels)
+     */
+    answers: Array<QuestionAnswer>
+  }
+  path: {
+    requestID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/question/{requestID}/reply"
+}
+
+export type QuestionReplyErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Not found
+   */
+  404: NotFoundError
   /**
    * Internal server error
    */
   500: UnknownError
 }
 
-export type CommandListError = CommandListErrors[keyof CommandListErrors]
+export type QuestionReplyError = QuestionReplyErrors[keyof QuestionReplyErrors]
 
-export type CommandListResponses = {
+export type QuestionReplyResponses = {
   /**
-   * List of commands
+   * Question answered successfully
    */
-  200: Array<Command>
+  200: boolean
 }
 
-export type CommandListResponse = CommandListResponses[keyof CommandListResponses]
+export type QuestionReplyResponse = QuestionReplyResponses[keyof QuestionReplyResponses]
 
-export type ConfigProvidersData = {
+export type QuestionRejectData = {
   body?: never
-  path?: never
+  path: {
+    requestID: string
+  }
   query?: {
     directory?: string
   }
-  url: "/config/providers"
+  url: "/question/{requestID}/reject"
 }
 
-export type ConfigProvidersErrors = {
+export type QuestionRejectErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Not found
+   */
+  404: NotFoundError
   /**
    * Internal server error
    */
   500: UnknownError
 }
 
-export type ConfigProvidersError = ConfigProvidersErrors[keyof ConfigProvidersErrors]
+export type QuestionRejectError = QuestionRejectErrors[keyof QuestionRejectErrors]
 
-export type ConfigProvidersResponses = {
+export type QuestionRejectResponses = {
   /**
-   * List of providers
+   * Question rejected successfully
    */
-  200: {
-    providers: Array<Provider>
-    default: {
-      [key: string]: string
-    }
-  }
+  200: boolean
 }
 
-export type ConfigProvidersResponse = ConfigProvidersResponses[keyof ConfigProvidersResponses]
+export type QuestionRejectResponse = QuestionRejectResponses[keyof QuestionRejectResponses]
 
 export type ProviderListData = {
   body?: never
@@ -4195,15 +4036,6 @@ export type ProviderListData = {
   }
   url: "/provider"
 }
-
-export type ProviderListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProviderListError = ProviderListErrors[keyof ProviderListErrors]
 
 export type ProviderListResponses = {
   /**
@@ -4245,6 +4077,7 @@ export type ProviderListResponses = {
           }
           limit: {
             context: number
+            input?: number
             output: number
           }
           modalities?: {
@@ -4287,15 +4120,6 @@ export type ProviderAuthData = {
   }
   url: "/provider/auth"
 }
-
-export type ProviderAuthErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ProviderAuthError2 = ProviderAuthErrors[keyof ProviderAuthErrors]
 
 export type ProviderAuthResponses = {
   /**
@@ -4404,15 +4228,6 @@ export type FindTextData = {
   url: "/find"
 }
 
-export type FindTextErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FindTextError = FindTextErrors[keyof FindTextErrors]
-
 export type FindTextResponses = {
   /**
    * Matches
@@ -4451,15 +4266,6 @@ export type FindFilesData = {
   url: "/find/file"
 }
 
-export type FindFilesErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FindFilesError = FindFilesErrors[keyof FindFilesErrors]
-
 export type FindFilesResponses = {
   /**
    * File paths
@@ -4478,15 +4284,6 @@ export type FindSymbolsData = {
   }
   url: "/find/symbol"
 }
-
-export type FindSymbolsErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FindSymbolsError = FindSymbolsErrors[keyof FindSymbolsErrors]
 
 export type FindSymbolsResponses = {
   /**
@@ -4507,15 +4304,6 @@ export type FileListData = {
   url: "/file"
 }
 
-export type FileListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FileListError = FileListErrors[keyof FileListErrors]
-
 export type FileListResponses = {
   /**
    * Files and directories
@@ -4535,15 +4323,6 @@ export type FileReadData = {
   url: "/file/content"
 }
 
-export type FileReadErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FileReadError = FileReadErrors[keyof FileReadErrors]
-
 export type FileReadResponses = {
   /**
    * File content
@@ -4562,15 +4341,6 @@ export type FileStatusData = {
   url: "/file/status"
 }
 
-export type FileStatusErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FileStatusError = FileStatusErrors[keyof FileStatusErrors]
-
 export type FileStatusResponses = {
   /**
    * File status
@@ -4580,83 +4350,6 @@ export type FileStatusResponses = {
 
 export type FileStatusResponse = FileStatusResponses[keyof FileStatusResponses]
 
-export type AppLogData = {
-  body?: {
-    /**
-     * Service name for the log entry
-     */
-    service: string
-    /**
-     * Log level
-     */
-    level: "debug" | "info" | "error" | "warn"
-    /**
-     * Log message
-     */
-    message: string
-    /**
-     * Additional metadata for the log entry
-     */
-    extra?: {
-      [key: string]: unknown
-    }
-  }
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/log"
-}
-
-export type AppLogErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequest
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type AppLogError = AppLogErrors[keyof AppLogErrors]
-
-export type AppLogResponses = {
-  /**
-   * Log entry written successfully
-   */
-  200: boolean
-}
-
-export type AppLogResponse = AppLogResponses[keyof AppLogResponses]
-
-export type AppAgentsData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/agent"
-}
-
-export type AppAgentsErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type AppAgentsError = AppAgentsErrors[keyof AppAgentsErrors]
-
-export type AppAgentsResponses = {
-  /**
-   * List of agents
-   */
-  200: Array<Agent>
-}
-
-export type AppAgentsResponse = AppAgentsResponses[keyof AppAgentsResponses]
-
 export type McpStatusData = {
   body?: never
   path?: never
@@ -4665,15 +4358,6 @@ export type McpStatusData = {
   }
   url: "/mcp"
 }
-
-export type McpStatusErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type McpStatusError = McpStatusErrors[keyof McpStatusErrors]
 
 export type McpStatusResponses = {
   /**
@@ -4889,15 +4573,6 @@ export type McpConnectData = {
   url: "/mcp/{name}/connect"
 }
 
-export type McpConnectErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type McpConnectError = McpConnectErrors[keyof McpConnectErrors]
-
 export type McpConnectResponses = {
   /**
    * MCP server connected successfully
@@ -4918,15 +4593,6 @@ export type McpDisconnectData = {
   url: "/mcp/{name}/disconnect"
 }
 
-export type McpDisconnectErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type McpDisconnectError = McpDisconnectErrors[keyof McpDisconnectErrors]
-
 export type McpDisconnectResponses = {
   /**
    * MCP server disconnected successfully
@@ -4935,94 +4601,6 @@ export type McpDisconnectResponses = {
 }
 
 export type McpDisconnectResponse = McpDisconnectResponses[keyof McpDisconnectResponses]
-
-export type ExperimentalResourceListData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-    /**
-     * Filter resources by name (case-insensitive)
-     */
-    search?: string
-  }
-  url: "/experimental/resource"
-}
-
-export type ExperimentalResourceListErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type ExperimentalResourceListError = ExperimentalResourceListErrors[keyof ExperimentalResourceListErrors]
-
-export type ExperimentalResourceListResponses = {
-  /**
-   * MCP resources
-   */
-  200: {
-    [key: string]: McpResource
-  }
-}
-
-export type ExperimentalResourceListResponse =
-  ExperimentalResourceListResponses[keyof ExperimentalResourceListResponses]
-
-export type LspStatusData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/lsp"
-}
-
-export type LspStatusErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type LspStatusError = LspStatusErrors[keyof LspStatusErrors]
-
-export type LspStatusResponses = {
-  /**
-   * LSP server status
-   */
-  200: Array<LspStatus>
-}
-
-export type LspStatusResponse = LspStatusResponses[keyof LspStatusResponses]
-
-export type FormatterStatusData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/formatter"
-}
-
-export type FormatterStatusErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type FormatterStatusError = FormatterStatusErrors[keyof FormatterStatusErrors]
-
-export type FormatterStatusResponses = {
-  /**
-   * Formatter status
-   */
-  200: Array<FormatterStatus>
-}
-
-export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterStatusResponses]
 
 export type TuiAppendPromptData = {
   body?: {
@@ -5066,15 +4644,6 @@ export type TuiOpenHelpData = {
   url: "/tui/open-help"
 }
 
-export type TuiOpenHelpErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenHelpError = TuiOpenHelpErrors[keyof TuiOpenHelpErrors]
-
 export type TuiOpenHelpResponses = {
   /**
    * Help dialog opened successfully
@@ -5092,15 +4661,6 @@ export type TuiOpenSessionsData = {
   }
   url: "/tui/open-sessions"
 }
-
-export type TuiOpenSessionsErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenSessionsError = TuiOpenSessionsErrors[keyof TuiOpenSessionsErrors]
 
 export type TuiOpenSessionsResponses = {
   /**
@@ -5120,15 +4680,6 @@ export type TuiOpenThemesData = {
   url: "/tui/open-themes"
 }
 
-export type TuiOpenThemesErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenThemesError = TuiOpenThemesErrors[keyof TuiOpenThemesErrors]
-
 export type TuiOpenThemesResponses = {
   /**
    * Theme dialog opened successfully
@@ -5146,15 +4697,6 @@ export type TuiOpenModelsData = {
   }
   url: "/tui/open-models"
 }
-
-export type TuiOpenModelsErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiOpenModelsError = TuiOpenModelsErrors[keyof TuiOpenModelsErrors]
 
 export type TuiOpenModelsResponses = {
   /**
@@ -5174,15 +4716,6 @@ export type TuiSubmitPromptData = {
   url: "/tui/submit-prompt"
 }
 
-export type TuiSubmitPromptErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiSubmitPromptError = TuiSubmitPromptErrors[keyof TuiSubmitPromptErrors]
-
 export type TuiSubmitPromptResponses = {
   /**
    * Prompt submitted successfully
@@ -5200,15 +4733,6 @@ export type TuiClearPromptData = {
   }
   url: "/tui/clear-prompt"
 }
-
-export type TuiClearPromptErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiClearPromptError = TuiClearPromptErrors[keyof TuiClearPromptErrors]
 
 export type TuiClearPromptResponses = {
   /**
@@ -5268,15 +4792,6 @@ export type TuiShowToastData = {
   }
   url: "/tui/show-toast"
 }
-
-export type TuiShowToastErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type TuiShowToastError = TuiShowToastErrors[keyof TuiShowToastErrors]
 
 export type TuiShowToastResponses = {
   /**
@@ -5358,6 +4873,204 @@ export type TuiSelectSessionResponses = {
 
 export type TuiSelectSessionResponse = TuiSelectSessionResponses[keyof TuiSelectSessionResponses]
 
+export type InstanceDisposeData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/instance/dispose"
+}
+
+export type InstanceDisposeResponses = {
+  /**
+   * Instance disposed
+   */
+  200: boolean
+}
+
+export type InstanceDisposeResponse = InstanceDisposeResponses[keyof InstanceDisposeResponses]
+
+export type PathGetData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/path"
+}
+
+export type PathGetResponses = {
+  /**
+   * Path
+   */
+  200: Path
+}
+
+export type PathGetResponse = PathGetResponses[keyof PathGetResponses]
+
+export type VcsGetData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/vcs"
+}
+
+export type VcsGetResponses = {
+  /**
+   * VCS info
+   */
+  200: VcsInfo
+}
+
+export type VcsGetResponse = VcsGetResponses[keyof VcsGetResponses]
+
+export type CommandListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/command"
+}
+
+export type CommandListResponses = {
+  /**
+   * List of commands
+   */
+  200: Array<Command>
+}
+
+export type CommandListResponse = CommandListResponses[keyof CommandListResponses]
+
+export type AppLogData = {
+  body?: {
+    /**
+     * Service name for the log entry
+     */
+    service: string
+    /**
+     * Log level
+     */
+    level: "debug" | "info" | "error" | "warn"
+    /**
+     * Log message
+     */
+    message: string
+    /**
+     * Additional metadata for the log entry
+     */
+    extra?: {
+      [key: string]: unknown
+    }
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/log"
+}
+
+export type AppLogErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Internal server error
+   */
+  500: UnknownError
+}
+
+export type AppLogError = AppLogErrors[keyof AppLogErrors]
+
+export type AppLogResponses = {
+  /**
+   * Log entry written successfully
+   */
+  200: boolean
+}
+
+export type AppLogResponse = AppLogResponses[keyof AppLogResponses]
+
+export type AppAgentsData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/agent"
+}
+
+export type AppAgentsResponses = {
+  /**
+   * List of agents
+   */
+  200: Array<Agent>
+}
+
+export type AppAgentsResponse = AppAgentsResponses[keyof AppAgentsResponses]
+
+export type AppSkillsData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/skill"
+}
+
+export type AppSkillsResponses = {
+  /**
+   * List of skills
+   */
+  200: Array<{
+    name: string
+    description: string
+    location: string
+  }>
+}
+
+export type AppSkillsResponse = AppSkillsResponses[keyof AppSkillsResponses]
+
+export type LspStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/lsp"
+}
+
+export type LspStatusResponses = {
+  /**
+   * LSP server status
+   */
+  200: Array<LspStatus>
+}
+
+export type LspStatusResponse = LspStatusResponses[keyof LspStatusResponses]
+
+export type FormatterStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/formatter"
+}
+
+export type FormatterStatusResponses = {
+  /**
+   * Formatter status
+   */
+  200: Array<FormatterStatus>
+}
+
+export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterStatusResponses]
+
 export type AuthSetData = {
   body?: Auth
   path: {
@@ -5399,15 +5112,6 @@ export type EventSubscribeData = {
   }
   url: "/event"
 }
-
-export type EventSubscribeErrors = {
-  /**
-   * Internal server error
-   */
-  500: UnknownError
-}
-
-export type EventSubscribeError = EventSubscribeErrors[keyof EventSubscribeErrors]
 
 export type EventSubscribeResponses = {
   /**

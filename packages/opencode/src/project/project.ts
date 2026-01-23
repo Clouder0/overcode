@@ -1,5 +1,6 @@
 import z from "zod"
 import fs from "fs/promises"
+import { existsSync } from "fs"
 import { Filesystem } from "../util/filesystem"
 import path from "path"
 import { $ } from "bun"
@@ -220,7 +221,11 @@ export namespace Project {
 
   export async function list() {
     const keys = await Storage.list(["project"])
-    return await Promise.all(keys.map((x) => Storage.read<Info>(x)))
+    const projects = await Promise.all(keys.map((x) => Storage.read<Info>(x)))
+    return projects.map((project) => ({
+      ...project,
+      sandboxes: project.sandboxes?.filter((x) => existsSync(x)),
+    }))
   }
 
   export const update = fn(

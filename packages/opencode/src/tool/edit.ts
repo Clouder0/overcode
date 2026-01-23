@@ -145,8 +145,8 @@ export const EditTool = Tool.define("edit", {
     const diagnostics = await LSP.diagnostics()
     const normalizedFilePath = Filesystem.normalizePath(filePath)
     const issues = diagnostics[normalizedFilePath] ?? []
-    const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
     const savedDiagnostics: Record<string, Diagnostic[]> = {}
+    const selected = selectDiagnostics(issues, MAX_DIAGNOSTICS_PER_FILE)
     if (selected.selected.length > 0) {
       savedDiagnostics[normalizedFilePath] = selected.selected
       const suffix = selected.remaining > 0 ? `\n... and ${selected.remaining} more` : ""

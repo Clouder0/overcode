@@ -191,10 +191,6 @@ import type {
   TuiPublishData,
   TuiPublishResponses,
   TuiPublishErrors,
-  TuiControlNextData,
-  TuiControlNextResponses,
-  TuiControlResponseData,
-  TuiControlResponseResponses,
   AuthSetData,
   AuthSetResponses,
   AuthSetErrors,
@@ -997,32 +993,6 @@ class Formatter extends _HeyApiClient {
   }
 }
 
-class Control extends _HeyApiClient {
-  /**
-   * Get the next TUI request from the queue
-   */
-  public next<ThrowOnError extends boolean = false>(options?: Options<TuiControlNextData, ThrowOnError>) {
-    return (options?.client ?? this._client).get<TuiControlNextResponses, unknown, ThrowOnError>({
-      url: "/tui/control/next",
-      ...options,
-    })
-  }
-
-  /**
-   * Submit a response to the TUI request queue
-   */
-  public response<ThrowOnError extends boolean = false>(options?: Options<TuiControlResponseData, ThrowOnError>) {
-    return (options?.client ?? this._client).post<TuiControlResponseResponses, unknown, ThrowOnError>({
-      url: "/tui/control/response",
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-      },
-    })
-  }
-}
-
 class Tui extends _HeyApiClient {
   /**
    * Append prompt to the TUI
@@ -1139,7 +1109,6 @@ class Tui extends _HeyApiClient {
       },
     })
   }
-  control = new Control({ client: this._client })
 }
 
 class Event extends _HeyApiClient {

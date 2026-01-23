@@ -4,17 +4,17 @@ import { useSync } from "@tui/context/sync"
 import { pipe, sumBy } from "remeda"
 import { useTheme } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
-import type { AssistantMessage } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Session } from "@opencode-ai/sdk/v2"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
-import { useTerminalDimensions } from "@opentui/solid"
+import { Installation } from "@/installation"
 import { buildSessionTree, sessionRunState } from "../../lib/session-tree"
 
-const Title = (props: { title: Accessor<string>; truncate?: boolean }) => {
+const Title = (props: { session: Accessor<Session> }) => {
   const { theme } = useTheme()
   return (
-    <text fg={theme.text} wrapMode={props.truncate ? "none" : undefined} flexShrink={props.truncate ? 1 : 0}>
-      <span style={{ bold: true }}>#</span> <span style={{ bold: true }}>{props.title()}</span>
+    <text fg={theme.text}>
+      <span style={{ bold: true }}>#</span> <span style={{ bold: true }}>{props.session().title}</span>
     </text>
   )
 }
@@ -35,6 +35,25 @@ export function Header() {
   const sync = useSync()
   const session = createMemo(() => sync.session.get(route.sessionID)!)
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+
+  const tree = createMemo(() =>
+    buildSessionTree({
+      currentSessionID: route.sessionID,
+      sessions: sync.data.session,
+      sort: "created",
+    }),
+  )
+
+  const childCount = createMemo(() => Math.max(0, tree().list.length - 1))
+
+  const workingChildCount = createMemo(() => {
+    const t = tree()
+    return t.list.filter((item) => {
+      if (item.id === t.rootID) return false
+      const status = sync.data.session_status?.[item.id] as { type?: string } | undefined
+      return sessionRunState(status) !== "done"
+    }).length
+  })
 
   const cost = createMemo(() => {
     const total = pipe(
@@ -65,41 +84,11 @@ export function Header() {
   const command = useCommandDialog()
   const [hover, setHover] = createSignal<"parent" | "prev" | "next" | "list" | null>(null)
 
-  const dimensions = useTerminalDimensions()
-  const tall = createMemo(() => dimensions().height > 40)
-
-  const displayTitle = createMemo(() => {
-    const current = session()
-    if (!current) return ""
-    return current.title
-  })
-
-  const tree = createMemo(() =>
-    buildSessionTree({
-      currentSessionID: route.sessionID,
-      sessions: sync.data.session,
-      sort: "created",
-    }),
-  )
-
-  // Count child/subagent sessions for the current session (including nested)
-  const childCount = createMemo(() => Math.max(0, tree().list.length - 1))
-
-  // Count how many children are currently active (working/waiting)
-  const workingChildCount = createMemo(() => {
-    const t = tree()
-    return t.list.filter((item) => {
-      if (item.id === t.rootID) return false
-      const status = sync.data.session_status?.[item.id] as { type?: string } | undefined
-      return sessionRunState(status) !== "done"
-    }).length
-  })
-
   return (
     <box flexShrink={0}>
       <box
-        paddingTop={tall() ? 1 : 0}
-        paddingBottom={tall() ? 1 : 0}
+        paddingTop={1}
+        paddingBottom={1}
         paddingLeft={2}
         paddingRight={1}
         {...SplitBorder}
@@ -111,8 +100,7 @@ export function Header() {
         <Switch>
           <Match when={session()?.parentID}>
             <box flexDirection="row" gap={2}>
-              <Title title={displayTitle} truncate={!tall()} />
-              <text fg={theme.textMuted}>
+              <text fg={theme.text}>
                 <b>Subagent session</b>
               </text>
               <box
@@ -156,13 +144,16 @@ export function Header() {
                 </text>
               </box>
               <box flexGrow={1} flexShrink={1} />
-              <ContextInfo context={context} cost={cost} />
+              <box flexDirection="row" gap={1} flexShrink={0}>
+                <ContextInfo context={context} cost={cost} />
+                <text fg={theme.textMuted}>v{Installation.VERSION}</text>
+              </box>
             </box>
           </Match>
           <Match when={true}>
             <box flexDirection="row" justifyContent="space-between" gap={1}>
               <box flexDirection="row" gap={2}>
-                <Title title={displayTitle} truncate={!tall()} />
+                <Title session={session} />
                 <Show when={childCount() > 0}>
                   <text fg={theme.textMuted}>
                     <span style={{ fg: workingChildCount() > 0 ? theme.warning : theme.success }}>
@@ -176,7 +167,10 @@ export function Header() {
                   </text>
                 </Show>
               </box>
-              <ContextInfo context={context} cost={cost} />
+              <box flexDirection="row" gap={1} flexShrink={0}>
+                <ContextInfo context={context} cost={cost} />
+                <text fg={theme.textMuted}>v{Installation.VERSION}</text>
+              </box>
             </box>
           </Match>
         </Switch>

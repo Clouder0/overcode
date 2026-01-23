@@ -3,9 +3,7 @@ import { createMemo, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
 import { Locale } from "@/util/locale"
-import { truncateMiddle, cols } from "@tui/lib/cols"
-import { useRenderer } from "@opentui/solid"
-import path from "path"
+
 import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import { Installation } from "@/installation"
 import { useDirectory } from "../../context/directory"
@@ -19,10 +17,9 @@ import "opentui-spinner/solid"
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
   const { theme } = useTheme()
-  const { navigate } = useRoute()
-  const renderer = useRenderer()
-  const session = createMemo(() => sync.session.get(props.sessionID)!)
+  const session = createMemo(() => sync.session.get(props.sessionID))
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
+
   const todo = createMemo(() => sync.data.todo[props.sessionID] ?? [])
   const messages = createMemo(() => sync.data.message[props.sessionID] ?? [])
 
@@ -33,6 +30,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     lsp: true,
     subagents: true,
   })
+
+  const route = useRoute()
 
   const tree = createMemo(() =>
     buildSessionTree({
@@ -131,10 +130,10 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           <box flexShrink={0} gap={1} paddingRight={1}>
             <box paddingRight={1}>
               <text fg={theme.text}>
-                <b>{session().title}</b>
+                <b>{session()!.title}</b>
               </text>
-              <Show when={session().share?.url}>
-                <text fg={theme.textMuted}>{session().share!.url}</text>
+              <Show when={session()?.share?.url}>
+                <text fg={theme.textMuted}>{session()?.share?.url}</text>
               </Show>
             </box>
             <box>
@@ -143,16 +142,18 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               </text>
               <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
-              <text fg={theme.textMuted}>
-                {`Session cache: ${cache()?.stats.hitPercentage ?? 0}% r${Locale.number(cache()?.stats.readTokens ?? 0)} w${Locale.number(cache()?.stats.writeTokens ?? 0)}`}
-              </text>
-              <text fg={theme.textMuted}>
-                {`Last step cache: ${lastCache()?.hitPercentage ?? 0}% r${Locale.number(lastCache()?.readTokens ?? 0)} w${Locale.number(lastCache()?.writeTokens ?? 0)}`}
-              </text>
+              <text
+                fg={theme.textMuted}
+              >{`Session cache: ${cache()?.stats.hitPercentage ?? 0}% r${Locale.number(cache()?.stats.readTokens ?? 0)} w${Locale.number(cache()?.stats.writeTokens ?? 0)}`}</text>
+              <text
+                fg={theme.textMuted}
+              >{`Last step cache: ${lastCache()?.hitPercentage ?? 0}% r${Locale.number(lastCache()?.readTokens ?? 0)} w${Locale.number(lastCache()?.writeTokens ?? 0)}`}</text>
               <text fg={theme.textMuted}>{cost()} spent</text>
             </box>
             <Show when={mcpEntries().length > 0}>
               <box>
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+                {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler */}
                 <box
                   flexDirection="row"
                   gap={1}
@@ -213,6 +214,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               </box>
             </Show>
             <box>
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+              {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler */}
               <box
                 flexDirection="row"
                 gap={1}
@@ -258,6 +261,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
             {/* Subagents Section */}
             <Show when={subagentSessions().length > 0}>
               <box>
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+                {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler */}
                 <box
                   flexDirection="row"
                   gap={1}
@@ -276,17 +281,27 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <Show when={subagentSessions().length <= 2 || expanded.subagents}>
                   {/* Show parent link if we're in a subagent */}
                   <Show when={session()?.parentID}>
+                    {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+                    {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler */}
                     <box
                       flexDirection="row"
                       gap={1}
-                      onMouseDown={() => navigate({ type: "session", sessionID: session()!.parentID! })}
+                      onMouseDown={() => {
+                        const parentID = session()?.parentID
+                        if (!parentID) return
+                        route.navigate({ type: "session", sessionID: parentID })
+                      }}
                     >
                       <text fg={theme.accent}>↑</text>
                       <text fg={theme.text}>
                         <b>Parent</b>
                         <span style={{ fg: theme.textMuted }}>
                           {" "}
-                          {sync.session.get(session()!.parentID!)?.title ?? "Primary"}
+                          {(() => {
+                            const parentID = session()?.parentID
+                            if (!parentID) return "Primary"
+                            return sync.session.get(parentID)?.title ?? "Primary"
+                          })()}
                         </span>
                       </text>
                     </box>
@@ -312,10 +327,12 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                         return indent + title
                       })
                       return (
+                        // biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler
+                        // biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler
                         <box
                           flexDirection="row"
                           gap={1}
-                          onMouseDown={() => !isCurrent && navigate({ type: "session", sessionID: sub.id })}
+                          onMouseDown={() => !isCurrent && route.navigate({ type: "session", sessionID: sub.id })}
                         >
                           <text flexShrink={0} fg={statusColor()}>
                             {statusIcon()}
@@ -333,6 +350,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
             </Show>
             <Show when={todo().length > 0 && todo().some((t) => t.status !== "completed")}>
               <box>
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+                {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler */}
                 <box
                   flexDirection="row"
                   gap={1}
@@ -352,6 +371,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
             </Show>
             <Show when={diff().length > 0}>
               <box>
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+                {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler */}
                 <box
                   flexDirection="row"
                   gap={1}
@@ -367,21 +388,10 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 <Show when={diff().length <= 2 || expanded.diff}>
                   <For each={diff() || []}>
                     {(item) => {
-                      const file = createMemo(() => {
-                        const splits = item.file.split(path.sep).filter(Boolean)
-                        const last = splits.at(-1)!
-                        const rest = splits.slice(0, -1).join(path.sep)
-                        if (!rest) return last
-                        const tail = "/" + last
-                        const tailw = cols(renderer.widthMethod, tail)
-                        const restMax = Math.max(0, 30 - tailw)
-                        const head = truncateMiddle({ method: renderer.widthMethod, text: rest, max: restMax })
-                        return head + tail
-                      })
                       return (
                         <box flexDirection="row" gap={1} justifyContent="space-between">
-                          <text fg={theme.textMuted} wrapMode="char">
-                            {file()}
+                          <text fg={theme.textMuted} wrapMode="none">
+                            {item.file}
                           </text>
                           <box flexDirection="row" gap={1} flexShrink={0}>
                             <Show when={item.additions}>
@@ -420,6 +430,8 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   <text fg={theme.text}>
                     <b>Getting started</b>
                   </text>
+                  {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+                  {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI click handler */}
                   <text fg={theme.textMuted} onMouseDown={() => kv.set("dismissed_getting_started", true)}>
                     ✕
                   </text>

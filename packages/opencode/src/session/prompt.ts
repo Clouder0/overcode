@@ -1341,12 +1341,8 @@ export namespace SessionPrompt {
       const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID)
       const task = tasks.pop()
 
-      // pending subtask - handled by job-based subagent system
-      // The new job system handles subagent tasks through SubagentJob definitions
-      // and generic job tools (job_list, job_get, job_cancel, job_wait)
+      // pending subtask - handled by overcode async subagent system
       if (task?.type === "subtask") {
-        // Skip subtask processing - handled by job system
-
         continue
       }
 
@@ -1614,7 +1610,7 @@ export namespace SessionPrompt {
       current = sess.parentID
     }
 
-    return "default"
+    return Agent.defaultAgent()
   }
 
   async function resolveSystemPrompt(input: {
@@ -1696,7 +1692,10 @@ export namespace SessionPrompt {
       },
     })
 
-    for (const item of await ToolRegistry.tools(input.model.providerID, input.agent)) {
+    for (const item of await ToolRegistry.tools(
+      { modelID: input.model.api.id, providerID: input.model.providerID },
+      input.agent,
+    )) {
       if (primaryOnlyTools.has(item.id) && !isPrimarySession) continue
 
       const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
@@ -2307,11 +2306,13 @@ export namespace SessionPrompt {
           messageID: userMessage.info.id,
           sessionID: userMessage.info.sessionID,
           type: "text",
-          text: BUILD_SWITCH.replace("{{plan}}", plan),
+          text:
+            BUILD_SWITCH + "\n\n" + `A plan file exists at ${plan}. You should execute on the plan defined within it`,
           synthetic: true,
         })
         userMessage.parts.push(part)
       }
+      return input.messages
     }
 
     // Entering plan mode
@@ -2648,6 +2649,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     arguments: z.string(),
     command: z.string(),
     variant: z.string().optional(),
+    parts: z
+      .array(
+        z.discriminatedUnion("type", [
+          MessageV2.FilePart.omit({
+            messageID: true,
+            sessionID: true,
+          }).partial({
+            id: true,
+          }),
+        ]),
+      )
+      .optional(),
   })
   export type CommandInput = z.infer<typeof CommandInput>
   const bashRegex = /!`([^`]+)`/g
@@ -2703,7 +2716,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }
     template = template.trim()
 
-    const model = await (async () => {
+    const taskModel = await (async () => {
       if (command.model) {
         return Provider.parseModel(command.model)
       }
@@ -2718,7 +2731,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })()
 
     try {
-      await Provider.getModel(model.providerID, model.modelID)
+      await Provider.getModel(taskModel.providerID, taskModel.modelID)
     } catch (e) {
       if (Provider.ModelNotFoundError.isInstance(e)) {
         const { providerID, modelID, suggestions } = e.data
@@ -2742,25 +2755,46 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw error
     }
 
-    const parts =
-      (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
-        ? [
-            {
-              type: "subtask" as const,
-              agent: agent.name,
-              description: command.description ?? "",
-              command: input.command,
-              // TODO: how can we make subagent_spawn accept a more complex input?
-              prompt: await resolvePromptParts(template).then((x) => x.find((y) => y.type === "text")?.text ?? ""),
+    const templateParts = await resolvePromptParts(template)
+    const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
+    const parts = isSubtask
+      ? [
+          {
+            type: "subtask" as const,
+            agent: agent.name,
+            description: command.description ?? "",
+            command: input.command,
+            model: {
+              providerID: taskModel.providerID,
+              modelID: taskModel.modelID,
             },
-          ]
-        : await resolvePromptParts(template)
+            prompt: templateParts.find((y) => y.type === "text")?.text ?? "",
+          },
+        ]
+      : [...templateParts, ...(input.parts ?? [])]
+
+    const userAgent = isSubtask ? (input.agent ?? (await Agent.defaultAgent())) : agentName
+    const userModel = isSubtask
+      ? input.model
+        ? Provider.parseModel(input.model)
+        : await lastModel(input.sessionID)
+      : taskModel
+
+    await Plugin.trigger(
+      "command.execute.before",
+      {
+        command: input.command,
+        sessionID: input.sessionID,
+        arguments: input.arguments,
+      },
+      { parts },
+    )
 
     const result = (await prompt({
       sessionID: input.sessionID,
       messageID: input.messageID,
-      model,
-      agent: agentName,
+      model: userModel,
+      agent: userAgent,
       parts,
       variant: input.variant,
     })) as MessageV2.WithParts

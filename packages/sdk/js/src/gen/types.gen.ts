@@ -843,6 +843,14 @@ export type KeybindsConfig = {
    */
   messages_page_down?: string
   /**
+   * Scroll messages up by one line
+   */
+  messages_line_up?: string
+  /**
+   * Scroll messages down by one line
+   */
+  messages_line_down?: string
+  /**
    * Scroll messages up by half page
    */
   messages_half_page_up?: string
@@ -3808,45 +3816,6 @@ export type TuiPublishResponses = {
 }
 
 export type TuiPublishResponse = TuiPublishResponses[keyof TuiPublishResponses]
-
-export type TuiControlNextData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/tui/control/next"
-}
-
-export type TuiControlNextResponses = {
-  /**
-   * Next TUI request
-   */
-  200: {
-    path: string
-    body: unknown
-  }
-}
-
-export type TuiControlNextResponse = TuiControlNextResponses[keyof TuiControlNextResponses]
-
-export type TuiControlResponseData = {
-  body?: unknown
-  path?: never
-  query?: {
-    directory?: string
-  }
-  url: "/tui/control/response"
-}
-
-export type TuiControlResponseResponses = {
-  /**
-   * Response submitted successfully
-   */
-  200: boolean
-}
-
-export type TuiControlResponseResponse = TuiControlResponseResponses[keyof TuiControlResponseResponses]
 
 export type AuthSetData = {
   body?: Auth

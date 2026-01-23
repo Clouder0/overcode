@@ -73,13 +73,12 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       const abort = new AbortController()
       streams.set(directory, abort)
 
-      eventSdk.global
-        .event({ directory }, { signal: abort.signal })
+      eventSdk.event
+        .subscribe({ directory }, { signal: abort.signal })
         .then(async (events) => {
           let yielded = Date.now()
-          for await (const event of events.stream) {
-            const dir = event.directory ?? "global"
-            const payload = event.payload
+          for await (const payload of events.stream) {
+            const dir = directory
             const k = key(dir, payload)
             if (k) {
               const i = coalesced.get(k)

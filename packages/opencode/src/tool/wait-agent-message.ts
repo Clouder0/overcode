@@ -36,7 +36,9 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       .number()
       .int()
       .min(-1)
-      .describe("Message cursor. Use -1 for session start, 0 for now, or a seq checkpoint. Wait condition considers all agent messages after this, non-inclusive. All `seq > since`."),
+      .describe(
+        "Message cursor. Use -1 for session start, 0 for now, or a seq checkpoint. Wait condition considers all agent messages after this, non-inclusive. All `seq > since`.",
+      ),
   }),
   async execute(params, ctx) {
     const rawSources = params.sources.map((s) => s.trim()).filter(Boolean)
@@ -109,20 +111,16 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       return blocked("Internal error: missing tool call id")
     }
 
-    const baseline =
-      params.since === -1
-        ? 0
-        : SessionMessage.resolveSince(
-            params.since !== 0
-              ? params.since
-              : (() => {
-                  const raw = ctx.extra?.waitSince
-                  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return raw
+    const baseline = (() => {
+      if (params.since === -1) return 0
+      if (params.since !== 0) return SessionMessage.resolveSince(params.since)
 
-                  // Fallback: tool args may not have streamed (or were replayed); treat 0 as "now".
-                  return 0
-                })(),
-          )
+      const raw = ctx.extra?.waitSince
+      if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return raw
+
+      // Tool args may not have streamed (or were replayed); treat 0 as "now".
+      return SessionMessage.nowSeq()
+    })()
 
     const policy = WaitPolicy.register({
       sessionID: ctx.sessionID,

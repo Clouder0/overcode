@@ -1,4 +1,6 @@
 import type { Hooks, PluginInput, Plugin as PluginInstance } from "@opencode-ai/plugin"
+
+type HookName = keyof Hooks
 import { Config } from "../config/config"
 import { Bus } from "../bus"
 import { Log } from "../util/log"
@@ -10,18 +12,15 @@ import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
 import { Session } from "../session"
 import { NamedError } from "@opencode-ai/util/error"
+import { CopilotAuthPlugin } from "./copilot"
 
 export namespace Plugin {
   const log = Log.create({ service: "plugin" })
 
-  const BUILTIN = [
-    "opencode-copilot-auth@0.0.12",
-    "opencode-anthropic-auth@0.0.8",
-    "@gitlab/opencode-gitlab-auth@1.3.0",
-  ]
+  const BUILTIN = ["opencode-anthropic-auth@0.0.9", "@gitlab/opencode-gitlab-auth@1.3.0"]
 
   // Built-in plugins that are directly imported (not installed from npm)
-  const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin]
+  const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin]
 
   const state = Instance.state(async () => {
     const client = createOpencodeClient({
@@ -53,7 +52,7 @@ export namespace Plugin {
 
     for (let plugin of plugins) {
       // ignore old codex plugin since it is supported first party now
-      if (plugin.includes("opencode-openai-codex-auth")) continue
+      if (plugin.includes("opencode-openai-codex-auth") || plugin.includes("opencode-copilot-auth")) continue
       log.info("loading plugin", { path: plugin })
       if (!plugin.startsWith("file://")) {
         const lastAtIndex = plugin.lastIndexOf("@")
@@ -98,19 +97,16 @@ export namespace Plugin {
     }
   })
 
-  export async function trigger<
-    Name extends Exclude<keyof Required<Hooks>, "auth" | "event" | "tool">,
-    Input = Parameters<Required<Hooks>[Name]>[0],
-    Output = Parameters<Required<Hooks>[Name]>[1],
-  >(name: Name, input: Input, output: Output): Promise<Output> {
-    if (!name) return output
+  export async function trigger<Name extends HookName, Input, Output>(
+    name: Name,
+    input: Input,
+    output: Output,
+  ): Promise<Output> {
     for (const hook of await state().then((x) => x.hooks)) {
       const fn = hook[name]
       if (!fn) continue
-      // @ts-expect-error if you feel adventurous, please fix the typing, make sure to bump the try-counter if you
-      // give up.
-      // try-counter: 2
-      await fn(input, output)
+      // Hook typing is intentionally loose; plugin hook signatures vary.
+      await (fn as unknown as (input: Input, output: Output) => Promise<void>)(input, output)
     }
     return output
   }

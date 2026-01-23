@@ -4,7 +4,7 @@ description: Interact with opencode server over HTTP.
 ---
 
 import config from "../../../config.mjs"
-export const typesUrl = `${config.github}/blob/dev/packages/sdk/js/src/gen/types.gen.ts`
+export const typesUrl = `${config.github}/blob/dev/packages/sdk/js/src/v2/gen/types.gen.ts`
 
 The `opencode serve` command runs a headless HTTP server that exposes an OpenAPI endpoint that an opencode client can use.
 
@@ -247,17 +247,19 @@ The opencode server exposes the following APIs.
 
 ### TUI
 
-| Method | Path                   | Description                                 | Response  |
-| ------ | ---------------------- | ------------------------------------------- | --------- |
-| `POST` | `/tui/append-prompt`   | Append text to the prompt                   | `boolean` |
-| `POST` | `/tui/open-help`       | Open the help dialog                        | `boolean` |
-| `POST` | `/tui/open-sessions`   | Open the session selector                   | `boolean` |
-| `POST` | `/tui/open-themes`     | Open the theme selector                     | `boolean` |
-| `POST` | `/tui/open-models`     | Open the model selector                     | `boolean` |
-| `POST` | `/tui/submit-prompt`   | Submit the current prompt                   | `boolean` |
-| `POST` | `/tui/clear-prompt`    | Clear the prompt                            | `boolean` |
-| `POST` | `/tui/execute-command` | Execute a command (`{ command }`)           | `boolean` |
-| `POST` | `/tui/show-toast`      | Show toast (`{ title?, message, variant }`) | `boolean` |
+| Method | Path                   | Description                                  | Response  |
+| ------ | ---------------------- | -------------------------------------------- | --------- |
+| `POST` | `/tui/append-prompt`   | Append text to the prompt                    | `boolean` |
+| `POST` | `/tui/open-help`       | Open the help dialog                         | `boolean` |
+| `POST` | `/tui/open-sessions`   | Open the session selector                    | `boolean` |
+| `POST` | `/tui/open-themes`     | Open the theme selector                      | `boolean` |
+| `POST` | `/tui/open-models`     | Open the model selector                      | `boolean` |
+| `POST` | `/tui/publish`         | Publish a TUI event (`{ type, properties }`) | `boolean` |
+| `POST` | `/tui/select-session`  | Navigate TUI to a session (`{ sessionID }`)  | `boolean` |
+| `POST` | `/tui/submit-prompt`   | Submit the current prompt                    | `boolean` |
+| `POST` | `/tui/clear-prompt`    | Clear the prompt                             | `boolean` |
+| `POST` | `/tui/execute-command` | Execute a command (`{ command }`)            | `boolean` |
+| `POST` | `/tui/show-toast`      | Show toast (`{ title?, message, variant }`)  | `boolean` |
 
 ---
 
