@@ -37,6 +37,7 @@ import { createPerplexity } from "@ai-sdk/perplexity"
 import { createVercel } from "@ai-sdk/vercel"
 import { createGitLab } from "@gitlab/gitlab-ai-provider"
 import { ProviderTransform } from "./transform"
+import { ClaudeCode } from "./claude-code"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -976,7 +977,7 @@ export namespace Provider {
           ...model.headers,
         }
 
-      const key = Bun.hash.xxHash32(JSON.stringify({ npm: model.api.npm, options }))
+      const key = Bun.hash.xxHash32(JSON.stringify({ npm: model.api.npm, providerID: model.providerID, options }))
       const existing = s.sdk.get(key)
       if (existing) return existing
 
@@ -997,8 +998,21 @@ export namespace Provider {
           opts.signal = combined
         }
 
-        return fetchFn(input, {
-          ...opts,
+        const shaped = await ClaudeCode.transform({
+          model: {
+            api: {
+              npm: model.api.npm,
+            },
+            providerID: model.providerID,
+          },
+          request: {
+            input,
+            init: opts,
+          },
+        })
+
+        return fetchFn(shaped.input, {
+          ...shaped.init,
           // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
           timeout: false,
         })

@@ -13,6 +13,7 @@ import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { PermissionNext } from "@/permission/next"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
+import { ProviderRequestContext } from "@/provider/request-context"
 
 export namespace Agent {
   export const Info = z
@@ -265,33 +266,36 @@ export namespace Agent {
     const system = SystemPrompt.header(defaultModel.providerID)
     system.push(PROMPT_GENERATE)
     const existing = await list()
-    const result = await generateObject({
-      experimental_telemetry: {
-        isEnabled: cfg.experimental?.openTelemetry,
-        metadata: {
-          userId: cfg.username ?? "unknown",
+    const result = await ProviderRequestContext.provide({ sessionID: "ses_agent_generate" }, () =>
+      generateObject({
+        experimental_telemetry: {
+          isEnabled: cfg.experimental?.openTelemetry,
+          metadata: {
+            userId: cfg.username ?? "unknown",
+          },
         },
-      },
-      temperature: 0.3,
-      messages: [
-        ...system.map(
-          (item): ModelMessage => ({
-            role: "system",
-            content: item,
-          }),
-        ),
-        {
-          role: "user",
-          content: `Create an agent configuration based on this request: \"${input.description}\".\n\nIMPORTANT: The following identifiers already exist and must NOT be used: ${existing.map((i) => i.name).join(", ")}\n  Return ONLY the JSON object, no other text, do not wrap in backticks`,
-        },
-      ],
-      model: language,
-      schema: z.object({
-        identifier: z.string(),
-        whenToUse: z.string(),
-        systemPrompt: z.string(),
+        temperature: 0.3,
+        messages: [
+          ...system.map(
+            (item): ModelMessage => ({
+              role: "system",
+              content: item,
+            }),
+          ),
+          {
+            role: "user",
+            content: `Create an agent configuration based on this request: \"${input.description}\".\n\nIMPORTANT: The following identifiers already exist and must NOT be used: ${existing.map((i) => i.name).join(", ")}\n  Return ONLY the JSON object, no other text, do not wrap in backticks`,
+          },
+        ],
+        model: language,
+        schema: z.object({
+          identifier: z.string(),
+          whenToUse: z.string(),
+          systemPrompt: z.string(),
+        }),
       }),
-    })
+    )
+
     return result.object
   }
 }
