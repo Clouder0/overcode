@@ -3,6 +3,7 @@ import { useTheme } from "../context/theme"
 import { useSync } from "@tui/context/sync"
 import { For, Match, Switch, Show, createMemo } from "solid-js"
 import { Installation } from "@/installation"
+import { lspMax } from "../lib/lsp-limit"
 
 export type DialogStatusProps = {}
 
@@ -11,6 +12,11 @@ export function DialogStatus() {
   const { theme } = useTheme()
 
   const enabledFormatters = createMemo(() => sync.data.formatter.filter((f) => f.enabled))
+  const lspLabel = createMemo(() => {
+    const max = lspMax(sync.data.config)
+    if (typeof max === "number") return `${sync.data.lsp.length}/${max}`
+    return `${sync.data.lsp.length}`
+  })
 
   const plugins = createMemo(() => {
     const list = sync.data.config.plugin ?? []
@@ -91,7 +97,7 @@ export function DialogStatus() {
       </Show>
       {sync.data.lsp.length > 0 && (
         <box>
-          <text fg={theme.text}>{sync.data.lsp.length} LSP Servers</text>
+          <text fg={theme.text}>{lspLabel()} LSP Servers</text>
           <For each={sync.data.lsp}>
             {(item) => (
               <box flexDirection="row" gap={1}>

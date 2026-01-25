@@ -11,6 +11,7 @@ import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
 import { computeCacheStats, updateCacheStatsState, type CacheStatsState } from "../../lib/cache-stats"
 import { buildSessionTree, sessionRunState } from "../../lib/session-tree"
+import { lspMax } from "../../lib/lsp-limit"
 import { useRoute } from "../../context/route"
 import "opentui-spinner/solid"
 
@@ -74,6 +75,14 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           item.status === "failed" || item.status === "needs_auth" || item.status === "needs_client_registration",
       ).length,
   )
+
+  const lspCount = createMemo(() => sync.data.lsp.length)
+  const max = createMemo(() => lspMax(sync.data.config))
+  const lspLabel = createMemo(() => {
+    const limit = max()
+    if (typeof limit === "number") return `${lspCount()}/${limit}`
+    return `${lspCount()}`
+  })
 
   const cost = createMemo(() => {
     const total = messages().reduce((sum, x) => sum + (x.role === "assistant" ? x.cost : 0), 0)
@@ -226,6 +235,9 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 </Show>
                 <text fg={theme.text}>
                   <b>LSP</b>
+                  <Show when={lspCount() > 0 || typeof max() === "number"}>
+                    <span style={{ fg: theme.textMuted }}> ({lspLabel()})</span>
+                  </Show>
                 </text>
               </box>
               <Show when={sync.data.lsp.length <= 2 || expanded.lsp}>

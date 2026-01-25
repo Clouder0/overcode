@@ -10,9 +10,15 @@ import { Config } from "../config/config"
 import { spawn } from "child_process"
 import { Instance } from "../project/instance"
 import { Flag } from "@/flag/flag"
+import { key as cacheKey } from "./key"
+import * as Cache from "./cache"
+import { SessionStatus } from "@/session/status"
 
 export namespace LSP {
   const log = Log.create({ service: "lsp" })
+
+  const DEFAULT_IDLE_MS = 600_000
+  const DEFAULT_PROTECTED_RATIO = 0.8
 
   export const Event = {
     Updated: BusEvent.define("lsp.updated", z.object({})),
@@ -34,7 +40,7 @@ export namespace LSP {
     })
   export type Range = z.infer<typeof Range>
 
-  export const Symbol = z
+  export const WorkspaceSymbol = z
     .object({
       name: z.string(),
       kind: z.number(),
@@ -46,7 +52,7 @@ export namespace LSP {
     .meta({
       ref: "Symbol",
     })
-  export type Symbol = z.infer<typeof Symbol>
+  export type WorkspaceSymbol = z.infer<typeof WorkspaceSymbol>
 
   export const DocumentSymbol = z
     .object({
@@ -78,17 +84,31 @@ export namespace LSP {
 
   const state = Instance.state(
     async () => {
-      const clients: LSPClient.Info[] = []
-      const servers: Record<string, LSPServer.Info> = {}
       const cfg = await Config.get()
+      const cacheCfg = cfg.experimental?.lsp
+      const maxServers = cacheCfg?.maxServers ?? Number.POSITIVE_INFINITY
+      const idleMs = cacheCfg?.idleMs ?? DEFAULT_IDLE_MS
+      const protectedRatio = cacheCfg?.protectedRatio ?? DEFAULT_PROTECTED_RATIO
+      const protectedMax = cacheCfg?.maxServers
+        ? Math.max(1, Math.min(maxServers, Math.floor(maxServers * protectedRatio)))
+        : Number.POSITIVE_INFINITY
+      const cache = Cache.create<LSPClient.Info>({ max: maxServers, protectedMax })
+
+      const servers: Record<string, LSPServer.Info> = {}
+
+      const interval = Math.max(1000, Math.min(30_000, Math.floor(idleMs / 2)))
 
       if (cfg.lsp === false) {
         log.info("all LSPs are disabled")
         return {
+          closing: false,
+          trim: false,
           broken: new Set<string>(),
           servers,
-          clients,
-          spawning: new Map<string, Promise<LSPClient.Info | undefined>>(),
+          cache,
+          idleMs,
+          spawning: new Map<string, Promise<Cache.Entry<LSPClient.Info> | undefined>>(),
+          timer: undefined as ReturnType<typeof setInterval> | undefined,
         }
       }
 
@@ -131,17 +151,57 @@ export namespace LSP {
           .join(", "),
       })
 
-      return {
+      const directory = Instance.directory
+      const entry = {
+        closing: false,
+        trim: false,
         broken: new Set<string>(),
         servers,
-        clients,
-        spawning: new Map<string, Promise<LSPClient.Info | undefined>>(),
+        cache,
+        idleMs,
+        spawning: new Map<string, Promise<Cache.Entry<LSPClient.Info> | undefined>>(),
+        timer: undefined as ReturnType<typeof setInterval> | undefined,
       }
+
+      entry.timer = setInterval(() => {
+        Instance.provide({
+          directory,
+          fn: () => prune(entry),
+        }).catch(() => {})
+      }, interval)
+      entry.timer.unref()
+
+      return entry
     },
     async (state) => {
-      await Promise.all(state.clients.map((client) => client.shutdown()))
+      state.closing = true
+      if (state.timer) {
+        clearInterval(state.timer)
+        state.timer = undefined
+      }
+      const entries = Cache.all(state.cache)
+      await Promise.all(entries.map((entry) => entry.value.shutdown().catch(() => {})))
     },
   )
+
+  async function prune(s: Awaited<ReturnType<typeof state>>) {
+    if (s.closing) return
+    if (Object.keys(SessionStatus.list()).length > 0) return
+
+    const now = Date.now()
+    const stale = Cache.all(s.cache).filter((entry) => now - entry.usedAtMs >= s.idleMs)
+    const victims = stale.filter((entry) => !entry.closing && entry.busy === 0)
+    if (victims.length === 0) return
+
+    for (const entry of victims) {
+      const map = entry.segment === "protected" ? s.cache.protected : s.cache.probationary
+      map.delete(entry.key)
+      entry.closing = true
+      await entry.value.shutdown().catch(() => {})
+    }
+
+    Bus.publish(Event.Updated, {})
+  }
 
   export async function init() {
     return state()
@@ -162,7 +222,8 @@ export namespace LSP {
   export async function status() {
     return state().then((x) => {
       const result: Status[] = []
-      for (const client of x.clients) {
+      for (const entry of Cache.all(x.cache)) {
+        const client = entry.value
         result.push({
           id: client.serverID,
           name: x.servers[client.serverID].id,
@@ -174,10 +235,60 @@ export namespace LSP {
     })
   }
 
-  async function getClients(file: string) {
+  async function ensureCapacity(s: Awaited<ReturnType<typeof state>>, needed: number) {
+    const max = s.cache.max
+    while (Cache.size(s.cache) + s.spawning.size + needed > max) {
+      const entry = Cache.evictOne(s.cache)
+      if (!entry) break
+      entry.closing = true
+      await entry.value.shutdown().catch(() => {})
+      Bus.publish(Event.Updated, {})
+    }
+  }
+
+  type Lease = {
+    entry: Cache.Entry<LSPClient.Info>
+    [globalThis.Symbol.dispose]: () => void
+  }
+
+  function scheduleTrim(s: Awaited<ReturnType<typeof state>>) {
+    if (s.closing) return
+    if (s.trim) return
+    s.trim = true
+    queueMicrotask(() => {
+      if (s.closing) {
+        s.trim = false
+        return
+      }
+      ensureCapacity(s, 0)
+        .catch(() => {})
+        .finally(() => {
+          s.trim = false
+
+          // If we couldn't evict due to in-flight operations, retry later.
+          const max = s.cache.max
+          if (Cache.size(s.cache) + s.spawning.size <= max) return
+          setTimeout(() => scheduleTrim(s), 10).unref()
+        })
+    })
+  }
+
+  function pin(s: Awaited<ReturnType<typeof state>>, entry: Cache.Entry<LSPClient.Info>): Lease {
+    entry.busy += 1
+    return {
+      entry,
+      [globalThis.Symbol.dispose]: () => {
+        entry.busy -= 1
+        scheduleTrim(s)
+      },
+    }
+  }
+
+  async function getLeases(file: string, use: Cache.Use): Promise<Lease[]> {
     const s = await state()
+    if (s.closing) return []
     const extension = path.parse(file).ext || file
-    const result: LSPClient.Info[] = []
+    const result: Lease[] = []
 
     async function schedule(server: LSPServer.Info, root: string, key: string) {
       const handle = await server
@@ -193,6 +304,10 @@ export namespace LSP {
         })
 
       if (!handle) return undefined
+      if (s.closing) {
+        handle.process.kill()
+        return undefined
+      }
       log.info("spawned lsp server", { serverID: server.id })
 
       const client = await LSPClient.create({
@@ -211,14 +326,29 @@ export namespace LSP {
         return undefined
       }
 
-      const existing = s.clients.find((x) => x.root === root && x.serverID === server.id)
+      if (s.closing) {
+        await client.shutdown().catch(() => {})
+        return undefined
+      }
+
+      const existing = Cache.get(s.cache, key)
       if (existing) {
         handle.process.kill()
         return existing
       }
 
-      s.clients.push(client)
-      return client
+      const entry: Cache.Entry<LSPClient.Info> = {
+        key,
+        value: client,
+        segment: "probationary",
+        hits: 0,
+        busy: 0,
+        closing: false,
+        usedAtMs: Date.now(),
+      }
+
+      Cache.insert(s.cache, entry)
+      return entry
     }
 
     for (const server of Object.values(s.servers)) {
@@ -226,35 +356,40 @@ export namespace LSP {
 
       const root = await server.root(file)
       if (!root) continue
-      if (s.broken.has(root + server.id)) continue
+      const key = cacheKey(server.id, root)
+      if (s.broken.has(key)) continue
 
-      const match = s.clients.find((x) => x.root === root && x.serverID === server.id)
+      const match = Cache.get(s.cache, key)
       if (match) {
-        result.push(match)
+        Cache.touch(s.cache, match, use, Date.now())
+        result.push(pin(s, match))
         continue
       }
 
-      const inflight = s.spawning.get(root + server.id)
+      const inflight = s.spawning.get(key)
       if (inflight) {
-        const client = await inflight
-        if (!client) continue
-        result.push(client)
+        const entry = await inflight
+        if (!entry) continue
+        Cache.touch(s.cache, entry, use, Date.now())
+        result.push(pin(s, entry))
         continue
       }
 
-      const task = schedule(server, root, root + server.id)
-      s.spawning.set(root + server.id, task)
+      await ensureCapacity(s, 1)
+      const task = schedule(server, root, key)
+      s.spawning.set(key, task)
 
       task.finally(() => {
-        if (s.spawning.get(root + server.id) === task) {
-          s.spawning.delete(root + server.id)
+        if (s.spawning.get(key) === task) {
+          s.spawning.delete(key)
         }
       })
 
-      const client = await task
-      if (!client) continue
+      const entry = await task
+      if (!entry) continue
 
-      result.push(client)
+      Cache.touch(s.cache, entry, use, Date.now())
+      result.push(pin(s, entry))
       Bus.publish(Event.Updated, {})
     }
 
@@ -268,7 +403,7 @@ export namespace LSP {
       if (server.extensions.length && !server.extensions.includes(extension)) continue
       const root = await server.root(file)
       if (!root) continue
-      if (s.broken.has(root + server.id)) continue
+      if (s.broken.has(cacheKey(server.id, root))) continue
       return true
     }
     return false
@@ -276,9 +411,12 @@ export namespace LSP {
 
   export async function touchFile(input: string, waitForDiagnostics?: boolean) {
     log.info("touching file", { file: input })
-    const clients = await getClients(input)
+    const use: Cache.Use = waitForDiagnostics ? "hard" : "soft"
+    const leases = await getLeases(input, use)
     await Promise.all(
-      clients.map(async (client) => {
+      leases.map(async (lease) => {
+        using _ = lease
+        const client = lease.entry.value
         const wait = waitForDiagnostics ? client.waitForDiagnostics({ path: input }) : Promise.resolve()
         await client.notify.open({ path: input })
         return wait
@@ -289,9 +427,10 @@ export namespace LSP {
   }
 
   export async function diagnostics() {
+    const s = await state()
     const results: Record<string, LSPClient.Diagnostic[]> = {}
-    for (const result of await runAll(async (client) => client.diagnostics)) {
-      for (const [path, diagnostics] of result.entries()) {
+    for (const entry of Cache.all(s.cache)) {
+      for (const [path, diagnostics] of entry.value.diagnostics.entries()) {
         const arr = results[path] || []
         arr.push(...diagnostics)
         results[path] = arr
@@ -362,10 +501,10 @@ export namespace LSP {
         .sendRequest("workspace/symbol", {
           query,
         })
-        .then((result: any) => result.filter((x: LSP.Symbol) => kinds.includes(x.kind)))
+        .then((result: any) => result.filter((x: LSP.WorkspaceSymbol) => kinds.includes(x.kind)))
         .then((result: any) => result.slice(0, 10))
         .catch(() => []),
-    ).then((result) => result.flat() as LSP.Symbol[])
+    ).then((result) => result.flat() as LSP.WorkspaceSymbol[])
   }
 
   export async function documentSymbol(uri: string) {
@@ -379,7 +518,7 @@ export namespace LSP {
         })
         .catch(() => []),
     )
-      .then((result) => result.flat() as (LSP.DocumentSymbol | LSP.Symbol)[])
+      .then((result) => result.flat() as (LSP.DocumentSymbol | LSP.WorkspaceSymbol)[])
       .then((result) => result.filter(Boolean))
   }
 
@@ -455,14 +594,25 @@ export namespace LSP {
   }
 
   async function runAll<T>(input: (client: LSPClient.Info) => Promise<T>): Promise<T[]> {
-    const clients = await state().then((x) => x.clients)
-    const tasks = clients.map((x) => input(x))
+    const s = await state()
+    if (s.closing) return []
+    const leases = Cache.all(s.cache).map((entry) => {
+      Cache.touch(s.cache, entry, "hard", Date.now())
+      return pin(s, entry)
+    })
+    const tasks = leases.map(async (lease) => {
+      using _ = lease
+      return input(lease.entry.value)
+    })
     return Promise.all(tasks)
   }
 
   async function run<T>(file: string, input: (client: LSPClient.Info) => Promise<T>): Promise<T[]> {
-    const clients = await getClients(file)
-    const tasks = clients.map((x) => input(x))
+    const leases = await getLeases(file, "hard")
+    const tasks = leases.map(async (lease) => {
+      using _ = lease
+      return input(lease.entry.value)
+    })
     return Promise.all(tasks)
   }
 

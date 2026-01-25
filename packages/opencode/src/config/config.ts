@@ -1076,6 +1076,36 @@ export namespace Config {
             })
             .optional()
             .describe("Optional concurrency limits for LLM streaming."),
+          lsp: z
+            .object({
+              maxServers: z
+                .number()
+                .int()
+                .positive()
+                .optional()
+                .describe(
+                  "Max number of concurrent LSP server processes retained per instance (primary + subagents share). If unset, no limit.",
+                ),
+              idleMs: z
+                .number()
+                .int()
+                .positive()
+                .min(1000)
+                .optional()
+                .describe(
+                  "Idle timeout in milliseconds for terminating unused LSP servers (default 600000). This is applied as a backstop (typically quiescent-only).",
+                ),
+              protectedRatio: z
+                .number()
+                .min(0)
+                .max(1)
+                .optional()
+                .describe(
+                  "Fraction of the LSP cache reserved for protected entries in a segmented LRU policy (0..1).",
+                ),
+            })
+            .optional()
+            .describe("Experimental LSP process cache configuration."),
           primary_tools: z
             .array(z.string())
             .optional()

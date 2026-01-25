@@ -5,6 +5,7 @@ import { useDirectory } from "../../context/directory"
 import { useConnected } from "../../component/dialog-model"
 import { createStore } from "solid-js/store"
 import { useRoute } from "../../context/route"
+import { lspMax } from "../../lib/lsp-limit"
 
 export function Footer() {
   const { theme } = useTheme()
@@ -12,7 +13,13 @@ export function Footer() {
   const route = useRoute()
   const mcp = createMemo(() => Object.values(sync.data.mcp).filter((x) => x.status === "connected").length)
   const mcpError = createMemo(() => Object.values(sync.data.mcp).some((x) => x.status === "failed"))
-  const lsp = createMemo(() => Object.keys(sync.data.lsp))
+  const lsp = createMemo(() => sync.data.lsp.length)
+  const max = createMemo(() => lspMax(sync.data.config))
+  const lspLabel = createMemo(() => {
+    const limit = max()
+    if (typeof limit === "number") return `${lsp()}/${limit}`
+    return `${lsp()}`
+  })
   const permissions = createMemo(() => {
     if (route.data.type !== "session") return []
     return sync.data.permission[route.data.sessionID] ?? []
@@ -67,7 +74,7 @@ export function Footer() {
               </text>
             </Show>
             <text fg={theme.text}>
-              <span style={{ fg: lsp().length > 0 ? theme.success : theme.textMuted }}>•</span> {lsp().length} LSP
+              <span style={{ fg: lsp() > 0 ? theme.success : theme.textMuted }}>•</span> {lspLabel()} LSP
             </text>
             <Show when={mcp()}>
               <text fg={theme.text}>

@@ -12,6 +12,7 @@ import { NamedError } from "@opencode-ai/util/error"
 import { withTimeout } from "../util/timeout"
 import { Instance } from "../project/instance"
 import { Filesystem } from "../util/filesystem"
+import { Shell } from "@/shell/shell"
 
 const DIAGNOSTICS_DEBOUNCE_MS = 150
 
@@ -238,9 +239,17 @@ export namespace LSPClient {
       },
       async shutdown() {
         l.info("shutting down")
+
+        // Best-effort graceful shutdown, then hard kill.
+        await withTimeout(connection.sendRequest("shutdown"), 1000).catch(() => {})
+        await connection.sendNotification("exit").catch(() => {})
+
         connection.end()
         connection.dispose()
-        input.server.process.kill()
+
+        await Shell.killTree(input.server.process, {
+          exited: () => input.server.process.exitCode != null,
+        }).catch(() => {})
         l.info("shutdown")
       },
     }
