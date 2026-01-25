@@ -1,4 +1,4 @@
-import type { APICallError, ModelMessage, ToolCallPart, ToolResultPart } from "ai"
+import type { APICallError, JSONValue, ModelMessage, ToolCallPart, ToolResultPart } from "ai"
 import { unique } from "remeda"
 import type { JSONSchema } from "zod/v4/core"
 import type { Provider } from "./provider"
@@ -249,9 +249,17 @@ export namespace ProviderTransform {
       const isSystem = msg.role === "system"
       const isTail = msg.role !== "system" && final.includes(msg)
 
-      const providerOptions = {
+      // Should never happen given the `system`/`final` selection, but keep the
+      // semantics explicit: only apply caching to system + tail messages.
+      if (!isSystem && !isTail) continue
+
+      const cacheControl: Record<string, JSONValue> = isSystem
+        ? { type: "ephemeral", ttl: "1h" }
+        : { type: "ephemeral" }
+
+      const providerOptions: Record<string, Record<string, JSONValue>> = {
         anthropic: {
-          cacheControl: isSystem ? { type: "ephemeral", ttl: "1h" } : isTail ? { type: "ephemeral" } : undefined,
+          cacheControl,
         },
         openrouter: {
           cacheControl: { type: "ephemeral" },
@@ -449,7 +457,7 @@ export namespace ProviderTransform {
       case "@ai-sdk/openai-compatible":
         return Object.fromEntries(WIDELY_SUPPORTED_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]))
 
-      case "@ai-sdk/azure":
+      case "@ai-sdk/azure": {
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/azure
         if (id === "o1-mini") return {}
         const azureEfforts = ["low", "medium", "high"]
@@ -466,7 +474,8 @@ export namespace ProviderTransform {
             },
           ]),
         )
-      case "@ai-sdk/openai":
+      }
+      case "@ai-sdk/openai": {
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/openai
         if (id === "gpt-5-pro") return {}
         const openaiEfforts = iife(() => {
@@ -496,6 +505,7 @@ export namespace ProviderTransform {
             },
           ]),
         )
+      }
 
       case "@ai-sdk/anthropic":
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic
@@ -585,7 +595,7 @@ export namespace ProviderTransform {
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/cohere
         return {}
 
-      case "@ai-sdk/groq":
+      case "@ai-sdk/groq": {
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/groq
         const groqEffort = ["none", ...WIDELY_SUPPORTED_EFFORTS]
         return Object.fromEntries(
@@ -597,6 +607,7 @@ export namespace ProviderTransform {
             },
           ]),
         )
+      }
 
       case "@ai-sdk/perplexity":
         // https://v5.ai-sdk.dev/providers/ai-sdk-providers/perplexity
