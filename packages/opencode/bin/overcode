@@ -17,7 +17,7 @@ function run(target) {
   process.exit(code)
 }
 
-const envPath = process.env.OPENCODE_BIN_PATH
+const envPath = process.env.OVERCODE_BIN_PATH || process.env.OPENCODE_BIN_PATH
 if (envPath) {
   run(envPath)
 }
@@ -44,25 +44,35 @@ let arch = archMap[os.arch()]
 if (!arch) {
   arch = os.arch()
 }
-const base = "opencode-" + platform + "-" + arch
-const binary = platform === "windows" ? "opencode.exe" : "opencode"
+
+const base = "overcode-ai-" + platform + "-" + arch
+const binaries = platform === "windows" ? ["overcode.exe", "overcode"] : ["overcode"]
 
 function findBinary(startDir) {
   let current = startDir
   for (;;) {
     const modules = path.join(current, "node_modules")
     if (fs.existsSync(modules)) {
-      const entries = fs.readdirSync(modules)
+      const entries = fs
+        .readdirSync(modules)
+        .filter((entry) => entry === base || entry.startsWith(base))
+        .sort((a, b) => {
+          if (a === base && b !== base) return -1
+          if (a !== base && b === base) return 1
+          if (a.length !== b.length) return a.length - b.length
+          return a.localeCompare(b)
+        })
+
       for (const entry of entries) {
-        if (!entry.startsWith(base)) {
-          continue
-        }
-        const candidate = path.join(modules, entry, "bin", binary)
-        if (fs.existsSync(candidate)) {
-          return candidate
+        for (const bin of binaries) {
+          const candidate = path.join(modules, entry, "bin", bin)
+          if (fs.existsSync(candidate)) {
+            return candidate
+          }
         }
       }
     }
+
     const parent = path.dirname(current)
     if (parent === current) {
       return
@@ -74,7 +84,7 @@ function findBinary(startDir) {
 const resolved = findBinary(scriptDir)
 if (!resolved) {
   console.error(
-    'It seems that your package manager failed to install the right version of the opencode CLI for your platform. You can try manually installing the "' +
+    'It seems that your package manager failed to install the right version of the overcode CLI for your platform. You can try manually installing the "' +
       base +
       '" package',
   )

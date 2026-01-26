@@ -23,7 +23,7 @@ interface RemovalTargets {
 
 export const UninstallCommand = {
   command: "uninstall",
-  describe: "uninstall opencode and remove all related files",
+  describe: "uninstall overcode and remove all related files",
   builder: (yargs: Argv) =>
     yargs
       .option("keep-config", {
@@ -128,13 +128,13 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
 
   if (method !== "curl" && method !== "unknown") {
     const cmds: Record<string, string> = {
-      npm: "npm uninstall -g opencode-ai",
-      pnpm: "pnpm uninstall -g opencode-ai",
-      bun: "bun remove -g opencode-ai",
-      yarn: "yarn global remove opencode-ai",
-      brew: "brew uninstall opencode",
-      choco: "choco uninstall opencode",
-      scoop: "scoop uninstall opencode",
+      npm: "npm uninstall -g overcode-ai",
+      pnpm: "pnpm uninstall -g overcode-ai",
+      bun: "bun remove -g overcode-ai",
+      yarn: "yarn global remove overcode-ai",
+      brew: "brew uninstall overcode",
+      choco: "choco uninstall overcode",
+      scoop: "scoop uninstall overcode",
     }
     prompts.log.info(`  ✓ Package: ${cmds[method] || method}`)
   }
@@ -179,13 +179,13 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
 
   if (method !== "curl" && method !== "unknown") {
     const cmds: Record<string, string[]> = {
-      npm: ["npm", "uninstall", "-g", "opencode-ai"],
-      pnpm: ["pnpm", "uninstall", "-g", "opencode-ai"],
-      bun: ["bun", "remove", "-g", "opencode-ai"],
-      yarn: ["yarn", "global", "remove", "opencode-ai"],
-      brew: ["brew", "uninstall", "opencode"],
-      choco: ["choco", "uninstall", "opencode"],
-      scoop: ["scoop", "uninstall", "opencode"],
+      npm: ["npm", "uninstall", "-g", "overcode-ai"],
+      pnpm: ["pnpm", "uninstall", "-g", "overcode-ai"],
+      bun: ["bun", "remove", "-g", "overcode-ai"],
+      yarn: ["yarn", "global", "remove", "overcode-ai"],
+      brew: ["brew", "uninstall", "overcode"],
+      choco: ["choco", "uninstall", "overcode"],
+      scoop: ["scoop", "uninstall", "overcode"],
     }
 
     const cmd = cmds[method]
@@ -193,7 +193,7 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
       spinner.start(`Running ${cmd.join(" ")}...`)
       const result =
         method === "choco"
-          ? await $`echo Y | choco uninstall opencode -y -r`.quiet().nothrow()
+          ? await $`echo Y | choco uninstall overcode -y -r`.quiet().nothrow()
           : await $`${cmd}`.quiet().nothrow()
       if (result.exitCode !== 0) {
         spinner.stop(`Package manager uninstall failed: exit code ${result.exitCode}`, 1)

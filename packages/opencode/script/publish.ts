@@ -9,24 +9,25 @@ process.chdir(dir)
 
 const { binaries } = await import("./build.ts")
 {
-  const name = `${pkg.name}-${process.platform}-${process.arch}`
-  console.log(`smoke test: running dist/${name}/bin/opencode --version`)
-  await $`./dist/${name}/bin/opencode --version`
+  const platform = process.platform === "win32" ? "windows" : process.platform
+  const prefix = `${pkg.name}-${platform}-${process.arch}`
+  const name = Object.keys(binaries).find((key) => key === prefix || key.startsWith(prefix + "-"))
+  if (!name) {
+    throw new Error(`unable to find build output for ${prefix}`)
+  }
+  console.log(`smoke test: running dist/${name}/bin/overcode --version`)
+  await $`./dist/${name}/bin/overcode --version`
 }
 
 await $`mkdir -p ./dist/${pkg.name}`
 await $`cp -r ./bin ./dist/${pkg.name}/bin`
-await $`cp ./script/postinstall.mjs ./dist/${pkg.name}/postinstall.mjs`
 
 await Bun.file(`./dist/${pkg.name}/package.json`).write(
   JSON.stringify(
     {
-      name: pkg.name + "-ai",
+      name: pkg.name,
       bin: {
-        [pkg.name]: `./bin/${pkg.name}`,
-      },
-      scripts: {
-        postinstall: "bun ./postinstall.mjs || node ./postinstall.mjs",
+        overcode: "./bin/overcode",
       },
       version: Script.version,
       optionalDependencies: binaries,
@@ -37,6 +38,7 @@ await Bun.file(`./dist/${pkg.name}/package.json`).write(
 )
 
 const tags = [Script.channel]
+const dry = process.env.NPM_PUBLISH_DRY_RUN === "true"
 
 const tasks = Object.entries(binaries).map(async ([name]) => {
   if (process.platform !== "win32") {
@@ -44,27 +46,19 @@ const tasks = Object.entries(binaries).map(async ([name]) => {
   }
   await $`bun pm pack`.cwd(`./dist/${name}`)
   for (const tag of tags) {
-    await $`npm publish *.tgz --access public --tag ${tag}`.cwd(`./dist/${name}`)
+    await (
+      dry
+        ? $`npm publish *.tgz --access public --tag ${tag} --dry-run`.cwd(`./dist/${name}`)
+        : $`npm publish *.tgz --access public --tag ${tag}`.cwd(`./dist/${name}`)
+    )
   }
 })
 await Promise.all(tasks)
 for (const tag of tags) {
-  await $`cd ./dist/${pkg.name} && bun pm pack && npm publish *.tgz --access public --tag ${tag}`
-}
-
-if (!Script.preview) {
-  // Create archives for GitHub release
-  for (const key of Object.keys(binaries)) {
-    if (key.includes("linux")) {
-      await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
-    } else {
-      await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
-    }
-  }
-
-  const image = "ghcr.io/anomalyco/opencode"
-  const platforms = "linux/amd64,linux/arm64"
-  const tags = [`${image}:${Script.version}`, `${image}:latest`]
-  const tagFlags = tags.flatMap((t) => ["-t", t])
-  await $`docker buildx build --platform ${platforms} ${tagFlags} --push .`
+  await $`cd ./dist/${pkg.name} && bun pm pack`
+  await (
+    dry
+      ? $`cd ./dist/${pkg.name} && npm publish *.tgz --access public --tag ${tag} --dry-run`
+      : $`cd ./dist/${pkg.name} && npm publish *.tgz --access public --tag ${tag}`
+  )
 }

@@ -81,15 +81,15 @@ export namespace Installation {
       },
       {
         name: "brew" as const,
-        command: () => $`brew list --formula opencode`.throws(false).quiet().text(),
+        command: () => $`brew list --formula overcode`.throws(false).quiet().text(),
       },
       {
         name: "scoop" as const,
-        command: () => $`scoop list opencode`.throws(false).quiet().text(),
+        command: () => $`scoop list overcode`.throws(false).quiet().text(),
       },
       {
         name: "choco" as const,
-        command: () => $`choco list --limit-output opencode`.throws(false).quiet().text(),
+        command: () => $`choco list --limit-output overcode`.throws(false).quiet().text(),
       },
     ]
 
@@ -104,7 +104,7 @@ export namespace Installation {
     for (const check of checks) {
       const output = await check.command()
       const installedName =
-        check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : "opencode-ai"
+        check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "overcode" : "overcode-ai"
       if (output.includes(installedName)) {
         return check.name
       }
@@ -121,62 +121,74 @@ export namespace Installation {
   )
 
   async function getBrewFormula() {
-    const tapFormula = await $`brew list --formula anomalyco/tap/opencode`.throws(false).quiet().text()
-    if (tapFormula.includes("opencode")) return "anomalyco/tap/opencode"
-    const coreFormula = await $`brew list --formula opencode`.throws(false).quiet().text()
-    if (coreFormula.includes("opencode")) return "opencode"
-    return "opencode"
+    const coreFormula = await $`brew list --formula overcode`.throws(false).quiet().text()
+    if (coreFormula.includes("overcode")) return "overcode"
+    return "overcode"
   }
 
   export async function upgrade(method: Method, target: string) {
-    let cmd: ReturnType<typeof $>
-    switch (method) {
-      case "curl":
-        cmd = $`curl -fsSL https://opencode.ai/install | bash`.env({
-          ...process.env,
-          VERSION: target,
+    const run = async (cmd: ReturnType<typeof $>) => {
+      const result = await cmd.quiet().throws(false)
+      if (result.exitCode !== 0) {
+        const stderr = method === "choco" ? "not running from an elevated command shell" : result.stderr.toString("utf8")
+        throw new UpgradeFailedError({
+          stderr: stderr,
         })
-        break
-      case "npm":
-        cmd = $`npm install -g opencode-ai@${target}`
-        break
-      case "pnpm":
-        cmd = $`pnpm install -g opencode-ai@${target}`
-        break
-      case "bun":
-        cmd = $`bun install -g opencode-ai@${target}`
-        break
-      case "brew": {
-        const formula = await getBrewFormula()
-        cmd = $`brew upgrade ${formula}`.env({
-          HOMEBREW_NO_AUTO_UPDATE: "1",
-          ...process.env,
-        })
-        break
       }
-      case "choco":
-        cmd = $`echo Y | choco upgrade opencode --version=${target}`
-        break
-      case "scoop":
-        cmd = $`scoop install opencode@${target}`
-        break
-      default:
-        throw new Error(`Unknown method: ${method}`)
-    }
-    const result = await cmd.quiet().throws(false)
-    if (result.exitCode !== 0) {
-      const stderr = method === "choco" ? "not running from an elevated command shell" : result.stderr.toString("utf8")
-      throw new UpgradeFailedError({
-        stderr: stderr,
+      log.info("upgraded", {
+        method,
+        target,
+        stdout: result.stdout.toString(),
+        stderr: result.stderr.toString(),
       })
+      await $`${process.execPath} --version`.nothrow().quiet().text()
     }
-    log.info("upgraded", {
-      method,
-      target,
-      stdout: result.stdout.toString(),
-      stderr: result.stderr.toString(),
-    })
-    await $`${process.execPath} --version`.nothrow().quiet().text()
+
+    if (method === "curl") {
+      const cmd = $`curl -fsSL https://opencode.ai/install | bash`.env({
+        ...process.env,
+        VERSION: target,
+      })
+      await run(cmd)
+      return
+    }
+
+    if (method === "npm") {
+      await run($`npm install -g overcode-ai@${target}`)
+      return
+    }
+
+    if (method === "pnpm") {
+      await run($`pnpm install -g overcode-ai@${target}`)
+      return
+    }
+
+    if (method === "bun") {
+      await run($`bun install -g overcode-ai@${target}`)
+      return
+    }
+
+    if (method === "brew") {
+      const formula = await getBrewFormula()
+      const cmd = $`brew upgrade ${formula}`.env({
+        HOMEBREW_NO_AUTO_UPDATE: "1",
+        ...process.env,
+      })
+      await run(cmd)
+      return
+    }
+
+    if (method === "choco") {
+      await run($`echo Y | choco upgrade overcode --version=${target}`)
+      return
+    }
+
+    if (method === "scoop") {
+      await run($`scoop install overcode@${target}`)
+      return
+    }
+
+    throw new Error(`Unknown method: ${method}`)
   }
 
   export const VERSION =
@@ -190,8 +202,8 @@ export namespace Installation {
 
     if (detectedMethod === "brew") {
       const formula = await getBrewFormula()
-      if (formula === "opencode") {
-        return fetch("https://formulae.brew.sh/api/formula/opencode.json")
+      if (formula === "overcode") {
+        return fetch("https://formulae.brew.sh/api/formula/overcode.json")
           .then((res) => {
             if (!res.ok) throw new Error(res.statusText)
             return res.json()
@@ -207,7 +219,7 @@ export namespace Installation {
         return reg.endsWith("/") ? reg.slice(0, -1) : reg
       })
       const channel = CHANNEL
-      return fetch(`${registry}/opencode-ai/${channel}`)
+      return fetch(`${registry}/overcode-ai/${channel}`)
         .then((res) => {
           if (!res.ok) throw new Error(res.statusText)
           return res.json()

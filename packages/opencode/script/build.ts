@@ -31,27 +31,8 @@ const allTargets: {
   },
   {
     os: "linux",
+    // Baseline binaries avoid AVX2-only CPUs.
     arch: "x64",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    avx2: false,
-  },
-  {
-    os: "linux",
-    arch: "arm64",
-    abi: "musl",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    abi: "musl",
-  },
-  {
-    os: "linux",
-    arch: "x64",
-    abi: "musl",
     avx2: false,
   },
   {
@@ -61,15 +42,7 @@ const allTargets: {
   {
     os: "darwin",
     arch: "x64",
-  },
-  {
-    os: "darwin",
-    arch: "x64",
     avx2: false,
-  },
-  {
-    os: "win32",
-    arch: "x64",
   },
   {
     os: "win32",
@@ -139,7 +112,7 @@ for (const item of targets) {
       autoloadTsconfig: true,
       autoloadPackageJson: true,
       target: name.replace(pkg.name, "bun") as any,
-      outfile: `dist/${name}/bin/opencode`,
+      outfile: `dist/${name}/bin/overcode`,
       execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
     },
