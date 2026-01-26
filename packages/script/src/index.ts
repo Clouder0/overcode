@@ -1,6 +1,23 @@
 import { $ } from "bun"
 import path from "path"
 
+function normalize(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return "canary"
+
+  // NPM dist-tags and SemVer prerelease identifiers are picky:
+  // - SemVer prerelease allows only [0-9A-Za-z-] (and dots as separators)
+  // - Branch names often contain '/', '_' etc.
+  // Normalize to a safe, readable tag.
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+
+  return normalized || "canary"
+}
+
 const rootPkgPath = path.resolve(import.meta.dir, "../../../package.json")
 const rootPkg = await Bun.file(rootPkgPath).json()
 const expectedBunVersion = rootPkg.packageManager?.split("@")[1]
@@ -18,18 +35,31 @@ const env = {
   OPENCODE_BUMP: process.env["OPENCODE_BUMP"],
   OPENCODE_VERSION: process.env["OPENCODE_VERSION"],
 }
-const CHANNEL = await (async () => {
+const RAW_CHANNEL = await (async () => {
   if (env.OPENCODE_CHANNEL) return env.OPENCODE_CHANNEL
   if (env.OPENCODE_BUMP) return "latest"
   if (env.OPENCODE_VERSION && !env.OPENCODE_VERSION.startsWith("0.0.0-")) return "latest"
   return await $`git branch --show-current`.text().then((x) => x.trim())
 })()
+const CHANNEL = normalize(RAW_CHANNEL)
 const IS_PREVIEW = CHANNEL !== "latest"
 
 const VERSION = await (async () => {
-  if (env.OPENCODE_VERSION) return env.OPENCODE_VERSION
-  if (IS_PREVIEW) return `0.0.0-${CHANNEL}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
-  const version = await fetch("https://registry.npmjs.org/opencode-ai/latest")
+  if (env.OPENCODE_VERSION) {
+    if (env.OPENCODE_VERSION.includes("_")) {
+      throw new Error(
+        `Invalid OPENCODE_VERSION '${env.OPENCODE_VERSION}': '_' is not allowed in SemVer. Use '-' instead.`,
+      )
+    }
+    return env.OPENCODE_VERSION
+  }
+
+  if (IS_PREVIEW) {
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")
+    return `0.0.0-${CHANNEL}-${stamp}`
+  }
+
+  const version = await fetch("https://registry.npmjs.org/overcode-ai/latest")
     .then((res) => {
       if (!res.ok) throw new Error(res.statusText)
       return res.json()
