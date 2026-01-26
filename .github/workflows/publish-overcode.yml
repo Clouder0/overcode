@@ -3,7 +3,7 @@ name: publish-overcode-ai
 on:
   push:
     branches:
-      - dev
+      - my_dev
     tags:
       - "overcode-ai-v*.*.*"
   workflow_dispatch:

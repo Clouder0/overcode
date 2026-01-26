@@ -3,11 +3,11 @@ name: release
 on:
   push:
     tags:
-      - "v*"
+      - "overcode-ai-v*.*.*"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag (e.g., v1.0.0)"
+        description: "Version tag (e.g., overcode-ai-v1.0.0)"
         required: true
         type: string
 
@@ -20,12 +20,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - uses: ./.github/actions/setup-bun
 
-      - name: Install dependencies
-        run: bun install
+      - name: Resolve tag + build version
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.version }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          case "$tag" in
+            overcode-ai-v*) ;;
+            *)
+              echo "Input must be a tag like 'overcode-ai-v1.2.3' (got '$tag')" >&2
+              exit 1
+              ;;
+          esac
+
+          version="${tag#overcode-ai-v}"
+
+          printf '%s\n' "tag=$tag" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "version=$version" >> "$GITHUB_OUTPUT"
+
+          printf '%s\n' "OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
+          printf '%s\n' "OPENCODE_CHANNEL=latest" >> "$GITHUB_ENV"
 
       - name: Build
         working-directory: packages/opencode
@@ -34,7 +55,15 @@ jobs:
       - name: Package
         working-directory: packages/opencode/dist
         run: |
-          for dir in opencode-*/; do
+          shopt -s nullglob
+          dirs=(overcode-ai-*/)
+          if [ ${#dirs[@]} -eq 0 ]; then
+            echo "No build outputs found in packages/opencode/dist" >&2
+            ls -la
+            exit 1
+          fi
+
+          for dir in "${dirs[@]}"; do
             name="${dir%/}"
             if [[ "$name" == *"linux"* ]]; then
               (cd "${name}/bin" && tar -czf "../../${name}.tar.gz" *)
@@ -43,21 +72,19 @@ jobs:
             fi
           done
 
-      - name: Get version
-        id: version
+      - name: Create Release
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          shopt -s nullglob
+          assets=(./packages/opencode/dist/*.tar.gz ./packages/opencode/dist/*.zip)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No release artifacts found in ./packages/opencode/dist" >&2
+            exit 1
           fi
 
-      - name: Create Release
-        run: |
-          gh release create ${{ steps.version.outputs.version }} \
-            --title "${{ steps.version.outputs.version }}" \
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --title "${{ steps.meta.outputs.tag }}" \
             --generate-notes \
-            ./packages/opencode/dist/*.tar.gz \
-            ./packages/opencode/dist/*.zip
+            "${assets[@]}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
