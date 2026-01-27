@@ -13,6 +13,7 @@ const dir = path.resolve(__dirname, "..")
 process.chdir(dir)
 
 import pkg from "../package.json"
+import root from "../../../package.json"
 import { Script } from "@opencode-ai/script"
 
 const singleFlag = process.argv.includes("--single")
@@ -134,6 +135,8 @@ for (const item of targets) {
         version: Script.version,
         os: [item.os],
         cpu: [item.arch],
+        // Required for npm provenance/trusted publishing.
+        repository: root.repository,
       },
       null,
       2,

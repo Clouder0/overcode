@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
 import pkg from "../package.json"
+import root from "../../../package.json"
 import { Script } from "@opencode-ai/script"
 import { fileURLToPath } from "url"
 
@@ -31,6 +32,8 @@ await Bun.file(`./dist/${pkg.name}/package.json`).write(
       },
       version: Script.version,
       optionalDependencies: binaries,
+      // Required for npm provenance/trusted publishing.
+      repository: root.repository,
     },
     null,
     2,
