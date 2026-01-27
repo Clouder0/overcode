@@ -255,9 +255,13 @@ export function Session() {
 
   const exit = useExit()
   useKeyboard((evt) => {
-    if (keybind.match("app_exit", evt)) {
-      exit()
-    }
+    if (!keybind.match("app_exit", evt)) return
+
+    // Ctrl+C/Ctrl+D overlap with prompt editing keys; let the prompt handle
+    // them (clear/delete) and only allow exiting via non-editing bindings.
+    if (evt.ctrl && (evt.name === "c" || evt.name === "d")) return
+
+    exit()
   })
 
   // Helper: Find next visible message boundary in direction

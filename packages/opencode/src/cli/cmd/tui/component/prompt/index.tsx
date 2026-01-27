@@ -35,6 +35,7 @@ import { locateTokensByOffset } from "../../lib/prompt-token-offset"
 import { cols, maxLineCols } from "../../lib/cols"
 import { truncateEnd, truncateMiddle } from "../../lib/cols"
 import { expandPromptPastes } from "../../lib/prompt-paste"
+import { twice } from "../../lib/twice"
 
 export type PromptProps = {
   sessionID?: string
@@ -252,6 +253,16 @@ export function Prompt(props: PromptProps) {
     recentRemovedExtmarkIds: [],
     interrupt: 0,
   })
+
+  const exitWindow = 1000
+  const [armed, setArmed] = createSignal(0)
+  const arm = (now: number) => {
+    setArmed(now)
+    setTimeout(() => {
+      if (armed() !== now) return
+      setArmed(0)
+    }, exitWindow)
+  }
 
   // Initialize agent/model/variant from last user message when session changes
   let syncedSessionID: string | undefined
@@ -1662,8 +1673,33 @@ export function Prompt(props: PromptProps) {
                   setStore("extmarkToPartIndex", new Map())
                   setStore("partByExtmarkId", new Map())
                   setStore("recentRemovedExtmarkIds", [])
-                  setStore("partByExtmarkId", new Map())
-                  setStore("recentRemovedExtmarkIds", [])
+
+                  // If Ctrl+C is also an app-exit binding, treat clearing as the
+                  // first press so a second Ctrl+C exits.
+                  if (keybind.match("app_exit", e) && e.ctrl && e.name === "c" && !e.repeated) {
+                    arm(Date.now())
+                  }
+                  return
+                }
+
+                if (keybind.match("app_exit", e) && e.ctrl && e.name === "c" && store.prompt.input === "") {
+                  e.preventDefault()
+                  if (e.repeated) return
+
+                  const now = Date.now()
+                  const result = twice({ now, last: armed(), window: exitWindow })
+
+                  if (result.hit) {
+                    await exit()
+                    return
+                  }
+
+                  arm(result.next)
+                  toast.show({
+                    message: "Press Ctrl+C again to exit",
+                    variant: "info",
+                    duration: 1500,
+                  })
                   return
                 }
                 if (keybind.match("app_exit", e)) {
