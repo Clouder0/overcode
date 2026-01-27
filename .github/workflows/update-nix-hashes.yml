@@ -6,13 +6,7 @@ permissions:
 on:
   workflow_dispatch:
   push:
-    paths:
-      - "bun.lock"
-      - "package.json"
-      - "packages/*/package.json"
-      - "flake.lock"
-      - ".github/workflows/update-nix-hashes.yml"
-  pull_request:
+    branches: [dev]
     paths:
       - "bun.lock"
       - "package.json"
@@ -22,7 +16,8 @@ on:
 
 jobs:
   update-node-modules-hashes:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Keep this workflow from mutating feature branches.
+    if: github.ref_name == 'dev'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       TITLE: node_modules hashes
