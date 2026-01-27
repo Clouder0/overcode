@@ -49,17 +49,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm supports trusted publishing
         run: npm i -g npm@latest
 
-      - name: Configure npm for OIDC-only publishing
+      - name: Clear Node auth token (OIDC-only)
         shell: bash
         run: |
-          # Avoid any implicit token-based auth (ex: setup-node writing ~/.npmrc).
-          npmrc="$RUNNER_TEMP/oidc-only.npmrc"
-          printf '%s\n' "registry=https://registry.npmjs.org/" > "$npmrc"
-          printf '%s\n' "NPM_CONFIG_USERCONFIG=$npmrc" >> "$GITHUB_ENV"
+          # actions/setup-node writes an .npmrc that references $NODE_AUTH_TOKEN.
+          # It also populates NODE_AUTH_TOKEN with a dummy value if unset.
+          # Clearing forces npm to use OIDC trusted publishing instead.
+          printf '%s\n' "NODE_AUTH_TOKEN=" >> "$GITHUB_ENV"
 
       - name: Configure publish env (branch push)
         if: github.event_name == 'push'
@@ -108,17 +109,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm supports trusted publishing
         run: npm i -g npm@latest
 
-      - name: Configure npm for OIDC-only publishing
+      - name: Clear Node auth token (OIDC-only)
         shell: bash
         run: |
-          # Avoid any implicit token-based auth (ex: setup-node writing ~/.npmrc).
-          npmrc="$RUNNER_TEMP/oidc-only.npmrc"
-          printf '%s\n' "registry=https://registry.npmjs.org/" > "$npmrc"
-          printf '%s\n' "NPM_CONFIG_USERCONFIG=$npmrc" >> "$GITHUB_ENV"
+          # actions/setup-node writes an .npmrc that references $NODE_AUTH_TOKEN.
+          # It also populates NODE_AUTH_TOKEN with a dummy value if unset.
+          # Clearing forces npm to use OIDC trusted publishing instead.
+          printf '%s\n' "NODE_AUTH_TOKEN=" >> "$GITHUB_ENV"
 
       - name: Configure publish env (tag)
         if: github.event_name == 'push'
@@ -148,6 +150,41 @@ jobs:
           printf '%s\n' "OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
           printf '%s\n' "NPM_CONFIG_PROVENANCE=${{ inputs.provenance }}" >> "$GITHUB_ENV"
           printf '%s\n' "NPM_PUBLISH_DRY_RUN=${{ inputs.dry_run }}" >> "$GITHUB_ENV"
+
+      - name: Debug OIDC token claims (safe)
+        shell: bash
+        env:
+          OIDC_AUDIENCE: npm:registry.npmjs.org
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' "node=$(node --version) npm=$(npm --version) bun=$(bun --version)"
+          printf '%s\n' "npm_registry=$(npm config get registry)"
+          printf '%s\n' "npm_userconfig=$(npm config get userconfig)"
+          printf '%s\n' "GITHUB_EVENT_NAME=$GITHUB_EVENT_NAME"
+          printf '%s\n' "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+          printf '%s\n' "GITHUB_REF=$GITHUB_REF"
+          printf '%s\n' "GITHUB_SHA=$GITHUB_SHA"
+          printf '%s\n' "GITHUB_WORKFLOW=$GITHUB_WORKFLOW"
+          printf '%s\n' "GITHUB_WORKFLOW_REF=$GITHUB_WORKFLOW_REF"
+          printf '%s\n' "GITHUB_JOB=$GITHUB_JOB"
+          printf '%s\n' "OPENCODE_CHANNEL=${OPENCODE_CHANNEL-}"
+          printf '%s\n' "OPENCODE_VERSION=${OPENCODE_VERSION-}"
+          printf '%s\n' "NPM_CONFIG_PROVENANCE=${NPM_CONFIG_PROVENANCE-}"
+          printf '%s\n' "NPM_PUBLISH_DRY_RUN=${NPM_PUBLISH_DRY_RUN-}"
+
+          if [ -n "${NODE_AUTH_TOKEN-}" ]; then
+            printf '%s\n' "NODE_AUTH_TOKEN is set (len ${#NODE_AUTH_TOKEN})"
+          fi
+
+          sep="?"
+          if [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *\?* ]]; then
+            sep="&"
+          fi
+          url="${ACTIONS_ID_TOKEN_REQUEST_URL}${sep}audience=${OIDC_AUDIENCE}"
+          json="$(curl -fsSL -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$url")"
+
+          printf '%s' "$json" | node -e 'const fs = require("fs"); const data = fs.readFileSync(0, "utf8"); const token = JSON.parse(data).value; const part = token.split(".")[1]; const text = part.replace(/-/g, "+").replace(/_/g, "/"); const pad = "=".repeat((4 - (text.length % 4)) % 4); const payload = JSON.parse(Buffer.from(text + pad, "base64").toString("utf8")); const keys = ["iss", "aud", "sub", "repository", "repository_owner", "job_workflow_ref", "workflow_ref", "workflow", "ref", "sha", "environment", "event_name", "actor", "run_id"]; const out = {}; for (const key of keys) { if (payload[key] !== undefined) out[key] = payload[key]; } console.log(JSON.stringify(out, null, 2));'
 
       - name: Publish overcode-ai (wrapper + binaries)
         run: bun ./script/publish-overcode.ts
