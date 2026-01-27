@@ -18,6 +18,7 @@ import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
 import { ProviderRequestContext } from "@/provider/request-context"
 import path from "path"
+import { Warn } from "@/config/warn"
 
 export namespace Agent {
   export const Info = z
@@ -219,14 +220,28 @@ export namespace Agent {
       item.topP = value.top_p ?? item.topP
       item.mode = value.mode ?? item.mode
       item.color = value.color ?? item.color
-      const name = (value as Record<string, unknown>)["name"] ?? value.options?.["name"]
-      if (name !== undefined) {
-        throw new Error(
-          `Agent config for "${key}" must not set "name"/"options.name". Agent ids are derived from their config keys.`,
-        )
+
+      const raw = value as Record<string, unknown>
+      const hasName = "name" in raw || (value.options ? "name" in value.options : false)
+      if (hasName) {
+        Warn.name({
+          source: "agent.config",
+          id: key,
+          value: raw["name"] ?? value.options?.["name"],
+        })
       }
+
       item.steps = value.steps ?? item.steps
-      item.options = mergeDeep(item.options, value.options ?? {})
+
+      const opts = (() => {
+        if (!value.options) return {}
+        if (!("name" in value.options)) return value.options
+        const next = { ...value.options }
+        delete next["name"]
+        return next
+      })()
+
+      item.options = mergeDeep(item.options, opts)
       item.permission = PermissionNext.merge(item.permission, PermissionNext.fromConfig(value.permission ?? {}))
     }
 

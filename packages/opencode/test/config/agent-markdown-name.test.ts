@@ -4,10 +4,11 @@ import fs from "fs/promises"
 import path from "path"
 
 import { Config } from "../../src/config/config"
+import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 
-test("rejects markdown agent frontmatter name", async () => {
+test("ignores markdown agent frontmatter name", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       const agentDir = path.join(dir, ".opencode", "agent")
@@ -19,18 +20,10 @@ test("rejects markdown agent frontmatter name", async () => {
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
-      const error = await Config.get().then(
-        () => undefined,
-        (e) => e,
-      )
-
-      expect(error).toBeDefined()
-      expect(Config.InvalidError.isInstance(error)).toBe(true)
-
-      if (Config.InvalidError.isInstance(error)) {
-        expect(error.data.path).toContain("foo.md")
-        expect(error.data.message).toContain('frontmatter must not set "name"')
-      }
+      await expect(Config.get()).resolves.toBeDefined()
+      const agent = await Agent.get("foo")
+      expect(agent.name).toBe("foo")
+      expect(agent.options.name).toBeUndefined()
     },
   })
 })

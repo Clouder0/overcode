@@ -20,6 +20,7 @@ import { Installation } from "@/installation"
 import { ConfigMarkdown } from "./markdown"
 import { existsSync } from "fs"
 import { Bus } from "@/bus"
+import { Warn } from "./warn"
 
 export namespace Config {
   const log = Log.create({ service: "config" })
@@ -288,15 +289,26 @@ export namespace Config {
       const file = rel(item, patterns) ?? path.basename(item)
       const agentName = trim(file)
 
-      if ("name" in md.data) {
-        throw new InvalidError({
+      const data = md.data as Record<string, unknown>
+      const hasName = "name" in data
+      if (hasName) {
+        Warn.name({
+          source: "agent.frontmatter",
           path: item,
-          message: `Agent frontmatter must not set "name"; agent id is derived from file path.`,
+          id: agentName,
+          value: data["name"],
         })
       }
 
+      const cleaned = (() => {
+        if (!hasName) return data
+        const next = { ...data }
+        delete next["name"]
+        return next
+      })()
+
       const config = {
-        ...md.data,
+        ...cleaned,
         prompt: md.content.trim(),
       }
       const parsed = Agent.safeParse(config)
@@ -327,18 +339,29 @@ export namespace Config {
         log.error("failed to load mode", { mode: item, err })
         return undefined
       })
-      if (!md) continue
+       if (!md) continue
 
-      if ("name" in md.data) {
-        throw new InvalidError({
+      const data = md.data as Record<string, unknown>
+      const hasName = "name" in data
+      if (hasName) {
+        Warn.name({
+          source: "mode.frontmatter",
           path: item,
-          message: `Mode frontmatter must not set "name"; mode id is derived from file path.`,
+          id: path.basename(item, ".md"),
+          value: data["name"],
         })
       }
 
+      const cleaned = (() => {
+        if (!hasName) return data
+        const next = { ...data }
+        delete next["name"]
+        return next
+      })()
+
       const name = path.basename(item, ".md")
       const config = {
-        ...md.data,
+        ...cleaned,
         prompt: md.content.trim(),
       }
       const parsed = Agent.safeParse(config)
