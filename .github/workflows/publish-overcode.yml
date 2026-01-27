@@ -49,10 +49,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm supports trusted publishing
         run: npm i -g npm@latest
+
+      - name: Configure npm for OIDC-only publishing
+        shell: bash
+        run: |
+          # Avoid any implicit token-based auth (ex: setup-node writing ~/.npmrc).
+          npmrc="$RUNNER_TEMP/oidc-only.npmrc"
+          printf '%s\n' "registry=https://registry.npmjs.org/" > "$npmrc"
+          printf '%s\n' "NPM_CONFIG_USERCONFIG=$npmrc" >> "$GITHUB_ENV"
 
       - name: Configure publish env (branch push)
         if: github.event_name == 'push'
@@ -101,10 +108,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm supports trusted publishing
         run: npm i -g npm@latest
+
+      - name: Configure npm for OIDC-only publishing
+        shell: bash
+        run: |
+          # Avoid any implicit token-based auth (ex: setup-node writing ~/.npmrc).
+          npmrc="$RUNNER_TEMP/oidc-only.npmrc"
+          printf '%s\n' "registry=https://registry.npmjs.org/" > "$npmrc"
+          printf '%s\n' "NPM_CONFIG_USERCONFIG=$npmrc" >> "$GITHUB_ENV"
 
       - name: Configure publish env (tag)
         if: github.event_name == 'push'
