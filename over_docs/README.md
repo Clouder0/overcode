@@ -56,6 +56,18 @@ For implementation details, configuration options, and developer documentation, 
 
 ---
 
+## Configuration Paths
+
+Overcode currently reuses OpenCode's config/state directories (the folder name is still `opencode`):
+
+- Config: `~/.config/opencode/opencode.json` (or `opencode.jsonc`)
+- State: `~/.local/state/opencode`
+- Data: `~/.local/share/opencode`
+
+This is intentional for compatibility, but it can be surprising if you're looking for `~/.config/overcode`.
+
+---
+
 ## Relationship to Upstream
 
 Overcode diverged significantly from OpenCode in several areas:

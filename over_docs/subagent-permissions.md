@@ -17,8 +17,7 @@ This is configured per-agent, allowing different spawning rules for different wo
 Add `subagent_spawn_agent` to your agent's permission configuration:
 
 ```yaml
-# Agent configuration
-name: coordinator
+# In .opencode/agents/coordinator.md
 permission:
   subagent_spawn: allow
   subagent_spawn_agent:
@@ -34,7 +33,7 @@ The `subagent_spawn_agent` map uses wildcard patterns:
 
 - `"*"` matches all agents
 - Specific agent names match only that agent
-- Patterns are evaluated in order, first match wins
+- Patterns are evaluated in order; last match wins (put `"*"` first, then overrides)
 
 ### Mode Detection
 
@@ -83,7 +82,7 @@ permission:
     # Coordinator can spawn anything
     "*": allow
 ---
-name: limited_worker
+# In .opencode/agents/limited_worker.md
 permission:
   subagent_spawn_agent:
     # Can only spawn docs agent
@@ -100,7 +99,7 @@ If an agent tries to spawn a denied subagent:
 1. The spawn request fails immediately
 2. An error message explains which subagent was denied
 3. The error includes the matched pattern for debugging
-4. Other subagents in the same request may still succeed
+4. No subagents are spawned in that request until permissions are fixed
 
 Preflight validation catches all denials before spawning begins, so you get a complete list of issues at once.
 

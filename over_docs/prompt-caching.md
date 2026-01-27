@@ -32,7 +32,9 @@ This tells OpenAI to treat requests within the same logical session as candidate
 
 ### Stable Tool Ordering
 
-Tool definitions in your system prompt are sorted alphabetically. This ensures that if your tool list hasn't changed, the exact same tokens are sent, maximizing cache hits.
+Tool definitions in your system prompt are ordered deterministically. This ensures that if your tool list hasn't changed, the exact same tokens are sent, maximizing cache hits.
+
+Built-in tools use a stable order, and dynamically loaded tools (custom tools, MCP tools) are sorted to keep prompts stable.
 
 ### Cached Environment
 

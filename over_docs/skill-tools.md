@@ -53,7 +53,9 @@ The following happens automatically:
 
 ### Session Tool Overrides
 
-Overcode maintains a per-session override for tool availability. When a skill declares tools, those tools are added to the session's override list, enabling them even if the agent's default configuration restricts them.
+Overcode maintains a per-session override for tool availability. When a skill declares tools, those tools are added to the session's override list so they can be used in that session (subject to normal permissions).
+
+This does not bypass denied permissions; it mainly affects tool availability for the session.
 
 ### Subagent Isolation
 

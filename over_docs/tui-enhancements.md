@@ -25,7 +25,7 @@ Primary Session
 
 Each session shows its current state:
 
-- **Working** — Actively processing
+- **Working** — Actively processing (including retry/backoff)
 - **Waiting** — Waiting for messages from other sessions
 - **Idle** — Ready for input
 - **Done** — Task complete
@@ -67,6 +67,32 @@ This helps you understand if your sessions are benefiting from prompt caching. H
 
 ---
 
+## LSP Status (and Limits)
+
+The sidebar also shows how many LSP servers are currently running. Overcode caches LSP servers for speed, but in large repos (or with many subagents) this can use significant memory and CPU.
+
+You can cap the LSP cache with `experimental.lsp` in your global config (recommended): `~/.config/opencode/opencode.json` (or `opencode.jsonc`).
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "lsp": {
+      "maxServers": 6,
+      "idleMs": 600000,
+      "protectedRatio": 0.8
+    }
+  }
+}
+```
+
+Notes:
+
+- If `maxServers` is set, Overcode evicts idle LSP servers when it needs capacity.
+- If all servers are busy, eviction may wait until current LSP work completes.
+
+---
+
 ## Paste Collapse/Expand
 
 Large pasted content can be collapsed to save screen space:
@@ -75,6 +101,19 @@ Large pasted content can be collapsed to save screen space:
 - Click to expand and view the full content
 - Click again to collapse back
 - Useful for long code snippets, error traces, or documentation
+
+---
+
+## Memory Safety (Message Parts)
+
+To avoid long-running TUI sessions growing without bound, Overcode keeps a small rolling window of session history loaded in memory.
+
+- The TUI syncs the latest 100 messages per session.
+- Message parts for older messages are pruned from the in-memory store.
+
+If a permission prompt is pending, its related message parts are pinned until you respond.
+
+This keeps memory stable, but it also means features that operate on loaded messages (like timeline and transcript export) reflect the synced window.
 
 ---
 

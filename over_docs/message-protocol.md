@@ -34,6 +34,7 @@ await wait_agent_message({
   sources: ["ses_abc123", "ses_def456"], // Sessions to wait for
   timeout: 300000, // 5 minutes
   mode: "all", // "all" or "any"
+  since: 0, // -1 = from session start, 0 = from now, N = seq checkpoint
 })
 ```
 
@@ -41,6 +42,18 @@ The `mode` parameter controls when the wait completes:
 
 - `"all"` — Wait until every source has sent a message
 - `"any"` — Wait until at least one source has sent a message
+
+### Wait cursors (`since`)
+
+Overcode assigns each delivered agent message a monotonic `seq` number. `wait_agent_message` uses `since` as a cursor so you can avoid accidentally matching old messages.
+
+- `since: -1` — from session start (includes any past messages)
+- `since: 0` — from now (recommended for most waits)
+- `since: <seq>` — from a known checkpoint (advanced)
+
+Delivered messages are rendered with `(seq: N)` in the header, so you can keep checkpoints when coordinating complex workflows.
+
+Wildcard waits: `sources: ["*"]` with `mode: "any"` waits for the first message from any agent.
 
 ---
 
@@ -60,7 +73,7 @@ When an agent calls `send_agent_message`:
 Messages appear in the receiving agent's conversation as user messages with special formatting:
 
 ```
-Sender Agent with session id ses_abc123 sent a message:
+Sender Agent with session id ses_abc123 (seq: 42) sent a message:
 <content>
 Analysis complete. Found 3 security issues.
 </content>
@@ -86,7 +99,14 @@ When an agent calls `wait_agent_message`:
 Agent output is never automatically visible to other agents. To communicate:
 
 - Use `send_agent_message` for messages
-- The receiving agent must be waiting or idle to receive
+- Messages are queued and persisted; the receiving agent does not need to be waiting to receive
+- Use `wait_agent_message` when you want to pause until a response arrives
+
+### Bounded Inbox
+
+To keep long-running instances stable, Overcode keeps a bounded in-memory pending queue per session (capped at 200 messages). If a session receives a very large number of messages without processing them, older pending messages may be dropped.
+
+In practice: batch progress updates and prefer periodic summaries over spamming many small messages.
 
 ### Timeouts Are Not Failures
 
@@ -112,7 +132,7 @@ The simplest pattern for coordinated work:
 ```typescript
 // 1. Spawn agents
 await subagent_spawn({
-  agents: [{ agent: "explorer", prompt: "Analyze the codebase." }],
+  agents: [{ agent: "explore", prompt: "Analyze the codebase." }],
 })
 
 // 2. Wait for results
@@ -120,6 +140,7 @@ await wait_agent_message({
   sources: ["ses_explorer_id"],
   mode: "all",
   timeout: 600000,
+  since: 0,
 })
 ```
 
@@ -130,7 +151,7 @@ Collect results from multiple agents:
 ```typescript
 await subagent_spawn({
   agents: [
-    { agent: "explorer", prompt: "Find all API endpoints." },
+    { agent: "explore", prompt: "Find all API endpoints." },
     { agent: "test", prompt: "Review test coverage." },
     { agent: "docs", prompt: "Check documentation completeness." },
   ],
@@ -140,6 +161,7 @@ await wait_agent_message({
   sources: ["ses_1", "ses_2", "ses_3"],
   mode: "all",
   timeout: 600000,
+  since: 0,
 })
 ```
 
@@ -233,7 +255,7 @@ Subagents have isolated sessions. You can navigate directly to any subagent's se
 // Orchestrator spawns agents
 await subagent_spawn({
   agents: [
-    { agent: "explorer", prompt: "Analyze the payment system." },
+    { agent: "explore", prompt: "Analyze the payment system." },
     { agent: "test", prompt: "Test payment flows." },
   ],
 })
@@ -241,10 +263,10 @@ await subagent_spawn({
 
 **In the TUI:**
 
-1. Human navigates to the explorer subagent's session
+1. Human navigates to the explore subagent's session
 2. Human types: "We use Stripe for payments, not a custom solution. Please focus on Stripe integration points."
-3. Explorer updates its analysis with the correct context
-4. Later, the test agent (not the human) can consult the explorer for guidance via send_agent_message
+3. Explore updates its analysis with the correct context
+4. Later, the test agent (not the human) can consult the explore agent for guidance via send_agent_message
 5. Orchestrator receives clean, context-aware results from both agents
 
 ---

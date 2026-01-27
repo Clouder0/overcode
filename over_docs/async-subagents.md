@@ -74,7 +74,7 @@ The orchestrator delegates tasks to multiple subagents:
 ```typescript
 await subagent_spawn({
   agents: [
-    { agent: "explorer", prompt: "Analyze the authentication module." },
+    { agent: "explore", prompt: "Analyze the authentication module." },
     { agent: "test", prompt: "Write tests for auth module." },
     { agent: "docs", prompt: "Document auth module APIs." },
   ],
@@ -202,6 +202,7 @@ await wait_agent_message({
   sources: ["ses_specialist_id"],
   timeout: 300000, // 5 minutes
   mode: "all",
+  since: 0, // -1 = from session start, 0 = from now, N = seq checkpoint
 })
 ```
 
@@ -324,13 +325,17 @@ Subagents have their own tool access, permission overrides, and conversation his
 
 ### Safe File Writes
 
-Overcode enforces a read-before-write flow for tools like `edit`, `write`, and `patch`. This prevents stale edits from silently overwriting changes made by other agents (or by you in another session).
+Overcode enforces a read-before-write flow for tools like `edit`, `write`, and `apply_patch`. This prevents stale edits from silently overwriting changes made by other agents (or by you in another session).
 
 This matters most with parallel subagents (or batched tool calls): if two sessions touch the same file, a later write can be rejected when its view is out of date.
 
 - On Windows/WSL, filesystem `mtime` can drift; Overcode uses a file stamp (`mtime` + size + content fingerprint) to avoid false positives when content is unchanged
 - If you hit a "modified since it was last read" error, re-read the file and retry against the latest contents
 - For ongoing work, assign file ownership per agent (or serialize writes) to avoid collisions
+
+### LSP Limits
+
+Parallel subagents often touch many files across languages, which can spin up multiple LSP servers. Overcode caches LSP servers for speed, but you can cap how many are kept alive with `experimental.lsp.maxServers` (see [TUI Enhancements](tui-enhancements.md)).
 
 ### Persistent Sessions
 
