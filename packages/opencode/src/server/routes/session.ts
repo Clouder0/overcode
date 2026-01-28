@@ -5,7 +5,7 @@ import z from "zod"
 import { Session } from "../../session"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
-import { SessionCompaction } from "../../session/compaction"
+import { SessionCPD } from "../../session/cpd"
 import { SessionRevert } from "../../session/revert"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
@@ -18,6 +18,22 @@ import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 
 const log = Log.create({ service: "server" })
+
+const SessionContext = z
+  .object({
+    cpd: SessionCPD.Data.extend({
+      size: z.number().optional(),
+    }).nullable(),
+    flags: z.object({
+      cpd: z.boolean(),
+      trim: z.boolean(),
+      think: z.boolean(),
+      rctx: z.boolean(),
+    }),
+  })
+  .meta({
+    ref: "SessionContext",
+  })
 
 export const SessionRoutes = lazy(() =>
   new Hono()
@@ -116,9 +132,53 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
-        log.info("SEARCH", { url: c.req.url })
         const session = await Session.get(sessionID)
         return c.json(session)
+      },
+    )
+    .get(
+      "/:sessionID/context",
+      describeRoute({
+        summary: "Get session context",
+        description: "Retrieve the Compacted Prefix Digest (CPD) and context integrity flags for a session.",
+        operationId: "session.context",
+        responses: {
+          200: {
+            description: "Session context",
+            content: {
+              "application/json": {
+                schema: resolver(SessionContext),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Session.get.schema,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const session = await Session.get(sessionID)
+        const cpd = await SessionCPD.get(sessionID)
+
+        return c.json({
+          cpd: cpd
+            ? {
+                ...cpd,
+                size: session.context?.cpd?.size,
+              }
+            : null,
+          flags: {
+            cpd: !!cpd,
+            trim: session.context?.trim === true,
+            think: session.context?.think === true,
+            rctx: session.context?.rctx === true,
+          },
+        })
       },
     )
     .get(
@@ -518,24 +578,198 @@ export const SessionRoutes = lazy(() =>
         const session = await Session.get(sessionID)
         await SessionRevert.cleanup(session)
         const msgs = await Session.messages({ sessionID })
-        let currentAgent = await Agent.defaultAgent()
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const info = msgs[i].info
-          if (info.role === "user") {
-            currentAgent = info.agent || (await Agent.defaultAgent())
-            break
-          }
+
+        const byParent = new Map<string, MessageV2.WithParts[]>()
+        for (const msg of msgs) {
+          if (msg.info.role !== "assistant") continue
+          const assistant = msg.info as MessageV2.Assistant
+          if (!assistant.parentID) continue
+          const existing = byParent.get(assistant.parentID) ?? []
+          existing.push(msg)
+          byParent.set(assistant.parentID, existing)
         }
-        await SessionCompaction.create({
-          sessionID,
-          agent: currentAgent,
-          model: {
-            providerID: body.providerID,
-            modelID: body.modelID,
-          },
-          auto: body.auto,
+
+        const isUserRelevant = (msg: MessageV2.WithParts) => {
+          if (msg.info.role !== "user") return false
+          return msg.parts.some((part) => {
+            if (part.type === "text") return !part.ignored && part.synthetic !== true
+            if (part.type === "file") return true
+            if (part.type === "message") return true
+            if (part.type === "agent") return true
+            if (part.type === "subtask") return true
+            return false
+          })
+        }
+
+        const isAssistantAnswered = (info: MessageV2.Assistant) => {
+          if (!info.time.completed) return false
+          if (!info.finish) return false
+          if (info.summary === true) return false
+          if (["tool-calls", "unknown"].includes(info.finish)) return false
+          if (info.error) return false
+          return true
+        }
+
+        const users = msgs.filter(isUserRelevant)
+        const target = users.find((msg) => {
+          const user = msg.info as MessageV2.User
+          const replies = byParent.get(user.id) ?? []
+          return !replies.some((m) => m.info.role === "assistant" && isAssistantAnswered(m.info as MessageV2.Assistant))
         })
-        await SessionPrompt.loop(sessionID)
+
+        const uptoUser = (() => {
+          if (target) {
+            const idx = users.findIndex((m) => m.info.id === target.info.id)
+            if (idx <= 0) return
+            return users[idx - 1]?.info.id
+          }
+          return users.at(-1)?.info.id
+        })()
+
+        if (!uptoUser) {
+          return c.json(true)
+        }
+
+        const existing = await SessionCPD.get(sessionID)
+        const startIndex = (() => {
+          if (!existing?.upto) return 0
+          const idx = users.findIndex((m) => m.info.id > existing.upto)
+          if (idx === -1) return users.length
+          return idx
+        })()
+        const uptoIndex = users.findIndex((m) => m.info.id === uptoUser)
+        if (uptoIndex === -1 || startIndex > uptoIndex) {
+          return c.json(true)
+        }
+
+        const deltaUsers = users.slice(startIndex, uptoIndex + 1)
+        const deltaMsgs = deltaUsers.flatMap((m) => [m, ...(byParent.get(m.info.id) ?? [])])
+
+        const delta = deltaMsgs
+          .map((m) => {
+            const role = m.info.role === "user" ? "User" : "Assistant"
+            const texts = m.parts
+              .filter((p): p is MessageV2.TextPart => p.type === "text")
+              .filter((p) => !p.ignored)
+              .filter((p) => !("synthetic" in p && p.synthetic))
+              .map((p) => p.text.trim())
+              .filter((t) => t)
+            const files = m.parts
+              .filter((p): p is MessageV2.FilePart => p.type === "file")
+              .map((f) => `File: ${MessageV2.fileLabel(f)} (${f.mime})`)
+            const msgs = m.parts
+              .filter((p): p is MessageV2.MessagePart => p.type === "message" && p.direction === "incoming")
+              .map((p) => `Message from ${p.peer}:\n${p.text}`)
+            const tools = m.parts
+              .filter((p): p is MessageV2.ToolPart => p.type === "tool")
+              .flatMap((p) => {
+                if (p.state.status !== "completed") return []
+
+                const raw = p.state.output
+                const excerpt = MessageV2.excerpt(raw, 4000)
+                const truncated = excerpt !== raw
+                const note = truncated ? `[Output truncated for CPD delta (${raw.length} chars total)]` : ""
+                const trimmed = p.state.time.compacted ? "[Tool output trimmed in continuation prompt]" : ""
+                const body = [excerpt, note, trimmed].filter((x) => x).join("\n")
+                return [
+                  [
+                    `Tool ${p.tool}:`,
+                    `Input: ${JSON.stringify(p.state.input)}`,
+                    `Output:\n${body}`,
+                  ].join("\n"),
+                ]
+              })
+            const blocks = [texts.join("\n"), files.join("\n"), msgs.join("\n\n"), tools.join("\n\n")].filter(
+              (x) => x,
+            )
+            if (blocks.length === 0) return ""
+            return [`[${role}]`, ...blocks].join("\n")
+          })
+          .filter((x) => x)
+          .join("\n\n")
+
+        const userText = (msg: MessageV2.WithParts) =>
+          msg.parts
+            .filter((p): p is MessageV2.TextPart => p.type === "text")
+            .filter((p) => !p.ignored)
+            .filter((p) => !("synthetic" in p && p.synthetic))
+            .map((p) => p.text.trim())
+            .filter((t) => t)
+            .join("\n")
+            .trim()
+
+        const request = target ? userText(target) : users.at(-1) ? userText(users.at(-1)!) : ""
+
+        const reasoning = (() => {
+          const assistant = msgs.findLast((m) => m.info.role === "assistant" && m.parts.some((p) => p.type === "reasoning"))
+          if (!assistant) return
+          const parts = assistant.parts
+          const start = (() => {
+            for (let i = parts.length - 1; i >= 0; i--) {
+              if (parts[i]?.type === "step-start") return i
+            }
+            return 0
+          })()
+          const segment = parts.slice(start)
+          const reasoningParts = segment.filter((p): p is MessageV2.ReasoningPart => p.type === "reasoning" && !p.ignored)
+          if (reasoningParts.length === 0) return
+          return {
+            role: "assistant" as const,
+            content: reasoningParts.map((p) => ({
+              type: "reasoning" as const,
+              text: p.text,
+              providerOptions: p.metadata,
+            })),
+          }
+        })()
+
+        const started = Date.now()
+        await Session.update(sessionID, (draft) => {
+          draft.time.compacting = started
+        })
+
+        try {
+          const updated = await SessionCPD.update({
+            sessionID,
+            model: {
+              providerID: body.providerID,
+              modelID: body.modelID,
+            },
+            user: {
+              sessionID,
+              id: target ? (target.info as MessageV2.User).id : uptoUser,
+              model: {
+                providerID: body.providerID,
+                modelID: body.modelID,
+              },
+              agent: target ? (target.info as MessageV2.User).agent : await Agent.defaultAgent(),
+            },
+            tail: {
+              request,
+              flags: {
+                trim: session.context?.trim === true,
+                think: session.context?.think === true,
+                rctx: session.context?.rctx === true,
+              },
+            },
+            reasoning,
+            existing: existing?.text,
+            delta,
+            abort: c.req.raw.signal,
+          })
+
+          await SessionCPD.set(sessionID, {
+            text: updated.text,
+            upto: uptoUser,
+          })
+          if (updated.rctx) {
+            await SessionCPD.flag(sessionID, { rctx: true })
+          }
+        } finally {
+          await Session.update(sessionID, (draft) => {
+            if (draft.time.compacting === started) draft.time.compacting = undefined
+          }).catch(() => {})
+        }
         return c.json(true)
       },
     )

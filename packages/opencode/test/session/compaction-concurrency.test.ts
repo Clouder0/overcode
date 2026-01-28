@@ -6,9 +6,10 @@ import { Session } from "../../src/session"
 import { Identifier } from "../../src/id/id"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
-import { SessionCompaction } from "../../src/session/compaction"
 import { Provider } from "../../src/provider/provider"
 import { SessionMessage } from "../../src/session/message-routing"
+import { SessionCPD } from "../../src/session/cpd"
+import { Config } from "../../src/config/config"
 
 Log.init({ print: false })
 
@@ -16,17 +17,24 @@ afterEach(() => {
   mock.restore()
 })
 
-describe("session.compaction concurrency", () => {
-  test("uses compaction task messageID as parentID", async () => {
+describe("session context maintenance concurrency", () => {
+  test("adds a hidden reminder to messages created during maintenance", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
+        const cfgSpy = spyOn(Config, "get").mockResolvedValue({ compaction: { auto: true }, experimental: {} } as any)
         const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
           id: "dummy",
           providerID: "dummy",
-          limit: { context: 8192, output: 4096 },
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          // Make budgets small so we enter maintenance.
+          limit: { context: 256, output: 200 },
         } as any)
 
         const session = await Session.create({})
@@ -37,6 +45,7 @@ describe("session.compaction concurrency", () => {
 
         await using _cleanup = {
           [Symbol.asyncDispose]: async () => {
+            cfgSpy.mockRestore()
             providerSpy.mockRestore()
             await Session.remove(session.id)
             if (prev === undefined) delete g.__OPENCODE_TEST_ALLOW_LOOP__
@@ -46,7 +55,7 @@ describe("session.compaction concurrency", () => {
 
         const now = Date.now()
 
-        const user1 = await Session.updateMessage({
+        const u1 = await Session.updateMessage({
           id: Identifier.ascending("message"),
           role: "user",
           sessionID: session.id,
@@ -56,17 +65,17 @@ describe("session.compaction concurrency", () => {
         })
         await Session.updatePart({
           id: Identifier.ascending("part"),
-          messageID: user1.id,
           sessionID: session.id,
+          messageID: u1.id,
           type: "text",
-          text: "hello",
+          text: "u1",
         })
 
         await Session.updateMessage({
           id: Identifier.ascending("message"),
           role: "assistant",
           sessionID: session.id,
-          parentID: user1.id,
+          parentID: u1.id,
           modelID: "dummy",
           providerID: "dummy",
           mode: "build",
@@ -74,11 +83,11 @@ describe("session.compaction concurrency", () => {
           path: { cwd: tmp.path, root: tmp.path },
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: now + 1 },
+          time: { created: now + 1, completed: now + 1 },
           finish: "end_turn",
         })
 
-        const compactReq = await Session.updateMessage({
+        const u2 = await Session.updateMessage({
           id: Identifier.ascending("message"),
           role: "user",
           sessionID: session.id,
@@ -88,125 +97,10 @@ describe("session.compaction concurrency", () => {
         })
         await Session.updatePart({
           id: Identifier.ascending("part"),
-          messageID: compactReq.id,
           sessionID: session.id,
-          type: "compaction",
-          auto: false,
-        })
-
-        const delivered = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "build",
-          model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now + 3 },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: delivered.id,
-          sessionID: session.id,
-          type: "message",
-          direction: "incoming",
-          peer: "ses_test",
-          peerType: "agent",
-          text: "hi from agent",
-          time: { created: now + 3 },
-        })
-
-        let captured: any
-        const compactionSpy = spyOn(SessionCompaction, "process").mockImplementation(async (input: any) => {
-          captured = input
-          return "stop"
-        })
-
-        await SessionPrompt.loop(session.id)
-
-        compactionSpy.mockRestore()
-
-        expect(captured).toBeDefined()
-        expect(captured.parentID).toBe(compactReq.id)
-        expect(captured.messages.some((m: any) => m.info.id === delivered.id)).toBe(false)
-        expect(captured.messages.at(-1)?.info.id).toBe(compactReq.id)
-      },
-    })
-  })
-
-  test("adds a hidden reminder to messages created during compaction", async () => {
-    await using tmp = await tmpdir({ git: true })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
-          id: "dummy",
-          providerID: "dummy",
-          limit: { context: 8192, output: 4096 },
-        } as any)
-
-        const session = await Session.create({})
-
-        const g = globalThis as any
-        const prev = g.__OPENCODE_TEST_ALLOW_LOOP__
-        g.__OPENCODE_TEST_ALLOW_LOOP__ = new Set([session.id])
-
-        await using _cleanup = {
-          [Symbol.asyncDispose]: async () => {
-            providerSpy.mockRestore()
-            await Session.remove(session.id)
-            if (prev === undefined) delete g.__OPENCODE_TEST_ALLOW_LOOP__
-            if (prev !== undefined) g.__OPENCODE_TEST_ALLOW_LOOP__ = prev
-          },
-        }
-
-        const now = Date.now()
-
-        const user1 = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "build",
-          model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: user1.id,
-          sessionID: session.id,
+          messageID: u2.id,
           type: "text",
-          text: "hello",
-        })
-
-        await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "assistant",
-          sessionID: session.id,
-          parentID: user1.id,
-          modelID: "dummy",
-          providerID: "dummy",
-          mode: "build",
-          agent: "build",
-          path: { cwd: tmp.path, root: tmp.path },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: now + 1 },
-          finish: "end_turn",
-        })
-
-        const compactReq = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "build",
-          model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now + 2 },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: compactReq.id,
-          sessionID: session.id,
-          type: "compaction",
-          auto: true,
+          text: "x".repeat(4096),
         })
 
         let holdResolve: (() => void) | undefined
@@ -219,10 +113,12 @@ describe("session.compaction concurrency", () => {
           startedResolve = resolve
         })
 
-        const compactionSpy = spyOn(SessionCompaction, "process").mockImplementation(async () => {
+        let captured: { delta?: string } | undefined
+        const cpdSpy = spyOn(SessionCPD, "update").mockImplementation(async (input: any) => {
+          captured = { delta: input?.delta }
           startedResolve?.()
           await hold
-          return "stop"
+          return { text: "cpd", rctx: false }
         })
 
         const run = SessionPrompt.loop(session.id)
@@ -245,16 +141,19 @@ describe("session.compaction concurrency", () => {
         holdResolve?.()
         await run
 
-        compactionSpy.mockRestore()
+        cpdSpy.mockRestore()
 
-        const deliveredReminder = await (async () => {
+        expect(captured?.delta).toBeDefined()
+        expect(captured?.delta).not.toContain("hello while compacting")
+
+        const reminder = await (async () => {
           for (let i = 0; i < 50; i++) {
             const parts = await MessageV2.parts(delivered.id)
             const match = parts.find((p) => {
               if (p.type !== "text") return false
               if (!p.synthetic) return false
               const meta = p.metadata as any
-              return meta?.opencode?.compaction?.requestID === compactReq.id
+              return meta?.opencode?.compaction?.requestID === u2.id
             })
             if (match) return match
             await Bun.sleep(10)
@@ -262,20 +161,17 @@ describe("session.compaction concurrency", () => {
           return
         })()
 
-        if (!deliveredReminder) {
+        if (!reminder) {
           const parts = await MessageV2.parts(delivered.id)
-          throw new Error(
-            `missing delivered compaction reminder. delivered=${JSON.stringify(parts)} human=${JSON.stringify(human.parts)}`,
-          )
+          throw new Error(`missing compaction reminder. delivered=${JSON.stringify(parts)} human=${JSON.stringify(human.parts)}`)
         }
 
         const humanReminder = human.parts.find((p) => {
           if (p.type !== "text") return false
           if (!p.synthetic) return false
           const meta = p.metadata as any
-          return meta?.opencode?.compaction?.requestID === compactReq.id
+          return meta?.opencode?.compaction?.requestID === u2.id
         })
-
         expect(humanReminder).toBeDefined()
       },
     })

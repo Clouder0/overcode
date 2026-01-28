@@ -62,6 +62,20 @@ export namespace Session {
           diffs: Snapshot.FileDiff.array().optional(),
         })
         .optional(),
+      context: z
+        .object({
+          cpd: z
+            .object({
+              updated: z.number(),
+              upto: Identifier.schema("message"),
+              size: z.number().optional(),
+            })
+            .optional(),
+          trim: z.boolean().optional(),
+          think: z.boolean().optional(),
+          rctx: z.boolean().optional(),
+        })
+        .optional(),
       share: z
         .object({
           url: z.string(),
@@ -425,6 +439,7 @@ export namespace Session {
       SessionMessage.clear(sessionID)
       WaitPolicy.clear(sessionID)
       await Storage.remove(["compaction", sessionID]).catch(() => {})
+      await Storage.remove(["cpd", sessionID]).catch(() => {})
       await SessionToolOverrides.clear(sessionID).catch((error) => {
         log.error("failed to clear tool overrides", { sessionID, error })
       })

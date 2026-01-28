@@ -1070,6 +1070,12 @@ export namespace Config {
             .optional(),
           chatMaxRetries: z.number().optional().describe("Number of retries for chat completions on failure"),
           disable_paste_summary: z.boolean().optional(),
+          context_pipeline: z
+            .boolean()
+            .optional()
+            .describe(
+              "Enable the new context pipeline (CPD + tail) for compaction, trimming, and reasoning preservation. Defaults to enabled when unset.",
+            ),
           batch_tool: z.boolean().optional().describe("Enable the batch tool"),
           openTelemetry: z
             .boolean()

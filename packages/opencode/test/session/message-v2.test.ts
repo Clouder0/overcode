@@ -134,7 +134,7 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("converts user text/file parts and injects compaction/subtask prompts", () => {
+  test("converts user text/file parts and injects subtask prompts", () => {
     const messageID = "m-user"
 
     const input: MessageV2.WithParts[] = [
@@ -200,7 +200,6 @@ describe("session.message-v2.toModelMessage", () => {
             filename: "img.png",
             data: "https://example.com/img.png",
           },
-          { type: "text", text: "What did we do so far?" },
           { type: "text", text: "The following tool was executed by the user" },
         ],
       },
@@ -826,5 +825,39 @@ describe("session.message-v2.toModelMessage", () => {
         ],
       },
     ])
+  })
+})
+
+describe("session.message-v2.fileLabel", () => {
+  test("does not inline data URLs", () => {
+    const messageID = "m-user"
+    const file: MessageV2.FilePart = {
+      ...basePart(messageID, "p-file"),
+      type: "file",
+      mime: "image/png",
+      url: "data:image/png;base64," + "a".repeat(4096),
+    }
+
+    expect(MessageV2.fileLabel(file)).toBe("inline image/png")
+  })
+
+  test("prefers filename and strips file:// query", () => {
+    const messageID = "m-user"
+    const named: MessageV2.FilePart = {
+      ...basePart(messageID, "p-named"),
+      type: "file",
+      mime: "text/plain",
+      filename: "note.txt",
+      url: "data:text/plain;base64," + "a".repeat(1024),
+    }
+    expect(MessageV2.fileLabel(named)).toBe("note.txt")
+
+    const local: MessageV2.FilePart = {
+      ...basePart(messageID, "p-local"),
+      type: "file",
+      mime: "application/octet-stream",
+      url: "file:///tmp/demo.bin?signature=secret",
+    }
+    expect(MessageV2.fileLabel(local)).toBe("/tmp/demo.bin")
   })
 })

@@ -5,6 +5,7 @@ import { pipe, sumBy } from "remeda"
 import { useTheme } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
 import type { AssistantMessage, Session } from "@opencode-ai/sdk/v2"
+import type { RGBA } from "@opentui/core"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
 import { Installation } from "@/installation"
@@ -27,6 +28,15 @@ const ContextInfo = (props: { context: Accessor<string | undefined>; cost: Acces
         {props.context()} ({props.cost()})
       </text>
     </Show>
+  )
+}
+
+const Badge = (props: { label: string; bg: RGBA }) => {
+  const { theme } = useTheme()
+  return (
+    <text>
+      <span style={{ bg: props.bg, fg: theme.backgroundPanel, bold: true }}> {props.label} </span>
+    </text>
   )
 }
 
@@ -79,6 +89,17 @@ export function Header() {
     return result
   })
 
+  const flags = createMemo(() => {
+    const ctx = session()?.context
+    return {
+      cpd: !!ctx?.cpd,
+      trim: ctx?.trim === true,
+      think: ctx?.think === true,
+      rctx: ctx?.rctx === true,
+      cmp: !!session()?.time?.compacting,
+    }
+  })
+
   const { theme } = useTheme()
   const keybind = useKeybind()
   const command = useCommandDialog()
@@ -103,6 +124,8 @@ export function Header() {
               <text fg={theme.text}>
                 <b>Subagent session</b>
               </text>
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+              {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
               <box
                 onMouseOver={() => setHover("parent")}
                 onMouseOut={() => setHover(null)}
@@ -113,6 +136,8 @@ export function Header() {
                   Parent <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
                 </text>
               </box>
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+              {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
               <box
                 onMouseOver={() => setHover("prev")}
                 onMouseOut={() => setHover(null)}
@@ -123,6 +148,8 @@ export function Header() {
                   Prev <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle_reverse")}</span>
                 </text>
               </box>
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+              {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
               <box
                 onMouseOver={() => setHover("next")}
                 onMouseOut={() => setHover(null)}
@@ -133,6 +160,8 @@ export function Header() {
                   Next <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle")}</span>
                 </text>
               </box>
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+              {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
               <box
                 onMouseOver={() => setHover("list")}
                 onMouseOut={() => setHover(null)}
@@ -145,6 +174,21 @@ export function Header() {
               </box>
               <box flexGrow={1} flexShrink={1} />
               <box flexDirection="row" gap={1} flexShrink={0}>
+                <Show when={flags().cmp}>
+                  <Badge label="CMP" bg={theme.warning} />
+                </Show>
+                <Show when={flags().cpd}>
+                  <Badge label="CPD" bg={theme.info} />
+                </Show>
+                <Show when={flags().trim}>
+                  <Badge label="TRIM" bg={theme.warning} />
+                </Show>
+                <Show when={flags().think}>
+                  <Badge label="THINK" bg={theme.warning} />
+                </Show>
+                <Show when={flags().rctx}>
+                  <Badge label="RCTX" bg={theme.error} />
+                </Show>
                 <ContextInfo context={context} cost={cost} />
                 <text fg={theme.textMuted}>v{Installation.VERSION}</text>
               </box>
@@ -168,6 +212,21 @@ export function Header() {
                 </Show>
               </box>
               <box flexDirection="row" gap={1} flexShrink={0}>
+                <Show when={flags().cmp}>
+                  <Badge label="CMP" bg={theme.warning} />
+                </Show>
+                <Show when={flags().cpd}>
+                  <Badge label="CPD" bg={theme.info} />
+                </Show>
+                <Show when={flags().trim}>
+                  <Badge label="TRIM" bg={theme.warning} />
+                </Show>
+                <Show when={flags().think}>
+                  <Badge label="THINK" bg={theme.warning} />
+                </Show>
+                <Show when={flags().rctx}>
+                  <Badge label="RCTX" bg={theme.error} />
+                </Show>
                 <ContextInfo context={context} cost={cost} />
                 <text fg={theme.textMuted}>v{Installation.VERSION}</text>
               </box>

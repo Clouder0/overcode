@@ -47,11 +47,104 @@ export type EventServerInstanceDisposed = {
   }
 }
 
+export type EventTuiPromptAppend = {
+  type: "tui.prompt.append"
+  properties: {
+    text: string
+  }
+}
+
+export type EventTuiCommandExecute = {
+  type: "tui.command.execute"
+  properties: {
+    command:
+      | "session.list"
+      | "session.new"
+      | "session.share"
+      | "session.interrupt"
+      | "session.compact"
+      | "session.page.up"
+      | "session.page.down"
+      | "session.line.up"
+      | "session.line.down"
+      | "session.half.page.up"
+      | "session.half.page.down"
+      | "session.first"
+      | "session.last"
+      | "prompt.clear"
+      | "prompt.submit"
+      | "agent.cycle"
+      | string
+  }
+}
+
+export type EventTuiToastShow = {
+  type: "tui.toast.show"
+  properties: {
+    title?: string
+    message: string
+    variant: "info" | "success" | "warning" | "error"
+    /**
+     * Duration in milliseconds
+     */
+    duration?: number
+  }
+}
+
+export type EventTuiSessionSelect = {
+  type: "tui.session.select"
+  properties: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+}
+
 export type EventLspClientDiagnostics = {
   type: "lsp.client.diagnostics"
   properties: {
     serverID: string
     path: string
+  }
+}
+
+export type SessionStatus =
+  | {
+      type: "idle"
+    }
+  | {
+      type: "retry"
+      attempt: number
+      message: string
+      next: number
+    }
+  | {
+      type: "busy"
+    }
+  | {
+      type: "waiting"
+      sources: Array<string>
+      timeout: number
+      mode: "all" | "any"
+      time: {
+        created: number
+        deadline?: number
+      }
+    }
+
+export type EventSessionStatus = {
+  type: "session.status"
+  properties: {
+    sessionID: string
+    status: SessionStatus
+  }
+}
+
+export type EventSessionIdle = {
+  type: "session.idle"
+  properties: {
+    sessionID: string
   }
 }
 
@@ -582,45 +675,6 @@ export type EventPermissionReplied = {
   }
 }
 
-export type SessionStatus =
-  | {
-      type: "idle"
-    }
-  | {
-      type: "retry"
-      attempt: number
-      message: string
-      next: number
-    }
-  | {
-      type: "busy"
-    }
-  | {
-      type: "waiting"
-      sources: Array<string>
-      timeout: number
-      mode: "all" | "any"
-      time: {
-        created: number
-        deadline?: number
-      }
-    }
-
-export type EventSessionStatus = {
-  type: "session.status"
-  properties: {
-    sessionID: string
-    status: SessionStatus
-  }
-}
-
-export type EventSessionIdle = {
-  type: "session.idle"
-  properties: {
-    sessionID: string
-  }
-}
-
 export type QuestionOption = {
   /**
    * Display text (1-5 words, concise)
@@ -695,60 +749,6 @@ export type EventQuestionRejected = {
 export type EventSessionCompacted = {
   type: "session.compacted"
   properties: {
-    sessionID: string
-  }
-}
-
-export type EventTuiPromptAppend = {
-  type: "tui.prompt.append"
-  properties: {
-    text: string
-  }
-}
-
-export type EventTuiCommandExecute = {
-  type: "tui.command.execute"
-  properties: {
-    command:
-      | "session.list"
-      | "session.new"
-      | "session.share"
-      | "session.interrupt"
-      | "session.compact"
-      | "session.page.up"
-      | "session.page.down"
-      | "session.line.up"
-      | "session.line.down"
-      | "session.half.page.up"
-      | "session.half.page.down"
-      | "session.first"
-      | "session.last"
-      | "prompt.clear"
-      | "prompt.submit"
-      | "agent.cycle"
-      | string
-  }
-}
-
-export type EventTuiToastShow = {
-  type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    /**
-     * Duration in milliseconds
-     */
-    duration?: number
-  }
-}
-
-export type EventTuiSessionSelect = {
-  type: "tui.session.select"
-  properties: {
-    /**
-     * Session ID to navigate to
-     */
     sessionID: string
   }
 }
@@ -838,6 +838,16 @@ export type Session = {
     deletions: number
     files: number
     diffs?: Array<FileDiff>
+  }
+  context?: {
+    cpd?: {
+      updated: number
+      upto: string
+      size?: number
+    }
+    trim?: boolean
+    think?: boolean
+    rctx?: boolean
   }
   share?: {
     url: string
@@ -961,7 +971,13 @@ export type Event =
   | EventInstallationUpdateAvailable
   | EventProjectUpdated
   | EventServerInstanceDisposed
+  | EventTuiPromptAppend
+  | EventTuiCommandExecute
+  | EventTuiToastShow
+  | EventTuiSessionSelect
   | EventLspClientDiagnostics
+  | EventSessionStatus
+  | EventSessionIdle
   | EventLspUpdated
   | EventFileEdited
   | EventMessageUpdated
@@ -971,16 +987,10 @@ export type Event =
   | EventSessionMessageDelivered
   | EventPermissionAsked
   | EventPermissionReplied
-  | EventSessionStatus
-  | EventSessionIdle
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
   | EventSessionCompacted
-  | EventTuiPromptAppend
-  | EventTuiCommandExecute
-  | EventTuiToastShow
-  | EventTuiSessionSelect
   | EventTodoUpdated
   | EventFileWatcherUpdated
   | EventMcpToolsChanged
@@ -1891,6 +1901,10 @@ export type Config = {
     chatMaxRetries?: number
     disable_paste_summary?: boolean
     /**
+     * Enable the new context pipeline (CPD + tail) for compaction, trimming, and reasoning preservation. Defaults to enabled when unset.
+     */
+    context_pipeline?: boolean
+    /**
      * Enable the batch tool
      */
     batch_tool?: boolean
@@ -1917,6 +1931,23 @@ export type Config = {
          */
         staleMs?: number
       }
+    }
+    /**
+     * Experimental LSP process cache configuration.
+     */
+    lsp?: {
+      /**
+       * Max number of concurrent LSP server processes retained per instance (primary + subagents share). If unset, no limit.
+       */
+      maxServers?: number
+      /**
+       * Idle timeout in milliseconds for terminating unused LSP servers (default 600000). This is applied as a backstop (typically quiescent-only).
+       */
+      idleMs?: number
+      /**
+       * Fraction of the LSP cache reserved for protected entries in a segmented LRU policy (0..1).
+       */
+      protectedRatio?: number
     }
     /**
      * Tools that should only be available to primary agents.
@@ -2049,6 +2080,21 @@ export type McpResource = {
   description?: string
   mimeType?: string
   client: string
+}
+
+export type SessionContext = {
+  cpd: {
+    text: string
+    upto: string
+    updated: number
+    size?: number
+  } | null
+  flags: {
+    cpd: boolean
+    trim: boolean
+    think: boolean
+    rctx: boolean
+  }
 }
 
 export type TextPartInput = {
@@ -3024,6 +3070,43 @@ export type SessionUpdateResponses = {
 }
 
 export type SessionUpdateResponse = SessionUpdateResponses[keyof SessionUpdateResponses]
+
+export type SessionContextData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/context"
+}
+
+export type SessionContextErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Internal server error
+   */
+  500: UnknownError
+}
+
+export type SessionContextError = SessionContextErrors[keyof SessionContextErrors]
+
+export type SessionContextResponses = {
+  /**
+   * Session context
+   */
+  200: SessionContext
+}
+
+export type SessionContextResponse = SessionContextResponses[keyof SessionContextResponses]
 
 export type SessionChildrenData = {
   body?: never
