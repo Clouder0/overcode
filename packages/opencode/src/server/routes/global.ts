@@ -65,40 +65,47 @@ export const GlobalRoutes = lazy(() =>
       async (c) => {
         log.info("global event connected")
         return streamSSE(c, async (stream) => {
-          stream.writeSSE({
-            data: JSON.stringify({
-              directory: "global",
-              payload: {
-                type: "server.connected",
-                properties: {},
-              },
+          void Promise.resolve(
+            stream.writeSSE({
+              data: JSON.stringify({
+                directory: "global",
+                payload: {
+                  type: "server.connected",
+                  properties: {},
+                },
+              }),
             }),
-          })
-          async function handler(event: any) {
+          ).catch(() => undefined)
+
+          function handler(event: any) {
             if (!event || typeof event !== "object") return
             const record = event as { directory?: unknown; payload?: unknown }
             if (!record.payload || typeof record.payload !== "object") return
             const directory = typeof record.directory === "string" ? record.directory : "global"
-            await stream.writeSSE({
-              data: JSON.stringify({
-                directory,
-                payload: record.payload,
+            void Promise.resolve(
+              stream.writeSSE({
+                data: JSON.stringify({
+                  directory,
+                  payload: record.payload,
+                }),
               }),
-            })
+            ).catch(() => undefined)
           }
           GlobalBus.on("event", handler)
 
           // Send heartbeat every 30s to prevent WKWebView timeout (60s default)
           const heartbeat = setInterval(() => {
-            stream.writeSSE({
-              data: JSON.stringify({
-                directory: "global",
-                payload: {
-                  type: "server.heartbeat",
-                  properties: {},
-                },
+            void Promise.resolve(
+              stream.writeSSE({
+                data: JSON.stringify({
+                  directory: "global",
+                  payload: {
+                    type: "server.heartbeat",
+                    properties: {},
+                  },
+                }),
               }),
-            })
+            ).catch(() => undefined)
           }, 30000)
 
           await new Promise<void>((resolve) => {

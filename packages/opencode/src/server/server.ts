@@ -491,29 +491,41 @@ export namespace Server {
           async (c) => {
             log.info("event connected")
             return streamSSE(c, async (stream) => {
-              stream.writeSSE({
-                data: JSON.stringify({
-                  type: "server.connected",
-                  properties: {},
+              void Promise.resolve(
+                stream.writeSSE({
+                  data: JSON.stringify({
+                    type: "server.connected",
+                    properties: {},
+                  }),
                 }),
-              })
-              const unsub = Bus.subscribeAll(async (event) => {
-                await stream.writeSSE({
-                  data: JSON.stringify(event),
-                })
+              ).catch(() => undefined)
+
+              const unsub = Bus.subscribeAll((event) => {
+                const write = () =>
+                  Promise.resolve(
+                    stream.writeSSE({
+                      data: JSON.stringify(event),
+                    }),
+                  ).catch(() => undefined)
+
                 if (event.type === Bus.InstanceDisposed.type) {
-                  stream.close()
+                  void write().finally(() => stream.close())
+                  return
                 }
+
+                void write()
               })
 
               // Send heartbeat every 30s to prevent WKWebView timeout (60s default)
               const heartbeat = setInterval(() => {
-                stream.writeSSE({
-                  data: JSON.stringify({
-                    type: "server.heartbeat",
-                    properties: {},
+                void Promise.resolve(
+                  stream.writeSSE({
+                    data: JSON.stringify({
+                      type: "server.heartbeat",
+                      properties: {},
+                    }),
                   }),
-                })
+                ).catch(() => undefined)
               }, 30000)
 
               await new Promise<void>((resolve) => {
