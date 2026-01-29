@@ -1376,6 +1376,136 @@ export function Prompt(props: PromptProps) {
     return !!current
   })
 
+  const [span, setSpan] = createSignal(0)
+  const [topWidth, setTopWidth] = createSignal(0)
+  const [footWidth, setFootWidth] = createSignal(0)
+
+  const meta = createMemo(() => {
+    const name = store.mode === "shell" ? "Shell" : Locale.titlecase(displayAgentName())
+    const lock = lockedAgentName() ? " 🔒" : ""
+    if (store.mode !== "normal") {
+      return {
+        name,
+        lock,
+        model: "",
+        provider: "",
+        variant: "",
+      }
+    }
+
+    const variant = showVariant() ? local.model.variant.current() : ""
+    return {
+      name,
+      lock,
+      model: effectiveModelParsed().model,
+      provider: effectiveModelParsed().provider,
+      variant,
+    }
+  })
+
+  function fitMeta(max: number) {
+    const m = meta()
+    if (max <= 0) {
+      return {
+        head: "",
+        model: "",
+        provider: "",
+        variant: "",
+      }
+    }
+
+    const headRaw = m.name + m.lock
+    const headW = cols(renderer.widthMethod, headRaw)
+    if (headW >= max) {
+      return {
+        head: truncateEnd({ method: renderer.widthMethod, text: headRaw, max }),
+        model: "",
+        provider: "",
+        variant: "",
+      }
+    }
+
+    if (store.mode !== "normal") {
+      return {
+        head: headRaw,
+        model: "",
+        provider: "",
+        variant: "",
+      }
+    }
+
+    const space = " "
+    const spaceW = cols(renderer.widthMethod, space)
+    const avail = max - headW - spaceW
+    if (avail <= 0) {
+      return {
+        head: truncateEnd({ method: renderer.widthMethod, text: headRaw, max }),
+        model: "",
+        provider: "",
+        variant: "",
+      }
+    }
+
+    // Prefer showing at least a few columns of the model id; drop extras first.
+    const minModel = 4
+    const provider = m.provider ? space + m.provider : ""
+    const variant = m.variant ? " · " + m.variant : ""
+
+    const base = {
+      provider,
+      variant,
+    }
+
+    const dropVariant = {
+      provider,
+      variant: "",
+    }
+
+    const dropProvider = {
+      provider: "",
+      variant: "",
+    }
+
+    const pick = (p: typeof base) => {
+      const tail = p.provider + p.variant
+      const tailW = cols(renderer.widthMethod, tail)
+      const room = Math.max(0, avail - tailW)
+      const need = Math.min(minModel, avail)
+      if (room < need) return
+      return {
+        provider: p.provider,
+        variant: p.variant,
+        model: truncateMiddle({ method: renderer.widthMethod, text: m.model, max: room }),
+      }
+    }
+
+    const chosen = pick(base) ?? pick(dropVariant) ?? pick(dropProvider)
+    if (!chosen) {
+      return {
+        head: headRaw,
+        model: space + truncateMiddle({ method: renderer.widthMethod, text: m.model, max: avail }),
+        provider: "",
+        variant: "",
+      }
+    }
+
+    return {
+      head: headRaw,
+      model: space + chosen.model,
+      provider: chosen.provider,
+      variant: chosen.variant,
+    }
+  }
+
+  const topMeta = createMemo(() => fitMeta(topWidth()))
+  const footMeta = createMemo(() => fitMeta(footWidth()))
+
+  const stack = createMemo(() => {
+    const w = span()
+    if (w === 0) return true
+    return w < 90
+  })
+
   const pasteHint = createMemo(() => {
     const focus = store.pasteFocus
     if (!focus) return ""
@@ -1437,6 +1567,11 @@ export function Prompt(props: PromptProps) {
       <box
         ref={(r) => {
           anchor = r
+        }}
+        renderBefore={function () {
+          const el = this as BoxRenderable
+          const w = el.width
+          setSpan((p) => (p === w ? p : w))
         }}
         visible={props.visible !== false}
       >
@@ -1841,28 +1976,22 @@ export function Prompt(props: PromptProps) {
                 <text fg={theme.textMuted}>{pasteHint()}</text>
               </box>
             </Show>
-            <Show when={tall()}>
-              <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1}>
-                <text fg={highlight()}>
-                  {store.mode === "shell" ? "Shell" : Locale.titlecase(displayAgentName())}{" "}
-                  <Show when={lockedAgentName()}>
-                    <span style={{ fg: theme.textMuted }}>🔒</span>
-                  </Show>
+            <Show when={tall() || stack()}>
+              <box
+                flexShrink={0}
+                paddingTop={tall() ? 1 : 0}
+                renderBefore={function () {
+                  const el = this as BoxRenderable
+                  const w = el.width
+                  setTopWidth((p) => (p === w ? p : w))
+                }}
+              >
+                <text width="100%" overflow="hidden">
+                  <span style={{ fg: highlight() }}>{topMeta().head}</span>
+                  <span style={{ fg: keybind.leader ? theme.textMuted : theme.text }}>{topMeta().model}</span>
+                  <span style={{ fg: theme.textMuted }}>{topMeta().provider}</span>
+                  <span style={{ fg: theme.warning, bold: true }}>{topMeta().variant}</span>
                 </text>
-                <Show when={store.mode === "normal"}>
-                  <box flexDirection="row" gap={1}>
-                    <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
-                      {effectiveModelParsed().model}
-                    </text>
-                    <text fg={theme.textMuted}>{effectiveModelParsed().provider}</text>
-                    <Show when={showVariant()}>
-                      <text fg={theme.textMuted}>·</text>
-                      <text>
-                        <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
-                      </text>
-                    </Show>
-                  </box>
-                </Show>
               </box>
             </Show>
           </box>
@@ -1893,8 +2022,17 @@ export function Prompt(props: PromptProps) {
             }
           />
         </box>
-        <box flexDirection="row" justifyContent="space-between">
-          <Switch>
+        <box flexDirection="row">
+          <box
+            flexGrow={1}
+            flexShrink={1}
+            renderBefore={function () {
+              const el = this as BoxRenderable
+              const w = el.width
+              setFootWidth((p) => (p === w ? p : w))
+            }}
+          >
+            <Switch>
             <Match when={(status() as any).type === "waiting"}>
               <box flexDirection="row" gap={1} flexGrow={1} justifyContent="space-between">
                 <box flexShrink={0} flexDirection="row" gap={1}>
@@ -2001,46 +2139,31 @@ export function Prompt(props: PromptProps) {
                 </text>
               </box>
             </Match>
-            <Match when={!tall()}>
-              <box flexDirection="row" gap={1}>
-                <text fg={highlight()}>
-                  {store.mode === "shell" ? "Shell" : Locale.titlecase(displayAgentName())}{" "}
-                  <Show when={lockedAgentName()}>
-                    <span style={{ fg: theme.textMuted }}>🔒</span>
-                  </Show>
-                </text>
-                <Show when={store.mode === "normal"}>
-                  <box flexDirection="row" gap={1}>
-                    <text flexShrink={0} fg={keybind.leader ? theme.textMuted : theme.text}>
-                      {effectiveModelParsed().model}
-                    </text>
-                    <text fg={theme.textMuted}>{effectiveModelParsed().provider}</text>
-                    <Show when={showVariant()}>
-                      <text fg={theme.textMuted}>·</text>
-                      <text>
-                        <span style={{ fg: theme.warning, bold: true }}>{local.model.variant.current()}</span>
-                      </text>
-                    </Show>
-                  </box>
-                </Show>
-              </box>
+            <Match when={!tall() && !stack()}>
+              <text width="100%" overflow="hidden">
+                <span style={{ fg: highlight() }}>{footMeta().head}</span>
+                <span style={{ fg: keybind.leader ? theme.textMuted : theme.text }}>{footMeta().model}</span>
+                <span style={{ fg: theme.textMuted }}>{footMeta().provider}</span>
+                <span style={{ fg: theme.warning, bold: true }}>{footMeta().variant}</span>
+              </text>
             </Match>
-          </Switch>
+            </Switch>
+          </box>
           <Show when={status().type !== "retry"}>
-            <box gap={2} flexDirection="row" marginLeft="auto">
+            <box gap={2} flexDirection="row" flexShrink={0}>
               <Switch>
                 <Match when={store.mode === "normal"}>
-                  <Show when={showVariant()}>
+                  <Show when={!stack() && showVariant()}>
                     <text fg={theme.text}>
                       {keybind.print("variant_cycle")} <span style={{ fg: theme.textMuted }}>variants</span>
                     </text>
                   </Show>
-                  <Show when={wide() && !lockedAgentName()}>
+                  <Show when={!stack() && wide() && !lockedAgentName()}>
                     <text fg={theme.text}>
                       {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>agents</span>
                     </text>
                   </Show>
-                  <Show when={!wide()}>
+                  <Show when={!stack() && !wide()}>
                     <text fg={theme.text}>
                       {keybind.print("sidebar_toggle")} <span style={{ fg: theme.textMuted }}>sidebar</span>
                     </text>
