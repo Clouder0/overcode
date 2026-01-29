@@ -10,6 +10,7 @@ import { LSP } from "../lsp"
 import { createTwoFilesPatch, diffLines } from "diff"
 import DESCRIPTION from "./edit.txt"
 import { File } from "../file"
+import { FileWatcher } from "../file/watcher"
 import { Bus } from "../bus"
 import { FileTime } from "../file/time"
 import { Filesystem } from "../util/filesystem"
@@ -61,6 +62,7 @@ export const EditTool = Tool.define("edit", {
     let contentNew = ""
     await FileTime.withLock(filePath, async () => {
       if (params.oldString === "") {
+        const existed = await Bun.file(filePath).exists()
         contentNew = params.newString
         diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
         await ctx.ask({
@@ -75,6 +77,10 @@ export const EditTool = Tool.define("edit", {
         await Bun.write(filePath, params.newString)
         await Bus.publish(File.Event.Edited, {
           file: filePath,
+        })
+        await Bus.publish(FileWatcher.Event.Updated, {
+          file: filePath,
+          event: existed ? "change" : "add",
         })
 
         const fileAfter = Bun.file(filePath)
@@ -111,6 +117,10 @@ export const EditTool = Tool.define("edit", {
       await file.write(contentNew)
       await Bus.publish(File.Event.Edited, {
         file: filePath,
+      })
+      await Bus.publish(FileWatcher.Event.Updated, {
+        file: filePath,
+        event: "change",
       })
       contentNew = await file.text()
       diff = trimDiff(

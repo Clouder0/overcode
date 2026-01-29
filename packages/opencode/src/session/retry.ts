@@ -1,5 +1,6 @@
 import type { NamedError } from "@opencode-ai/util/error"
 import { MessageV2 } from "./message-v2"
+import { iife } from "@/util/iife"
 
 export namespace SessionRetry {
   export const RETRY_INITIAL_DELAY = 2000
@@ -103,26 +104,42 @@ export namespace SessionRetry {
       }
     }
 
+    const json = iife(() => {
+      try {
+        return JSON.parse(msg)
+      } catch {
+        return undefined
+      }
+    })
+
     try {
-      const json = JSON.parse(msg)
-      if (json.type === "error" && json.error?.type === "too_many_requests") {
+      if (!json || typeof json !== "object") return undefined
+      const obj = json as Record<string, unknown>
+      const code = typeof obj.code === "string" ? obj.code : ""
+      const type = typeof obj.type === "string" ? obj.type : ""
+      const error = iife(() => {
+        const nested = obj.error
+        if (!nested || typeof nested !== "object" || Array.isArray(nested)) return undefined
+        return nested as Record<string, unknown>
+      })
+      const errorType = typeof error?.type === "string" ? error.type : ""
+      const errorCode = typeof error?.code === "string" ? error.code : ""
+      const errorMessage = typeof error?.message === "string" ? error.message : ""
+
+      if (type === "error" && errorType === "too_many_requests") {
         return "Too Many Requests"
       }
-      if (json.code.includes("exhausted") || json.code.includes("unavailable")) {
+      if (code.includes("exhausted") || code.includes("unavailable")) {
         return "Provider is overloaded"
       }
-      if (json.type === "error" && json.error?.code?.includes("rate_limit")) {
+      if (type === "error" && errorCode.includes("rate_limit")) {
         return "Rate Limited"
       }
-      if (
-        json.error?.message?.includes("no_kv_space") ||
-        (json.type === "error" && json.error?.type === "server_error") ||
-        !!json.error
-      ) {
+      if (errorMessage.includes("no_kv_space") || (type === "error" && errorType === "server_error")) {
         return "Provider Server Error"
       }
-    } catch {}
-
-    return undefined
+    } catch {
+      return undefined
+    }
   }
 }

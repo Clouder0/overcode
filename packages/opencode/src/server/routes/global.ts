@@ -67,6 +67,7 @@ export const GlobalRoutes = lazy(() =>
         return streamSSE(c, async (stream) => {
           stream.writeSSE({
             data: JSON.stringify({
+              directory: "global",
               payload: {
                 type: "server.connected",
                 properties: {},
@@ -74,8 +75,15 @@ export const GlobalRoutes = lazy(() =>
             }),
           })
           async function handler(event: any) {
+            if (!event || typeof event !== "object") return
+            const record = event as { directory?: unknown; payload?: unknown }
+            if (!record.payload || typeof record.payload !== "object") return
+            const directory = typeof record.directory === "string" ? record.directory : "global"
             await stream.writeSSE({
-              data: JSON.stringify(event),
+              data: JSON.stringify({
+                directory,
+                payload: record.payload,
+              }),
             })
           }
           GlobalBus.on("event", handler)
@@ -84,6 +92,7 @@ export const GlobalRoutes = lazy(() =>
           const heartbeat = setInterval(() => {
             stream.writeSSE({
               data: JSON.stringify({
+                directory: "global",
                 payload: {
                   type: "server.heartbeat",
                   properties: {},

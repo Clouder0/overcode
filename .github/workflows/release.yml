@@ -50,7 +50,7 @@ jobs:
 
       - name: Build
         working-directory: packages/opencode
-        run: bun run build
+        run: bun run build:release
 
       - name: Package
         working-directory: packages/opencode/dist

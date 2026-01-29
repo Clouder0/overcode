@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import type { NamedError as NamedErrorType } from "@opencode-ai/util/error"
+import { APICallError } from "ai"
 import { SessionRetry } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { NamedError } from "@opencode-ai/util/error"
@@ -10,6 +12,10 @@ function apiError(headers?: Record<string, string>): MessageV2.APIError {
     isRetryable: true,
     responseHeaders: headers,
   }).toObject() as MessageV2.APIError
+}
+
+function wrap(message: unknown): ReturnType<NamedErrorType["toObject"]> {
+  return { data: { message } } as ReturnType<NamedErrorType["toObject"]>
 }
 
 describe("session.retry.delay", () => {
@@ -121,6 +127,32 @@ describe("session.retry.retryable", () => {
   test("does not retry unrelated unknown errors", () => {
     const err = new NamedError.Unknown({ message: "TypeError: undefined is not a function" }).toObject()
     expect(SessionRetry.retryable(err)).toBeUndefined()
+  })
+
+  test("maps too_many_requests json messages", () => {
+    const error = wrap(JSON.stringify({ type: "error", error: { type: "too_many_requests" } }))
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+  })
+
+  test("maps overloaded provider codes", () => {
+    const error = wrap(JSON.stringify({ code: "resource_exhausted" }))
+    expect(SessionRetry.retryable(error)).toBe("Provider is overloaded")
+  })
+
+  test("handles json messages without code", () => {
+    const error = wrap(JSON.stringify({ error: { message: "no_kv_space" } }))
+    expect(SessionRetry.retryable(error)).toBe("Provider Server Error")
+  })
+
+  test("does not throw on numeric error codes", () => {
+    const error = wrap(JSON.stringify({ type: "error", error: { code: 123 } }))
+    const result = SessionRetry.retryable(error)
+    expect(result).toBeUndefined()
+  })
+
+  test("returns undefined for non-json message", () => {
+    const error = wrap("not-json")
+    expect(SessionRetry.retryable(error)).toBeUndefined()
   })
 })
 
@@ -274,5 +306,19 @@ describe("session.message-v2.fromError", () => {
 
     expect(MessageV2.APIError.isInstance(result)).toBe(true)
     expect((result as MessageV2.APIError).data.isRetryable).toBe(false)
+  })
+
+  test("marks OpenAI 404 status codes as retryable", () => {
+    const error = new APICallError({
+      message: "boom",
+      url: "https://api.openai.com/v1/chat/completions",
+      requestBodyValues: {},
+      statusCode: 404,
+      responseHeaders: { "content-type": "application/json" },
+      responseBody: '{"error":"boom"}',
+      isRetryable: false,
+    })
+    const result = MessageV2.fromError(error, { providerID: "openai" }) as MessageV2.APIError
+    expect(result.data.isRetryable).toBe(true)
   })
 })

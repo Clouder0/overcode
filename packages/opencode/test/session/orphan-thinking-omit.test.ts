@@ -129,7 +129,17 @@ test("session.prompt omits orphan thinking-only assistant parts on continue", as
         await MessageV2.get({ sessionID: session.id, messageID: user2 }),
       ]
 
-      const prompt = MessageV2.toModelMessage(history)
+      const prompt = MessageV2.toModelMessages(
+        history,
+        {
+          providerID: "openai",
+          api: {
+            id: "gpt-5",
+            npm: "@ai-sdk/openai",
+            url: "https://example.com",
+          },
+        } as any,
+      )
       expect(prompt.some((m) => m.role === "assistant")).toBe(false)
     },
   })

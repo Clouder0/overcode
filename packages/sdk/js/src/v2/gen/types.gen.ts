@@ -25,7 +25,14 @@ export type Project = {
   name?: string
   icon?: {
     url?: string
+    override?: string
     color?: string
+  }
+  commands?: {
+    /**
+     * Startup script to run when creating a new workspace (worktree)
+     */
+    start?: string
   }
   time: {
     created: number
@@ -47,11 +54,125 @@ export type EventServerInstanceDisposed = {
   }
 }
 
+export type EventTuiPromptAppend = {
+  type: "tui.prompt.append"
+  properties: {
+    text: string
+  }
+}
+
+export type EventTuiCommandExecute = {
+  type: "tui.command.execute"
+  properties: {
+    command:
+      | "session.list"
+      | "session.new"
+      | "session.share"
+      | "session.interrupt"
+      | "session.compact"
+      | "session.page.up"
+      | "session.page.down"
+      | "session.line.up"
+      | "session.line.down"
+      | "session.half.page.up"
+      | "session.half.page.down"
+      | "session.first"
+      | "session.last"
+      | "prompt.clear"
+      | "prompt.submit"
+      | "agent.cycle"
+      | string
+  }
+}
+
+export type EventTuiToastShow = {
+  type: "tui.toast.show"
+  properties: {
+    title?: string
+    message: string
+    variant: "info" | "success" | "warning" | "error"
+    /**
+     * Duration in milliseconds
+     */
+    duration?: number
+  }
+}
+
+export type EventTuiSessionSelect = {
+  type: "tui.session.select"
+  properties: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+}
+
+export type EventServerConnected = {
+  type: "server.connected"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
+export type EventServerHeartbeat = {
+  type: "server.heartbeat"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
+export type EventGlobalDisposed = {
+  type: "global.disposed"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
 export type EventLspClientDiagnostics = {
   type: "lsp.client.diagnostics"
   properties: {
     serverID: string
     path: string
+  }
+}
+
+export type SessionStatus =
+  | {
+      type: "idle"
+    }
+  | {
+      type: "retry"
+      attempt: number
+      message: string
+      next: number
+    }
+  | {
+      type: "busy"
+    }
+  | {
+      type: "waiting"
+      sources: Array<string>
+      timeout: number
+      mode: "all" | "any"
+      time: {
+        created: number
+        deadline?: number
+      }
+    }
+
+export type EventSessionStatus = {
+  type: "session.status"
+  properties: {
+    sessionID: string
+    status: SessionStatus
+  }
+}
+
+export type EventSessionIdle = {
+  type: "session.idle"
+  properties: {
+    sessionID: string
   }
 }
 
@@ -582,45 +703,6 @@ export type EventPermissionReplied = {
   }
 }
 
-export type SessionStatus =
-  | {
-      type: "idle"
-    }
-  | {
-      type: "retry"
-      attempt: number
-      message: string
-      next: number
-    }
-  | {
-      type: "busy"
-    }
-  | {
-      type: "waiting"
-      sources: Array<string>
-      timeout: number
-      mode: "all" | "any"
-      time: {
-        created: number
-        deadline?: number
-      }
-    }
-
-export type EventSessionStatus = {
-  type: "session.status"
-  properties: {
-    sessionID: string
-    status: SessionStatus
-  }
-}
-
-export type EventSessionIdle = {
-  type: "session.idle"
-  properties: {
-    sessionID: string
-  }
-}
-
 export type QuestionOption = {
   /**
    * Display text (1-5 words, concise)
@@ -699,57 +781,11 @@ export type EventSessionCompacted = {
   }
 }
 
-export type EventTuiPromptAppend = {
-  type: "tui.prompt.append"
+export type EventFileWatcherUpdated = {
+  type: "file.watcher.updated"
   properties: {
-    text: string
-  }
-}
-
-export type EventTuiCommandExecute = {
-  type: "tui.command.execute"
-  properties: {
-    command:
-      | "session.list"
-      | "session.new"
-      | "session.share"
-      | "session.interrupt"
-      | "session.compact"
-      | "session.page.up"
-      | "session.page.down"
-      | "session.line.up"
-      | "session.line.down"
-      | "session.half.page.up"
-      | "session.half.page.down"
-      | "session.first"
-      | "session.last"
-      | "prompt.clear"
-      | "prompt.submit"
-      | "agent.cycle"
-      | string
-  }
-}
-
-export type EventTuiToastShow = {
-  type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    /**
-     * Duration in milliseconds
-     */
-    duration?: number
-  }
-}
-
-export type EventTuiSessionSelect = {
-  type: "tui.session.select"
-  properties: {
-    /**
-     * Session ID to navigate to
-     */
-    sessionID: string
+    file: string
+    event: "add" | "change" | "unlink"
   }
 }
 
@@ -777,14 +813,6 @@ export type EventTodoUpdated = {
   properties: {
     sessionID: string
     todos: Array<Todo>
-  }
-}
-
-export type EventFileWatcherUpdated = {
-  type: "file.watcher.updated"
-  properties: {
-    file: string
-    event: "add" | "change" | "unlink"
   }
 }
 
@@ -942,17 +970,18 @@ export type EventPtyDeleted = {
   }
 }
 
-export type EventGlobalDisposed = {
-  type: "global.disposed"
+export type EventWorktreeReady = {
+  type: "worktree.ready"
   properties: {
-    [key: string]: unknown
+    name: string
+    branch: string
   }
 }
 
-export type EventServerConnected = {
-  type: "server.connected"
+export type EventWorktreeFailed = {
+  type: "worktree.failed"
   properties: {
-    [key: string]: unknown
+    message: string
   }
 }
 
@@ -961,7 +990,16 @@ export type Event =
   | EventInstallationUpdateAvailable
   | EventProjectUpdated
   | EventServerInstanceDisposed
+  | EventTuiPromptAppend
+  | EventTuiCommandExecute
+  | EventTuiToastShow
+  | EventTuiSessionSelect
+  | EventServerConnected
+  | EventServerHeartbeat
+  | EventGlobalDisposed
   | EventLspClientDiagnostics
+  | EventSessionStatus
+  | EventSessionIdle
   | EventLspUpdated
   | EventFileEdited
   | EventMessageUpdated
@@ -971,18 +1009,12 @@ export type Event =
   | EventSessionMessageDelivered
   | EventPermissionAsked
   | EventPermissionReplied
-  | EventSessionStatus
-  | EventSessionIdle
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
   | EventSessionCompacted
-  | EventTuiPromptAppend
-  | EventTuiCommandExecute
-  | EventTuiToastShow
-  | EventTuiSessionSelect
-  | EventTodoUpdated
   | EventFileWatcherUpdated
+  | EventTodoUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
@@ -996,8 +1028,8 @@ export type Event =
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
-  | EventGlobalDisposed
-  | EventServerConnected
+  | EventWorktreeReady
+  | EventWorktreeFailed
 
 export type GlobalEvent = {
   directory: string
@@ -1456,6 +1488,12 @@ export type ServerConfig = {
 
 export type PermissionActionConfig = "ask" | "allow" | "deny"
 
+export type PermissionObjectConfig = {
+  [key: string]: PermissionActionConfig
+}
+
+export type PermissionRuleConfig = PermissionActionConfig | PermissionObjectConfig
+
 export type PermissionConfig =
   | PermissionActionConfig
   | Array<
@@ -1471,6 +1509,9 @@ export type PermissionConfig =
         ),
       ]
     >
+  | {
+      [key: string]: PermissionRuleConfig
+    }
 
 export type AgentConfig = {
   model?: string
@@ -1919,6 +1960,23 @@ export type Config = {
       }
     }
     /**
+     * Experimental LSP process cache configuration.
+     */
+    lsp?: {
+      /**
+       * Max number of concurrent LSP server processes retained per instance (primary + subagents share). If unset, no limit.
+       */
+      maxServers?: number
+      /**
+       * Idle timeout in milliseconds for terminating unused LSP servers (default 600000). This is applied as a backstop (typically quiescent-only).
+       */
+      idleMs?: number
+      /**
+       * Fraction of the LSP cache reserved for protected entries in a segmented LRU policy (0..1).
+       */
+      protectedRatio?: number
+    }
+    /**
      * Tools that should only be available to primary agents.
      */
     primary_tools?: Array<string>
@@ -2040,7 +2098,26 @@ export type Worktree = {
 
 export type WorktreeCreateInput = {
   name?: string
+  /**
+   * Additional startup script to run after the project's start command
+   */
   startCommand?: string
+}
+
+export type WorktreeRemoveInput = {
+  directory: string
+  /**
+   * Set to true to confirm this destructive worktree removal.
+   */
+  confirm: true
+}
+
+export type WorktreeResetInput = {
+  directory: string
+  /**
+   * Set to true to confirm this destructive worktree reset.
+   */
+  confirm: true
 }
 
 export type McpResource = {
@@ -2365,7 +2442,14 @@ export type ProjectUpdateData = {
     name?: string
     icon?: {
       url?: string
+      override?: string
       color?: string
+    }
+    commands?: {
+      /**
+       * Startup script to run when creating a new workspace (worktree)
+       */
+      start?: string
     }
   }
   path: {
@@ -2734,6 +2818,37 @@ export type ToolListResponses = {
 
 export type ToolListResponse = ToolListResponses[keyof ToolListResponses]
 
+export type WorktreeRemoveData = {
+  body?: WorktreeRemoveInput
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/experimental/worktree"
+}
+
+export type WorktreeRemoveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Internal server error
+   */
+  500: UnknownError
+}
+
+export type WorktreeRemoveError = WorktreeRemoveErrors[keyof WorktreeRemoveErrors]
+
+export type WorktreeRemoveResponses = {
+  /**
+   * Worktree removed
+   */
+  200: boolean
+}
+
+export type WorktreeRemoveResponse = WorktreeRemoveResponses[keyof WorktreeRemoveResponses]
+
 export type WorktreeListData = {
   body?: never
   path?: never
@@ -2782,6 +2897,37 @@ export type WorktreeCreateResponses = {
 }
 
 export type WorktreeCreateResponse = WorktreeCreateResponses[keyof WorktreeCreateResponses]
+
+export type WorktreeResetData = {
+  body?: WorktreeResetInput
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/experimental/worktree/reset"
+}
+
+export type WorktreeResetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Internal server error
+   */
+  500: UnknownError
+}
+
+export type WorktreeResetError = WorktreeResetErrors[keyof WorktreeResetErrors]
+
+export type WorktreeResetResponses = {
+  /**
+   * Worktree reset
+   */
+  200: boolean
+}
+
+export type WorktreeResetResponse = WorktreeResetResponses[keyof WorktreeResetResponses]
 
 export type ExperimentalResourceListData = {
   body?: never
@@ -5070,6 +5216,39 @@ export type FormatterStatusResponses = {
 }
 
 export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterStatusResponses]
+
+export type AuthRemoveData = {
+  body?: never
+  path: {
+    providerID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/auth/{providerID}"
+}
+
+export type AuthRemoveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Internal server error
+   */
+  500: UnknownError
+}
+
+export type AuthRemoveError = AuthRemoveErrors[keyof AuthRemoveErrors]
+
+export type AuthRemoveResponses = {
+  /**
+   * Successfully removed authentication credentials
+   */
+  200: boolean
+}
+
+export type AuthRemoveResponse = AuthRemoveResponses[keyof AuthRemoveResponses]
 
 export type AuthSetData = {
   body?: Auth

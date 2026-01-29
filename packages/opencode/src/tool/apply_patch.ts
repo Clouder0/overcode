@@ -2,9 +2,9 @@ import z from "zod"
 import * as path from "path"
 import * as fs from "fs/promises"
 import { Tool } from "./tool"
-import { FileTime } from "../file/time"
 import { Bus } from "../bus"
 import { FileWatcher } from "../file/watcher"
+import { FileTime } from "../file/time"
 import { Instance } from "../project/instance"
 import { Patch } from "../patch"
 import { createTwoFilesPatch, diffLines } from "diff"
@@ -12,13 +12,15 @@ import { assertExternalDirectory } from "./external-directory"
 import { trimDiff } from "./edit"
 import { LSP } from "../lsp"
 import { Filesystem } from "../util/filesystem"
+import DESCRIPTION from "./apply_patch.txt"
+import { File } from "../file"
 
 const PatchParams = z.object({
   patchText: z.string().describe("The full patch text that describes all changes to be made"),
 })
 
 export const ApplyPatchTool = Tool.define("apply_patch", {
-  description: "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+  description: DESCRIPTION,
   parameters: PatchParams,
   async execute(params, ctx) {
     if (!params.patchText) {
@@ -160,18 +162,42 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
       }
     }
 
+    // Build per-file metadata for UI rendering (used for both permission and result)
+    const files = fileChanges.map((change) => ({
+      filePath: change.filePath,
+      relativePath: path.relative(Instance.worktree, change.movePath ?? change.filePath),
+      type: change.type,
+      diff: change.diff,
+      before: change.oldContent,
+      after: change.newContent,
+      additions: change.additions,
+      deletions: change.deletions,
+      movePath: change.movePath,
+    }))
+
     // Check permissions if needed
+    const patterns = Array.from(
+      new Set(
+        fileChanges.flatMap((change) => {
+          const file = path.relative(Instance.worktree, change.filePath)
+          const moved = change.movePath ? path.relative(Instance.worktree, change.movePath) : undefined
+          return moved ? [file, moved] : [file]
+        }),
+      ),
+    )
     await ctx.ask({
       permission: "edit",
-      patterns: fileChanges.map((c) => path.relative(Instance.worktree, c.filePath)),
+      patterns,
       always: ["*"],
       metadata: {
+        filepath: patterns.join(", "),
         diff: totalDiff,
+        files,
       },
     })
 
     // Apply the changes
-    const changedFiles: string[] = []
+    const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
 
     const locked = fileChanges.flatMap((change) => {
       if (change.type === "move" && change.movePath) {
@@ -182,7 +208,7 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
 
     await FileTime.withLocks(locked, async () => {
       for (const change of fileChanges) {
-        if (change.type === "update" || change.type === "delete") {
+        if (change.type === "update" || change.type === "delete" || change.type === "move") {
           await FileTime.assert(ctx.sessionID, change.filePath)
         }
 
@@ -190,12 +216,28 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
           // Create parent directories (recursive: true is safe on existing/root dirs)
           await fs.mkdir(path.dirname(change.filePath), { recursive: true })
           await fs.writeFile(change.filePath, change.newContent, "utf-8")
-          changedFiles.push(change.filePath)
+          updates.push({ file: change.filePath, event: "add" })
+
+          const file = Bun.file(change.filePath)
+          const stats = await file.stat()
+          FileTime.read(ctx.sessionID, change.filePath, FileTime.stamp(stats.mtime, change.newContent))
+          await Bus.publish(File.Event.Edited, {
+            file: change.filePath,
+          })
+          continue
         }
 
         if (change.type === "update") {
           await fs.writeFile(change.filePath, change.newContent, "utf-8")
-          changedFiles.push(change.filePath)
+          updates.push({ file: change.filePath, event: "change" })
+
+          const file = Bun.file(change.filePath)
+          const stats = await file.stat()
+          FileTime.read(ctx.sessionID, change.filePath, FileTime.stamp(stats.mtime, change.newContent))
+          await Bus.publish(File.Event.Edited, {
+            file: change.filePath,
+          })
+          continue
         }
 
         if (change.type === "move" && change.movePath) {
@@ -203,39 +245,31 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
           await fs.mkdir(path.dirname(change.movePath), { recursive: true })
           await fs.writeFile(change.movePath, change.newContent, "utf-8")
           await fs.unlink(change.filePath)
-          changedFiles.push(change.movePath)
+          updates.push({ file: change.filePath, event: "unlink" })
+          updates.push({ file: change.movePath, event: "add" })
+
+          const file = Bun.file(change.movePath)
+          const stats = await file.stat()
+          FileTime.read(ctx.sessionID, change.movePath, FileTime.stamp(stats.mtime, change.newContent))
+          FileTime.clear(ctx.sessionID, change.filePath)
+
+          await Bus.publish(File.Event.Edited, {
+            file: change.movePath,
+          })
+          continue
         }
 
         if (change.type === "delete") {
           await fs.unlink(change.filePath)
-          changedFiles.push(change.filePath)
-        }
-
-        // Update file time tracking
-        if (change.type === "add") {
-          const file = Bun.file(change.filePath)
-          const stats = await file.stat()
-          FileTime.read(ctx.sessionID, change.filePath, FileTime.stamp(stats.mtime, change.newContent))
-        }
-        if (change.type === "move" && change.movePath) {
-          const file = Bun.file(change.movePath)
-          const stats = await file.stat()
-          FileTime.read(ctx.sessionID, change.movePath, FileTime.stamp(stats.mtime, change.newContent))
-        }
-        if (change.type === "update") {
-          const file = Bun.file(change.filePath)
-          const stats = await file.stat()
-          FileTime.read(ctx.sessionID, change.filePath, FileTime.stamp(stats.mtime, change.newContent))
-        }
-        if (change.type === "delete") {
+          updates.push({ file: change.filePath, event: "unlink" })
           FileTime.clear(ctx.sessionID, change.filePath)
         }
       }
     })
 
     // Publish file change events
-    for (const filePath of changedFiles) {
-      await Bus.publish(FileWatcher.Event.Updated, { file: filePath, event: "change" })
+    for (const update of updates) {
+      await Bus.publish(FileWatcher.Event.Updated, update)
     }
 
     // Notify LSP of file changes and collect diagnostics
@@ -274,19 +308,6 @@ export const ApplyPatchTool = Tool.define("apply_patch", {
         output += `\n\nLSP errors detected in ${path.relative(Instance.worktree, target)}, please fix:\n<diagnostics file="${target}">\n${limited.map(LSP.Diagnostic.pretty).join("\n")}${suffix}\n</diagnostics>`
       }
     }
-
-    // Build per-file metadata for UI rendering
-    const files = fileChanges.map((change) => ({
-      filePath: change.filePath,
-      relativePath: path.relative(Instance.worktree, change.movePath ?? change.filePath),
-      type: change.type,
-      diff: change.diff,
-      before: change.oldContent,
-      after: change.newContent,
-      additions: change.additions,
-      deletions: change.deletions,
-      movePath: change.movePath,
-    }))
 
     return {
       title: output,

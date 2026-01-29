@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "test": "bun test",
-    "build": "bun run script/build.ts",
+    "build": "bun run script/build-lite.ts",
+    "build:release": "bun run script/build.ts",
     "dev": "bun run --conditions=browser ./src/index.ts",
     "random": "echo 'Random script updated at $(date)' && echo 'Change queued successfully' && echo 'Another change made' && echo 'Yet another change' && echo 'One more change' && echo 'Final change' && echo 'Another final change' && echo 'Yet another final change'",
     "clean": "echo 'Cleaning up...' && rm -rf node_modules dist",
@@ -50,7 +51,7 @@
   "dependencies": {
     "@actions/core": "1.11.1",
     "@actions/github": "6.0.1",
-    "@agentclientprotocol/sdk": "0.5.1",
+    "@agentclientprotocol/sdk": "0.12.0",
     "@ai-sdk/amazon-bedrock": "3.0.73",
     "@ai-sdk/anthropic": "2.0.57",
     "@ai-sdk/azure": "2.0.91",
@@ -71,7 +72,7 @@
     "@ai-sdk/vercel": "1.0.31",
     "@ai-sdk/xai": "2.0.51",
     "@clack/prompts": "1.0.0-alpha.1",
-    "@gitlab/gitlab-ai-provider": "3.1.2",
+    "@gitlab/gitlab-ai-provider": "3.3.1",
     "@hono/standard-validator": "0.1.5",
     "@hono/zod-validator": "catalog:",
     "@modelcontextprotocol/sdk": "1.25.2",

@@ -13,8 +13,9 @@ const ctxBase = {
   callID: "call_test",
   agent: "build",
   abort: AbortSignal.any([]),
+  messages: [],
   metadata: () => {},
-  ask: async () => {},
+  ask: async (_req: unknown) => {},
 }
 
 describe("tool.subagent_spawn fine-grained permissions", () => {

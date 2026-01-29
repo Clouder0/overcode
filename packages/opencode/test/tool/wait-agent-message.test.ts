@@ -14,8 +14,9 @@ const ctxBase = {
   callID: "call_test",
   agent: "test",
   abort: AbortSignal.any([]),
+  messages: [],
   metadata: () => {},
-  ask: async () => {},
+  ask: async (_req: unknown) => {},
 }
 
 describe("tool.wait_agent_message validation", () => {

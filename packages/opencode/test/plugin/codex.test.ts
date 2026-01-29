@@ -4,7 +4,9 @@ import {
   extractAccountIdFromClaims,
   extractAccountId,
   type IdTokenClaims,
+  CodexAuthPlugin,
 } from "../../src/plugin/codex"
+import { createOpencodeClient, type Model, type Project, type UserMessage } from "@opencode-ai/sdk/v2/client"
 
 function createTestJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url")
@@ -119,5 +121,38 @@ describe("plugin.codex", () => {
         }),
       ).toBe("acc-123")
     })
+  })
+
+  test("chat.headers uses sess_ session_id for openai", async () => {
+    const hooks = await CodexAuthPlugin({
+      client: createOpencodeClient({ baseUrl: "http://localhost:4096" }),
+      project: {
+        id: "project_test",
+        worktree: "/tmp",
+        time: { created: 0, updated: 0 },
+        sandboxes: [],
+      } satisfies Project,
+      directory: "/tmp",
+      worktree: "/tmp",
+      serverUrl: new URL("http://localhost:4096"),
+      $: Bun.$,
+    })
+
+    const sessionID = "ses_0123456789ABCDEF0123456789"
+    const out = { headers: {} as Record<string, string> }
+
+    await hooks["chat.headers"]?.(
+      {
+        sessionID,
+        agent: "test",
+        model: { providerID: "openai" } as Model,
+        provider: { source: "api", info: {} as any, options: {} },
+        message: { id: "msg_1" } as UserMessage,
+      },
+      out,
+    )
+
+    expect(out.headers["x-session-id"]).toBe(sessionID.replace(/^ses_/, "sess_"))
+    expect(out.headers.session_id).toBe(sessionID.replace(/^ses_/, "sess_"))
   })
 })

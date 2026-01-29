@@ -10,7 +10,7 @@ describe("ExtmarksController offset handling", () => {
 
     buf.setText("a" + token)
 
-    const start = 1
+    const start = 2
     const end = start + token.length
     const id = ext.create({ start, end, virtual: true, typeId: 1 })
 
@@ -72,7 +72,7 @@ describe("ExtmarksController offset handling", () => {
 
     buf.setText(" " + token)
 
-    const start = 1
+    const start = 2
     const end = start + token.length
     const id = ext.create({ start, end, virtual: true, typeId: 1 })
 

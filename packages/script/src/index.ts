@@ -1,4 +1,4 @@
-import { $ } from "bun"
+import { $, semver } from "bun"
 import path from "path"
 
 function normalize(value: string) {
@@ -26,8 +26,11 @@ if (!expectedBunVersion) {
   throw new Error("packageManager field not found in root package.json")
 }
 
-if (process.versions.bun !== expectedBunVersion) {
-  throw new Error(`This script requires bun@${expectedBunVersion}, but you are using bun@${process.versions.bun}`)
+// relax version requirement
+const expectedBunVersionRange = `^${expectedBunVersion}`
+
+if (!semver.satisfies(process.versions.bun, expectedBunVersionRange)) {
+  throw new Error(`This script requires bun@${expectedBunVersionRange}, but you are using bun@${process.versions.bun}`)
 }
 
 const env = {

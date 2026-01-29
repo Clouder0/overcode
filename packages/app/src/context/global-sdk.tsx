@@ -24,6 +24,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     })
 
     let queue: Array<Queued | undefined> = []
+    let buffer: Array<Queued | undefined> = []
     const coalesced = new Map<string, number>()
     let timer: ReturnType<typeof setTimeout> | undefined
     let last = 0
@@ -41,10 +42,13 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       if (timer) clearTimeout(timer)
       timer = undefined
 
+      if (queue.length === 0) return
+
       const events = queue
-      queue = []
+      queue = buffer
+      buffer = events
+      queue.length = 0
       coalesced.clear()
-      if (events.length === 0) return
 
       last = Date.now()
       batch(() => {
@@ -53,6 +57,8 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
           emitter.emit(event.directory, event.payload)
         }
       })
+
+      buffer.length = 0
     }
 
     const schedule = () => {
@@ -61,25 +67,32 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       timer = setTimeout(flush, Math.max(0, 16 - elapsed))
     }
 
-    const stop = () => {
-      flush()
+    const abort = new AbortController()
+    const errors = { at: 0 }
+
+    const unwrap = (input: unknown): { directory: string; payload: Event } | undefined => {
+      if (!input || typeof input !== "object") return
+      const record = input as { directory?: unknown; payload?: unknown }
+      const payload = record.payload
+      if (!payload || typeof payload !== "object") return
+      if (!("type" in payload)) return
+      if (typeof (payload as { type?: unknown }).type !== "string") return
+      const directory = typeof record.directory === "string" ? record.directory : "global"
+      return { directory, payload: payload as Event }
     }
 
-    const streams = new Map<string, AbortController>()
-    const subscribe = (directory: string) => {
-      if (!directory) return
-      if (streams.has(directory)) return
-
-      const abort = new AbortController()
-      streams.set(directory, abort)
-
-      eventSdk.event
-        .subscribe({ directory }, { signal: abort.signal })
-        .then(async (events) => {
+    void (async () => {
+      while (true) {
+        if (abort.signal.aborted) return
+        try {
+          const events = await eventSdk.global.event({ signal: abort.signal })
           let yielded = Date.now()
-          for await (const payload of events.stream) {
-            const dir = directory
-            const k = key(dir, payload)
+          for await (const event of events.stream) {
+            if (abort.signal.aborted) return
+            const parsed = unwrap(event)
+            if (!parsed) continue
+
+            const k = key(parsed.directory, parsed.payload)
             if (k) {
               const i = coalesced.get(k)
               if (i !== undefined) {
@@ -87,26 +100,37 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
               }
               coalesced.set(k, queue.length)
             }
-            queue.push({ directory: dir, payload })
+            queue.push({ directory: parsed.directory, payload: parsed.payload })
             schedule()
 
             if (Date.now() - yielded < 8) continue
             yielded = Date.now()
             await new Promise<void>((resolve) => setTimeout(resolve, 0))
           }
-        })
-        .catch(() => {})
-        .finally(() => {
-          streams.delete(directory)
-        })
+        } catch (error) {
+          const now = Date.now()
+          const shouldLog = import.meta.env.DEV && now - errors.at > 10_000
+          if (shouldLog) {
+            errors.at = now
+            const message = error instanceof Error ? error.message : String(error)
+            console.warn("[GlobalSDK] global event stream error; retrying", message)
+          }
+        }
+
+        if (abort.signal.aborted) return
+        flush()
+        await new Promise<void>((resolve) => setTimeout(resolve, 250))
+      }
+    })()
+      .catch(() => undefined)
+
+    const subscribe = (_directory: string) => {
+      // No-op: we subscribe to the global event stream.
     }
 
     onCleanup(() => {
-      for (const ctrl of streams.values()) {
-        ctrl.abort()
-      }
-      streams.clear()
-      stop()
+      abort.abort()
+      flush()
     })
 
     const sdk = createOpencodeClient({

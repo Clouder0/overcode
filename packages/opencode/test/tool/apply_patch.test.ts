@@ -4,12 +4,12 @@ import * as fs from "fs/promises"
 import { ApplyPatchTool } from "../../src/tool/apply_patch"
 import { Instance } from "../../src/project/instance"
 import { FileTime } from "../../src/file/time"
+import { tmpdir } from "../fixture/fixture"
 
 async function read(ctx: ToolCtx, file: string, content: string) {
   const stats = await Bun.file(file).stat()
   FileTime.read(ctx.sessionID, file, FileTime.stamp(stats.mtime, content))
 }
-import { tmpdir } from "../fixture/fixture"
 
 const baseCtx = {
   sessionID: "test",
@@ -17,6 +17,7 @@ const baseCtx = {
   callID: "",
   agent: "build",
   abort: AbortSignal.any([]),
+  messages: [],
   metadata: () => {},
 }
 
@@ -24,7 +25,21 @@ type AskInput = {
   permission: string
   patterns: string[]
   always: string[]
-  metadata: { diff: string }
+  metadata: {
+    diff: string
+    filepath: string
+    files: Array<{
+      filePath: string
+      relativePath: string
+      type: "add" | "update" | "delete" | "move"
+      diff: string
+      before: string
+      after: string
+      additions: number
+      deletions: number
+      movePath?: string
+    }>
+  }
 }
 
 type ToolCtx = typeof baseCtx & {
@@ -82,7 +97,7 @@ describe("tool.apply_patch freeform", () => {
   })
 
   test("applies add/update/delete in one patch", async () => {
-    await using fixture = await tmpdir()
+    await using fixture = await tmpdir({ git: true })
     const { ctx, calls } = makeCtx()
 
     await Instance.provide({
@@ -105,10 +120,59 @@ describe("tool.apply_patch freeform", () => {
         expect(result.metadata.diff).toContain("Index:")
         expect(calls.length).toBe(1)
 
+        // Verify permission metadata includes files array for UI rendering
+        const permissionCall = calls[0]
+        expect(permissionCall.metadata.files).toHaveLength(3)
+        expect(permissionCall.metadata.files.map((f) => f.type).sort()).toEqual(["add", "delete", "update"])
+
+        const addFile = permissionCall.metadata.files.find((f) => f.type === "add")
+        expect(addFile).toBeDefined()
+        expect(addFile!.relativePath).toBe("nested/new.txt")
+        expect(addFile!.after).toBe("created\n")
+
+        const updateFile = permissionCall.metadata.files.find((f) => f.type === "update")
+        expect(updateFile).toBeDefined()
+        expect(updateFile!.before).toContain("line2")
+        expect(updateFile!.after).toContain("changed")
+
         const added = await fs.readFile(path.join(fixture.path, "nested", "new.txt"), "utf-8")
         expect(added).toBe("created\n")
         expect(await fs.readFile(modifyPath, "utf-8")).toBe("line1\nchanged\n")
         await expect(fs.readFile(deletePath, "utf-8")).rejects.toThrow()
+      },
+    })
+  })
+
+  test("permission metadata includes move file info", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const { ctx, calls } = makeCtx()
+
+    await Instance.provide({
+      directory: fixture.path,
+      fn: async () => {
+        const original = path.join(fixture.path, "old", "name.txt")
+        await fs.mkdir(path.dirname(original), { recursive: true })
+        const content = "old content\n"
+        await fs.writeFile(original, content, "utf-8")
+        await read(ctx, original, content)
+
+        const patchText =
+          "*** Begin Patch\n*** Update File: old/name.txt\n*** Move to: renamed/dir/name.txt\n@@\n-old content\n+new content\n*** End Patch"
+
+        await execute({ patchText }, ctx)
+
+        expect(calls.length).toBe(1)
+        const permissionCall = calls[0]
+
+        expect(permissionCall.patterns.slice().sort()).toEqual(["old/name.txt", "renamed/dir/name.txt"].sort())
+        expect(permissionCall.metadata.files).toHaveLength(1)
+
+        const moveFile = permissionCall.metadata.files[0]
+        expect(moveFile.type).toBe("move")
+        expect(moveFile.relativePath).toBe("renamed/dir/name.txt")
+        expect(moveFile.movePath).toBe(path.join(fixture.path, "renamed/dir/name.txt"))
+        expect(moveFile.before).toBe("old content\n")
+        expect(moveFile.after).toBe("new content\n")
       },
     })
   })
