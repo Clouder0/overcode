@@ -17,6 +17,7 @@ import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { Storage } from "@/storage/storage"
+import { SessionCPD } from "./cpd"
 
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
@@ -146,6 +147,7 @@ export namespace SessionCompaction {
           await Session.updatePart(part)
         }
       }
+      await SessionCPD.flag(input.sessionID, { trim: true })
       log.info("pruned", { count: toPrune.length })
     }
   }

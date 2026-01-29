@@ -17,6 +17,7 @@ import { Storage } from "@/storage/storage"
 import { SessionCompaction } from "./compaction"
 import { PermissionNext } from "@/permission/next"
 import { Question } from "@/question"
+import { SessionCPD } from "./cpd"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -65,6 +66,11 @@ export namespace SessionProcessor {
           if (ignoredOpenAIReasoning) return
           ignoredOpenAIReasoning = true
 
+          // Persist that the provider rejected reasoning context so:
+          // - the model-visible banner can reflect it
+          // - the TUI can show an indicator
+          await SessionCPD.flag(input.sessionID, { rctx: true })
+
           const msgs = await Session.messages({ sessionID: input.sessionID })
 
           for (const msg of msgs) {
@@ -76,7 +82,20 @@ export namespace SessionProcessor {
               const openai = (part.metadata as { openai?: unknown }).openai
               if (!openai || typeof openai !== "object") continue
 
+              const base = part.metadata && typeof part.metadata === "object" ? (part.metadata as Record<string, unknown>) : {}
+              const existing =
+                base.opencode && typeof base.opencode === "object" ? (base.opencode as Record<string, unknown>) : {}
+
               part.ignored = true
+              part.metadata = {
+                ...base,
+                opencode: {
+                  ...existing,
+                  status: "omitted",
+                  reason: "provider_rejected_reasoning_context",
+                  at: Date.now(),
+                },
+              }
               await Session.updatePart(part)
             }
           }

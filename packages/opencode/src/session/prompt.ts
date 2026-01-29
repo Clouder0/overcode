@@ -9,8 +9,9 @@ import { SessionRevert } from "./revert"
 import { Session } from "."
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
-import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions } from "ai"
+import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, type ModelMessage } from "ai"
 import { SessionCompaction } from "./compaction"
+import { SessionCPD } from "./cpd"
 import { SessionRetry } from "./retry"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
@@ -53,6 +54,7 @@ import { WaitNotice } from "./wait-notice"
 import { WaitPolicy } from "./wait-policy"
 import { MessageParser } from "./message-parser"
 import { Truncate } from "@/tool/truncation"
+import { Token } from "@/util/token"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -81,7 +83,7 @@ export namespace SessionPrompt {
     if (now - last < 10_000) return
 
     const model = await Provider.getModel(input.model.providerID, input.model.modelID).catch(() => undefined)
-    const modelName = model?.api.id ?? input.model.modelID
+    const modelName = model?.api?.id ?? input.model.modelID
 
     const key = LLMConcurrencyMachine.bucketKey({ providerID: input.model.providerID, modelName })
 
@@ -1004,6 +1006,146 @@ export namespace SessionPrompt {
 
   type AutoCompactionCause = "overflow" | "context_length"
 
+  function pipelineEnabled(cfg: Awaited<ReturnType<typeof Config.get>>) {
+    return cfg.experimental?.context_pipeline !== false
+  }
+
+  function isUserRelevant(msg: MessageV2.WithParts) {
+    if (msg.info.role !== "user") return false
+    return msg.parts.some((part) => {
+      if (part.type === "text") return !part.ignored && part.synthetic !== true
+      if (part.type === "file") return true
+      if (part.type === "subtask") return true
+      if (part.type === "agent") return true
+      if (part.type === "message") return true
+      return false
+    })
+  }
+
+  function isAssistantAnswered(info: MessageV2.Assistant) {
+    if (!info.time.completed) return false
+    if (info.summary === true) return false
+    // A completed assistant error is terminal for the parent user message.
+    // Treat it as answered so FIFO can continue to newer queued user inputs.
+    if (info.error) return true
+    if (!info.finish) return false
+    if (["tool-calls", "unknown"].includes(info.finish)) return false
+    return true
+  }
+
+  async function allowMaintenance(input: { sessionID: string; cause: AutoCompactionCause }) {
+    const cfg = await Config.get()
+    const policy = SessionCompaction.autoPolicy(cfg.compaction?.auto)
+
+    if (policy === "deny") return false
+    if (policy === "allow") return true
+
+    const patterns = ["auto"]
+    return PermissionNext.ask({
+      permission: "compaction",
+      patterns,
+      always: patterns,
+      sessionID: input.sessionID,
+      metadata: {
+        cause: input.cause,
+      },
+      ruleset: [],
+    })
+      .then(() => true)
+      .catch(() => false)
+  }
+
+  function cpdBlock(text: string) {
+    return ["<compacted-prefix-digest>", text.trim(), "</compacted-prefix-digest>"].join("\n")
+  }
+
+  function integrity(session: Session.Info) {
+    const flags = session.context
+    const lines = [
+      "<context-integrity>",
+      "Tool outputs may be trimmed to fit context.",
+      "Use the Compacted Prefix Digest (CPD) + visible messages.",
+      "If you need trimmed details, re-run tools or re-read files.",
+      flags?.think ? "Older reasoning steps were omitted due to context limits." : "",
+      flags?.rctx ? "Provider rejected prior reasoning context; older native thinking may be unavailable." : "",
+      "</context-integrity>",
+    ].filter((x) => x)
+    return lines.join("\n")
+  }
+
+  function estimateModel(messages: ModelMessage[]) {
+    const content = messages.map((m) => {
+      if (typeof m.content === "string") return m.content
+      try {
+        return JSON.stringify(m.content)
+      } catch {
+        return ""
+      }
+    })
+    return content.reduce((sum, str) => sum + Token.estimate(str), 0)
+  }
+
+  function estimateSystem(system: string[]) {
+    return system.reduce((sum, str) => sum + Token.estimate(str), 0)
+  }
+
+  const CONTEXT_LENGTH_PROVIDER_MESSAGE_MAX = 600
+
+  function capContextLengthMessage(value: string) {
+    if (value.length <= CONTEXT_LENGTH_PROVIDER_MESSAGE_MAX) return value
+    return value.slice(0, CONTEXT_LENGTH_PROVIDER_MESSAGE_MAX) + "..."
+  }
+
+  function contextLengthOverage(error: MessageV2.Assistant["error"] | undefined) {
+    const message = typeof (error as any)?.message === "string" ? String((error as any).message) : ""
+    const responseBody = typeof (error as any)?.responseBody === "string" ? String((error as any).responseBody) : ""
+    const combined = [message, responseBody].filter((x) => x).join("\n")
+    if (!combined) return
+
+    const patterns = [
+      /maximum context length is\s*(\d+)[\s\S]*?requested\s*(\d+)/i,
+      /maximum context length is\s*(\d+)[\s\S]*?resulted in\s*(\d+)/i,
+      /max(?:imum)?\s*(\d+)[\s\S]*?requested\s*(\d+)/i,
+      /max(?:imum)?\s*(\d+)[\s\S]*?resulted in\s*(\d+)/i,
+    ]
+
+    for (const pattern of patterns) {
+      const match = combined.match(pattern)
+      if (!match) continue
+      const max = Number.parseInt(match[1] ?? "", 10)
+      const requested = Number.parseInt(match[2] ?? "", 10)
+      if (!Number.isFinite(max) || !Number.isFinite(requested)) continue
+      const overage = requested - max
+      if (overage > 0) return overage
+    }
+
+    return
+  }
+
+  function contextLengthMinDrop(input: {
+    error: MessageV2.Assistant["error"] | undefined
+    attempt: number
+    target: number
+  }) {
+    const overage = contextLengthOverage(input.error)
+    if (typeof overage === "number") {
+      const bump = input.attempt >= 2 ? 1000 : 500
+      return overage + bump
+    }
+
+    const floor = Math.max(2000, Math.floor(input.target * 0.05))
+    const scaled = input.attempt >= 2 ? floor * 2 : floor
+    // Cap fallback drops to avoid blowing away large-context sessions on parsing failures.
+    return Math.min(scaled, 20_000)
+  }
+
+  function contextLengthProviderMessage(error: MessageV2.Assistant["error"] | undefined) {
+    const message = typeof (error as any)?.message === "string" ? String((error as any).message) : ""
+    const trimmed = message.trim()
+    if (!trimmed) return
+    return capContextLengthMessage(trimmed)
+  }
+
   async function requestAutoCompaction(input: {
     sessionID: string
     agent: string
@@ -1289,77 +1431,83 @@ export namespace SessionPrompt {
         continue
       }
 
-      let msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+      const cfg = await Config.get()
+      const msgs = await Session.messages({ sessionID })
 
-      let lastUser: MessageV2.User | undefined
-      let lastAssistant: MessageV2.Assistant | undefined
       let lastFinished: MessageV2.Assistant | undefined
-      let tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
+      const tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
       for (let i = msgs.length - 1; i >= 0; i--) {
         const msg = msgs[i]
-        if (
-          !lastUser &&
-          msg.info.role === "user" &&
-          msg.parts.some((part) => {
-            if (part.type === "text") return !part.ignored
-            if (part.type === "file") return true
-            if (part.type === "compaction") return true
-            if (part.type === "subtask") return true
-            if (part.type === "agent") return true
-            if (part.type === "message") return true
-            return false
-          })
-        ) {
-          lastUser = msg.info as MessageV2.User
-        }
-        if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info as MessageV2.Assistant
-        if (!lastFinished && msg.info.role === "assistant" && msg.info.finish)
+        if (!lastFinished && msg.info.role === "assistant" && (msg.info as MessageV2.Assistant).finish) {
           lastFinished = msg.info as MessageV2.Assistant
-        if (lastUser && lastFinished) break
-        const task = msg.parts.filter((part) => part.type === "compaction" || part.type === "subtask")
-        if (task && !lastFinished) {
-          tasks.push(...task)
         }
+        if (!lastFinished) {
+          const task = msg.parts.filter(
+            (part): part is MessageV2.CompactionPart | MessageV2.SubtaskPart =>
+              part.type === "compaction" || part.type === "subtask",
+          )
+          if (task.length > 0) {
+            tasks.push(...task)
+          }
+        }
+        if (lastFinished) break
       }
 
-      if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+      const byParent = new Map<string, MessageV2.WithParts[]>()
+      for (const msg of msgs) {
+        if (msg.info.role !== "assistant") continue
+        const assistant = msg.info as MessageV2.Assistant
+        if (!assistant.parentID) continue
+        const existing = byParent.get(assistant.parentID) ?? []
+        existing.push(msg)
+        byParent.set(assistant.parentID, existing)
+      }
+
+      const users = msgs.filter(isUserRelevant)
+      const newestUser = msgs.findLast((m) => m.info.role === "user")?.info as MessageV2.User | undefined
+      const newestAssistant = msgs.findLast((m) => m.info.role === "assistant")?.info as MessageV2.Assistant | undefined
 
       // If the previous run was interrupted mid-thinking, we can end up with an assistant message that contains only
       // reasoning parts and no final output/tool call. Some providers (eg, Claude) reject such empty messages after
       // unsupported parts are dropped. Keep the thinking in history, but omit it from the model context and mark it.
-      if (lastAssistant && lastUser.id > lastAssistant.id && !lastAssistant.finish) {
-        const orphan = msgs.find((m) => m.info.role === "assistant" && m.info.id === lastAssistant.id)
+      if (newestAssistant && newestUser && newestUser.id > newestAssistant.id && !newestAssistant.finish) {
+        const orphan = msgs.find((m) => m.info.role === "assistant" && m.info.id === newestAssistant.id)
         if (orphan) {
           await omitOrphanThinking({
             sessionID,
             assistant: orphan,
-            continuedAtMessageID: lastUser.id,
+            continuedAtMessageID: newestUser.id,
           })
         }
       }
 
-      if (
-        lastAssistant?.finish &&
-        lastUser.id < lastAssistant.id &&
-        (lastAssistant.summary || !["tool-calls", "unknown"].includes(lastAssistant.finish))
-      ) {
+      const pending = users.find((msg) => {
+        const user = msg.info as MessageV2.User
+        const replies = byParent.get(user.id) ?? []
+        return !replies.some((m) => m.info.role === "assistant" && isAssistantAnswered(m.info as MessageV2.Assistant))
+      })
+
+      if (!pending) {
         log.info("exiting loop", { sessionID })
         break
       }
 
-      step++
-      if (step === 1) {
+      const last = msgs.find((m) => m.info.role === "user")
+      if (step === 0 && last) {
         ensureTitle({
           session,
-          modelID: lastUser.model.modelID,
-          providerID: lastUser.model.providerID,
-          message: msgs.find((m) => m.info.role === "user")!,
+          modelID: (pending.info as MessageV2.User).model.modelID,
+          providerID: (pending.info as MessageV2.User).model.providerID,
+          message: last,
           history: msgs,
         }).catch((error) => {
           log.error("failed to ensure title", { sessionID, error: error?.message })
         })
       }
 
+      step++
+
+      const lastUser = pending.info as MessageV2.User
       const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID)
       const task = tasks.pop()
 
@@ -1584,14 +1732,405 @@ export namespace SessionPrompt {
       const agent = await Agent.get(lastUser.agent)
       const maxSteps = agent.steps ?? Infinity
       const isLastStep = step >= maxSteps
-      msgs = await insertReminders({
-        messages: msgs,
-        agent,
-        session,
-      })
 
-      const processor = SessionProcessor.create({
-        assistantMessage: (await Session.updateMessage({
+      let cpd = pipelineEnabled(cfg) ? await SessionCPD.get(sessionID) : undefined
+
+      const targetIndex = users.findIndex((m) => m.info.id === lastUser.id)
+      if (targetIndex === -1) {
+        throw new Error("Target user message not found in history. This should never happen.")
+      }
+
+      const baseIndex = (() => {
+        const upto = cpd?.upto
+        if (!upto) return 0
+        const next = users.findIndex((m) => m.info.id > upto)
+        if (next === -1) return users.length
+        return next
+      })()
+      const startIndex = baseIndex > targetIndex ? targetIndex : baseIndex
+
+      const slice = users.slice(startIndex, targetIndex + 1)
+      const thread = slice.flatMap((m) => [m, ...(byParent.get(m.info.id) ?? [])])
+      const scoped = await insertReminders({ messages: thread, agent, session })
+
+      let sessionMessages = clone(scoped)
+      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
+
+      const outputReserve = Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
+      const usable = model.limit.input || model.limit.context - outputReserve
+      const budget = Math.max(0, Math.floor(usable * 0.9))
+      const stricterBudget = Math.max(0, Math.floor(budget * 0.85))
+
+      const buildSystem = async () => {
+        const current = await Session.get(sessionID)
+        const modelID = model.api?.id ?? model.id
+        const envKey = `${model.providerID}/${modelID}`
+        return {
+          session: current,
+          system: [
+            ...(await getCachedEnvironment(sessionID, {
+              key: envKey,
+              load: () => SystemPrompt.environment(model),
+            })),
+            ...SystemPrompt.messageProtocol(
+              current.sessionType,
+              sessionID,
+              current.parentID,
+              current.subagentPrompt,
+            ),
+            ...(cpd ? [cpdBlock(cpd.text)] : []),
+            integrity(current),
+            ...(await InstructionPrompt.system()),
+          ],
+        }
+      }
+
+      const estimateCurrent = async () => {
+        const built = await buildSystem()
+        const mm = MessageV2.toModelMessages(sessionMessages, model)
+        return {
+          system: built.system,
+          session: built.session,
+          estimate: estimateSystem(built.system) + estimateModel(mm),
+        }
+      }
+
+      const applyMaintenance = async (input: {
+        cause: AutoCompactionCause
+        forced?: boolean
+        allowed?: boolean
+        aggressive?: boolean
+        min?: number
+      }): Promise<{ ok: true } | { ok: false; message: string }> => {
+        const enabled = pipelineEnabled(cfg) && usable > 0
+        if (!enabled) return { ok: true }
+
+        const target = input.forced ? stricterBudget : budget
+        const snapshot = await estimateCurrent()
+        const needs = input.forced === true || snapshot.estimate > target
+        if (!needs) return { ok: true }
+
+        const allowed = input.allowed ?? (await allowMaintenance({ sessionID, cause: input.cause }))
+        if (!allowed) {
+          return {
+            ok: false,
+            message:
+              "Context limit reached and auto context maintenance is disabled. Run /compact or allow auto compaction.",
+          }
+        }
+
+        const started = Date.now()
+
+        // Used to tag inbound/human messages that arrive mid-maintenance.
+        const active = state()[sessionID]
+        if (active) {
+          active.compaction = {
+            requestID: lastUser.id,
+            startedAt: started,
+          }
+        }
+
+        await Session.update(sessionID, (draft) => {
+          draft.time.compacting = started
+        })
+
+        await using _ = defer(() =>
+          iife(() => {
+            const live = state()[sessionID]
+            if (live?.compaction?.startedAt === started && live.compaction.requestID === lastUser.id) {
+              live.compaction = undefined
+            }
+
+            return Session.update(sessionID, (draft) => {
+              draft.time.compacting = undefined
+            })
+              .then(() => {})
+              .catch(() => {})
+          }),
+        )
+
+        const basis = await estimateCurrent()
+        const rawExcess = basis.estimate - target
+        const signal = typeof input.min === "number" ? input.min : 0
+        const base = rawExcess > 0 ? rawExcess : 0
+        const forcedMin = input.forced ? Math.max(500, Math.floor(target * 0.05)) : 0
+        const baseline = input.forced ? Math.max(base, forcedMin) : base
+        const excess = Math.max(baseline, signal)
+
+        // 1) Trim tool outputs first
+        const toolsToTrim = sessionMessages
+          .flatMap((m) => m.parts)
+          .filter((p): p is MessageV2.ToolPart => p.type === "tool")
+          .filter((p) => p.tool !== "skill")
+
+        let freed = 0
+        for (const part of toolsToTrim) {
+          if (freed >= excess) break
+          if (part.state.status !== "completed") continue
+          if (part.state.time.compacted) continue
+          freed += Token.estimate(part.state.output)
+          part.state.time.compacted = started
+          await Session.updatePart(part)
+        }
+
+        if (freed > 0) {
+          await SessionCPD.flag(sessionID, { trim: true })
+        }
+
+        const trimmed = freed > 0
+
+        // 2) Compact prefix turns before the target user into CPD
+        const afterTrim = await estimateCurrent()
+        const prefixUsers = slice.slice(0, -1)
+        const uptoUser = prefixUsers.at(-1)?.info.id
+        const canAdvanceCPD = (() => {
+          if (!uptoUser) return false
+
+          const current = cpd?.upto
+          if (!current) return true
+          if (current === uptoUser) return false
+
+          const currentIndex = users.findIndex((m) => m.info.id === current)
+          const nextIndex = users.findIndex((m) => m.info.id === uptoUser)
+          if (currentIndex === -1 || nextIndex === -1) return true
+          return nextIndex > currentIndex
+        })()
+
+        const shouldUpdateCPD = afterTrim.estimate > target || (input.forced === true && canAdvanceCPD)
+
+        const cpdAdvanced = await iife(async () => {
+          if (!shouldUpdateCPD) return false
+          if (!uptoUser) return false
+          if (!canAdvanceCPD) return false
+
+          // CPD delta must follow turn-order, not message-id order.
+          const pivot = sessionMessages.findIndex((m) => m.info.role === "user" && m.info.id === lastUser.id)
+          if (pivot === -1) {
+            log.error("target user not found in scoped messages", {
+              sessionID,
+              messageID: lastUser.id,
+            })
+            return false
+          }
+
+          const prefixMsgs = pivot <= 0 ? [] : sessionMessages.slice(0, pivot)
+
+          const delta = prefixMsgs
+            .map((m) => {
+              const role = m.info.role === "user" ? "User" : "Assistant"
+              const texts = m.parts
+                .filter((p): p is MessageV2.TextPart => p.type === "text")
+                .filter((p) => !p.ignored)
+                .filter((p) => !("synthetic" in p && p.synthetic))
+                .map((p) => p.text.trim())
+                .filter((t) => t)
+              const files = m.parts
+                .filter((p): p is MessageV2.FilePart => p.type === "file")
+                .map((f) => `File: ${MessageV2.fileLabel(f)} (${f.mime})`)
+              const msgs = m.parts
+                .filter((p): p is MessageV2.MessagePart => p.type === "message" && p.direction === "incoming")
+                .map((p) => `Message from ${p.peer}:\n${p.text}`)
+              const tools = m.parts
+                .filter((p): p is MessageV2.ToolPart => p.type === "tool")
+                .flatMap((p) => {
+                  if (p.state.status !== "completed") return []
+
+                  const raw = p.state.output
+                  const excerpt = MessageV2.excerpt(raw, 4000)
+                  const truncated = excerpt !== raw
+                  const note = truncated ? `[Output truncated for CPD delta (${raw.length} chars total)]` : ""
+                  const trimmed = p.state.time.compacted ? "[Tool output trimmed in continuation prompt]" : ""
+                  const body = [excerpt, note, trimmed].filter((x) => x).join("\n")
+
+                  return [[`Tool ${p.tool}:`, `Input: ${JSON.stringify(p.state.input)}`, `Output:\n${body}`].join("\n")]
+                })
+              const blocks = [texts.join("\n"), files.join("\n"), msgs.join("\n\n"), tools.join("\n\n")].filter((x) => x)
+              if (blocks.length === 0) return ""
+              return [`[${role}]`, ...blocks].join("\n")
+            })
+            .filter((x) => x)
+            .join("\n\n")
+
+          const request = (() => {
+            const msg = sessionMessages.find((m) => m.info.role === "user" && m.info.id === lastUser.id)
+            if (!msg) return ""
+            return msg.parts
+              .filter((p): p is MessageV2.TextPart => p.type === "text")
+              .filter((p) => !p.ignored)
+              .filter((p) => !("synthetic" in p && p.synthetic))
+              .map((p) => p.text.trim())
+              .filter((t) => t)
+              .join("\n")
+              .trim()
+          })()
+
+          const reasoning = (() => {
+            const assistant = sessionMessages.findLast(
+              (m) => m.info.role === "assistant" && m.parts.some((p) => p.type === "reasoning" && !p.ignored),
+            )
+            if (!assistant) return
+
+            const parts = assistant.parts
+            const start = (() => {
+              for (let i = parts.length - 1; i >= 0; i--) {
+                if (parts[i]?.type === "step-start") return i
+              }
+              return 0
+            })()
+            const segment = parts.slice(start)
+            const reasoningParts = segment.filter((p): p is MessageV2.ReasoningPart => p.type === "reasoning" && !p.ignored)
+            if (reasoningParts.length === 0) return
+            return {
+              role: "assistant" as const,
+              content: reasoningParts.map((p) => ({
+                type: "reasoning" as const,
+                text: p.text,
+                providerOptions: p.metadata,
+              })),
+            } satisfies ModelMessage
+          })()
+
+          const current = await Session.get(sessionID)
+          const updated = await SessionCPD.update({
+            sessionID,
+            model: lastUser.model,
+            user: {
+              sessionID,
+              id: lastUser.id,
+              model: lastUser.model,
+              agent: lastUser.agent,
+            },
+            tail: {
+              request,
+              flags: {
+                trim: current.context?.trim === true,
+                think: current.context?.think === true,
+                rctx: current.context?.rctx === true,
+              },
+            },
+            reasoning,
+            existing: cpd?.text,
+            delta,
+            abort,
+          })
+
+          await SessionCPD.set(sessionID, {
+            text: updated.text,
+            upto: uptoUser,
+            updated: Date.now(),
+          })
+          if (updated.rctx) {
+            await SessionCPD.flag(sessionID, { rctx: true })
+          }
+          cpd = await SessionCPD.get(sessionID)
+
+          const rebased = cpd?.upto
+          const nextBase = (() => {
+            if (!rebased) return 0
+            const next = users.findIndex((m) => m.info.id > rebased)
+            if (next === -1) return users.length
+            return next
+          })()
+          const nextStart = nextBase > targetIndex ? targetIndex : nextBase
+          const nextSlice = users.slice(nextStart, targetIndex + 1)
+          const nextThread = nextSlice.flatMap((m) => [m, ...(byParent.get(m.info.id) ?? [])])
+          const nextScoped = await insertReminders({ messages: nextThread, agent, session })
+          sessionMessages = clone(nextScoped)
+          await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
+          return true
+        })
+
+        // 3) If still over, truncate older reasoning steps
+        const afterCPD = await estimateCurrent()
+        const forcedFallback = input.forced === true && !trimmed && !cpdAdvanced
+        const needed = (() => {
+          const raw = afterCPD.estimate - target
+          const overflow = raw > 0 ? raw : 0
+          if (input.aggressive === true) return Math.max(overflow, excess)
+          if (forcedFallback) return Math.max(overflow, excess)
+          return overflow
+        })()
+
+        const dropped = await iife(async () => {
+          if (needed <= 0) return 0
+
+          const steps = [] as MessageV2.ReasoningPart[][]
+          for (const msg of sessionMessages) {
+            if (msg.info.role !== "assistant") continue
+            const parts = msg.parts
+            let bucket: MessageV2.ReasoningPart[] = []
+            for (const part of parts) {
+              if (part.type === "step-start") {
+                if (bucket.length > 0) steps.push(bucket)
+                bucket = []
+              }
+              if (part.type === "reasoning" && !part.ignored) {
+                bucket.push(part)
+              }
+              if (part.type === "step-finish") {
+                if (bucket.length > 0) steps.push(bucket)
+                bucket = []
+              }
+            }
+            if (bucket.length > 0) steps.push(bucket)
+          }
+
+          let dropped = 0
+          for (const group of steps) {
+            if (dropped >= needed) break
+            for (const part of group) {
+              if (part.ignored) continue
+              dropped += Token.estimate(part.text)
+              part.ignored = true
+              const base =
+                part.metadata && typeof part.metadata === "object" ? (part.metadata as Record<string, unknown>) : {}
+              const existing =
+                base.opencode && typeof base.opencode === "object" ? (base.opencode as Record<string, unknown>) : {}
+              part.metadata = {
+                ...base,
+                opencode: {
+                  ...existing,
+                  status: "omitted",
+                  reason: "context_limit",
+                  at: Date.now(),
+                },
+              }
+              await Session.updatePart(part)
+            }
+          }
+
+          if (dropped > 0) {
+            await SessionCPD.flag(sessionID, { think: true })
+          }
+
+          return dropped
+        })
+
+        const progressed = trimmed || cpdAdvanced || dropped > 0
+        if (input.forced === true && !progressed) {
+          return {
+            ok: false,
+            message:
+              "Context length errors persist but no further context maintenance is possible (no tool outputs to trim, no prefix turns to compact, no reasoning to truncate). Try splitting your prompt or selecting a larger-context model.",
+          }
+        }
+
+        const final = await estimateCurrent()
+        if (final.estimate > target) {
+          return {
+            ok: false,
+            message:
+              "Cannot fit context even after trimming tool outputs, updating CPD, and truncating older reasoning. Try splitting your prompt or selecting a larger-context model.",
+          }
+        }
+
+        return { ok: true }
+      }
+
+      const preflight = await applyMaintenance({ cause: "overflow" })
+      if (!preflight.ok) {
+        const error = new NamedError.Unknown({ message: preflight.message }).toObject()
+        const msg = (await Session.updateMessage({
           id: Identifier.ascending("message"),
           parentID: lastUser.id,
           role: "assistant",
@@ -1612,22 +2151,18 @@ export namespace SessionPrompt {
           providerID: model.providerID,
           time: {
             created: Date.now(),
+            completed: Date.now(),
           },
+          finish: "error",
+          error,
           sessionID,
-        })) as MessageV2.Assistant,
-        sessionID: sessionID,
-        model,
-        abort,
-      })
-      using _ = defer(() => InstructionPrompt.clear(processor.message.id))
-      const tools = await resolveTools({
-        agent,
-        session,
-        model,
-        tools: lastUser.tools,
-        processor,
-        messages: msgs,
-      })
+        })) as MessageV2.Assistant
+        Bus.publish(Session.Event.Error, {
+          sessionID: msg.sessionID,
+          error,
+        })
+        break
+      }
 
       if (step === 1) {
         SessionSummary.summarize({
@@ -1638,89 +2173,150 @@ export namespace SessionPrompt {
         })
       }
 
-      const sessionMessages = clone(msgs)
+      const outcome = await iife(async () => {
+        let attempts = 0
+        while (true) {
+          const processor = SessionProcessor.create({
+            assistantMessage: (await Session.updateMessage({
+              id: Identifier.ascending("message"),
+              parentID: lastUser.id,
+              role: "assistant",
+              mode: agent.name,
+              agent: agent.name,
+              path: {
+                cwd: Instance.directory,
+                root: Instance.worktree,
+              },
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: model.id,
+              providerID: model.providerID,
+              time: {
+                created: Date.now(),
+              },
+              sessionID,
+            })) as MessageV2.Assistant,
+            sessionID: sessionID,
+            model,
+            abort,
+          })
+          const tools = await resolveTools({
+            agent,
+            session,
+            model,
+            tools: lastUser.tools,
+            processor,
+            messages: msgs,
+          })
 
-      // Ephemerally wrap queued user messages with a reminder to stay on track
-      if (step > 1 && lastFinished) {
-        for (const msg of sessionMessages) {
-          if (msg.info.role !== "user" || msg.info.id <= lastFinished.id) continue
-          for (const part of msg.parts) {
-            if (part.type !== "text" || part.ignored || part.synthetic) continue
-            if (!part.text.trim()) continue
-            part.text = [
-              "<system-reminder>",
-              "The user sent the following message:",
-              part.text,
-              "",
-              "Please address this message and continue with your tasks.",
-              "</system-reminder>",
-            ].join("\n")
+          const built = await buildSystem()
+          const result = await processor.process({
+            user: lastUser,
+            agent,
+            abort,
+            sessionID,
+            system: built.system,
+            messages: [
+              ...MessageV2.toModelMessages(sessionMessages, model),
+              ...(isLastStep
+                ? [
+                    {
+                      role: "assistant" as const,
+                      content: MAX_STEPS,
+                    },
+                  ]
+                : []),
+            ],
+            tools,
+            model,
+          })
+
+          if (result !== "compact") return result
+
+          const request = processor.compactionRequest
+          if (request?.reason !== "context_length") {
+            // Overflow is handled by the next preflight; don't retry a completed call.
+            return "continue" as const
+          }
+
+          const allowed = await allowMaintenance({ sessionID, cause: "context_length" })
+          if (!allowed) {
+            const fallback = request.fallbackError
+            processor.message.error = fallback
+            processor.message.finish = "error"
+            processor.message.time.completed = processor.message.time.completed ?? Date.now()
+            await Session.updateMessage(processor.message)
+            Bus.publish(Session.Event.Error, {
+              sessionID: processor.message.sessionID,
+              error: fallback,
+            })
+            return "stop" as const
+          }
+
+          attempts++
+          if (attempts >= 3) {
+            const provider = contextLengthProviderMessage(request.fallbackError)
+            const message =
+              "Context length errors persist after automatic context maintenance. Try splitting your prompt or selecting a larger-context model." +
+              (provider ? `\n\nProvider error:\n${provider}` : "")
+            const error = new NamedError.Unknown({
+              message,
+            }).toObject()
+            processor.message.error = error
+            processor.message.finish = "error"
+            processor.message.time.completed = Date.now()
+            await Session.updateMessage(processor.message)
+            Bus.publish(Session.Event.Error, {
+              sessionID: processor.message.sessionID,
+              error,
+            })
+            return "stop" as const
+          }
+
+          const min = contextLengthMinDrop({
+            error: request.fallbackError,
+            attempt: attempts,
+            target: stricterBudget,
+          })
+
+          const maintenance = await applyMaintenance({
+            cause: "context_length",
+            forced: true,
+            allowed: true,
+            aggressive: attempts >= 2,
+            min,
+          })
+          if (!maintenance.ok) {
+            const error = new NamedError.Unknown({ message: maintenance.message }).toObject()
+            processor.message.error = error
+            processor.message.finish = "error"
+            processor.message.time.completed = Date.now()
+            await Session.updateMessage(processor.message)
+            Bus.publish(Session.Event.Error, {
+              sessionID: processor.message.sessionID,
+              error,
+            })
+            return "stop" as const
+          }
+
+          // Context-length retries can create empty attempt messages. If we were able to
+          // run maintenance and plan to retry, drop the attempt message when it has no parts.
+          const attemptParts = await MessageV2.parts(processor.message.id)
+          if (attemptParts.length === 0) {
+            await Session.removeMessage({ sessionID, messageID: processor.message.id }).catch(() => {})
           }
         }
-      }
-
-      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: sessionMessages })
-
-      const currentSession = await Session.get(sessionID)
-      const envKey = `${model.providerID}/${model.api.id}`
-      const system = [
-        ...(await getCachedEnvironment(sessionID, {
-          key: envKey,
-          load: () => SystemPrompt.environment(model),
-        })),
-        ...SystemPrompt.messageProtocol(
-          currentSession.sessionType,
-          sessionID,
-          currentSession.parentID,
-          currentSession.subagentPrompt,
-        ),
-        ...(await InstructionPrompt.system()),
-      ]
-      const result = await processor.process({
-        user: lastUser,
-        agent,
-        abort,
-        sessionID,
-        system,
-        messages: [
-          ...MessageV2.toModelMessages(sessionMessages, model),
-          ...(isLastStep
-            ? [
-                {
-                  role: "assistant" as const,
-                  content: MAX_STEPS,
-                },
-              ]
-            : []),
-        ],
-        tools,
-        model,
       })
 
       // Agent↔agent messaging and waiting are handled via tools (send_agent_message / wait_agent_message).
       // Note: send_agent_message is just a side-effect; it should not implicitly end the loop.
 
-      if (result === "stop") break
-      if (result === "compact") {
-        const cause = processor.compactionRequest?.reason === "context_length" ? "context_length" : "overflow"
-        const compacted = await requestAutoCompaction({
-          sessionID,
-          agent: lastUser.agent,
-          model: lastUser.model,
-          cause,
-        })
-
-        if (!compacted && processor.compactionRequest?.fallbackError) {
-          const fallback = processor.compactionRequest.fallbackError
-          processor.message.error = fallback
-          await Session.updateMessage(processor.message)
-          Bus.publish(Session.Event.Error, {
-            sessionID: processor.message.sessionID,
-            error: fallback,
-          })
-          break
-        }
-      }
+      if (outcome === "stop") break
       continue
     }
 
@@ -1859,7 +2455,7 @@ export namespace SessionPrompt {
     }
 
     for (const item of await ToolRegistry.tools(
-      { modelID: input.model.api.id, providerID: input.model.providerID },
+      { modelID: input.model.api?.id ?? input.model.id, providerID: input.model.providerID },
       input.agent,
     )) {
       if (primaryOnlyTools.has(item.id) && !isPrimarySession) continue
@@ -2136,7 +2732,16 @@ export namespace SessionPrompt {
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: Buffer.from(part.url, "base64url").toString(),
+                    text: (() => {
+                      const comma = part.url.indexOf(",")
+                      if (comma === -1) return ""
+
+                      const header = part.url.slice(0, comma)
+                      const payload = part.url.slice(comma + 1)
+                      if (!header.includes(";base64")) return payload
+
+                      return Buffer.from(payload, "base64").toString()
+                    })(),
                   },
                   {
                     ...part,

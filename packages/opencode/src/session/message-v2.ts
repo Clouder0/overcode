@@ -152,6 +152,35 @@ export namespace MessageV2 {
   })
   export type FilePart = z.infer<typeof FilePart>
 
+  const FILE_LABEL_MAX = 200
+
+  function capLabel(value: string) {
+    if (value.length <= FILE_LABEL_MAX) return value
+    return value.slice(0, FILE_LABEL_MAX) + "..."
+  }
+
+  // CPD delta text should never inline raw file payloads (eg, `data:` base64 URLs).
+  // This produces a short, stable label for attachments.
+  export function fileLabel(file: MessageV2.FilePart) {
+    if (file.filename) return file.filename
+
+    const src = file.source
+    if (src) {
+      if (src.type === "file" || src.type === "symbol") return src.path
+      if (src.type === "resource") return `resource ${src.clientName}:${capLabel(src.uri)}`
+    }
+
+    const url = file.url
+    if (url.startsWith("file://")) return url.replace(/^file:\/\//, "").split("?")[0]
+    if (url.startsWith("data:")) return `inline ${file.mime}`
+    return capLabel(url.split("?")[0])
+  }
+
+  export function excerpt(value: string, max: number) {
+    if (value.length <= max) return value
+    return value.slice(0, max) + `\n...[${value.length - max} chars omitted]...`
+  }
+
   export const AgentPart = PartBase.extend({
     type: z.literal("agent"),
     name: z.string(),
@@ -588,12 +617,7 @@ export namespace MessageV2 {
             })
           }
 
-          if (part.type === "compaction") {
-            userMessage.parts.push({
-              type: "text",
-              text: "What did we do so far?",
-            })
-          }
+          // Compaction parts are a UI/session marker only; do not inject them into model context.
           if (part.type === "subtask") {
             userMessage.parts.push({
               type: "text",

@@ -1649,6 +1649,79 @@
         ]
       }
     },
+    "/session/{sessionID}/context": {
+      "get": {
+        "operationId": "session.context",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get session context",
+        "description": "Retrieve the Compacted Prefix Digest (CPD) and context integrity flags for a session.",
+        "responses": {
+          "200": {
+            "description": "Session context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionContext"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnknownError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.context({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}/children": {
       "get": {
         "operationId": "session.children",
@@ -9301,6 +9374,39 @@
               "files"
             ]
           },
+          "context": {
+            "type": "object",
+            "properties": {
+              "cpd": {
+                "type": "object",
+                "properties": {
+                  "updated": {
+                    "type": "number"
+                  },
+                  "upto": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  },
+                  "size": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "updated",
+                  "upto"
+                ]
+              },
+              "trim": {
+                "type": "boolean"
+              },
+              "think": {
+                "type": "boolean"
+              },
+              "rctx": {
+                "type": "boolean"
+              }
+            }
+          },
           "share": {
             "type": "object",
             "properties": {
@@ -9818,10 +9924,10 @@
             "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
-            "$ref": "#/components/schemas/Event.file.watcher.updated"
+            "$ref": "#/components/schemas/Event.todo.updated"
           },
           {
-            "$ref": "#/components/schemas/Event.todo.updated"
+            "$ref": "#/components/schemas/Event.file.watcher.updated"
           },
           {
             "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -11592,6 +11698,10 @@
               "disable_paste_summary": {
                 "type": "boolean"
               },
+              "context_pipeline": {
+                "description": "Enable the new context pipeline (CPD + tail) for compaction, trimming, and reasoning preservation. Defaults to enabled when unset.",
+                "type": "boolean"
+              },
               "batch_tool": {
                 "description": "Enable the batch tool",
                 "type": "boolean"
@@ -12125,6 +12235,68 @@
           "name",
           "uri",
           "client"
+        ]
+      },
+      "SessionContext": {
+        "type": "object",
+        "properties": {
+          "cpd": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "upto": {
+                    "type": "string",
+                    "pattern": "^msg[0-9A-Za-z_]+$"
+                  },
+                  "updated": {
+                    "type": "number"
+                  },
+                  "size": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "text",
+                  "upto",
+                  "updated"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "flags": {
+            "type": "object",
+            "properties": {
+              "cpd": {
+                "type": "boolean"
+              },
+              "trim": {
+                "type": "boolean"
+              },
+              "think": {
+                "type": "boolean"
+              },
+              "rctx": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "cpd",
+              "trim",
+              "think",
+              "rctx"
+            ]
+          }
+        },
+        "required": [
+          "cpd",
+          "flags"
         ]
       },
       "TextPartInput": {

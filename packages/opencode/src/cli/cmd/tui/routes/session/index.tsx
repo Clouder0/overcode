@@ -30,13 +30,13 @@ import {
 } from "@opentui/core"
 import { Prompt, type PromptRef } from "@tui/component/prompt"
 import type {
-  AssistantMessage,
-  MessagePart,
+  AssistantMessage as AssistantMessageType,
+  MessagePart as MessagePartType,
   Part,
-  ToolPart,
-  UserMessage,
-  TextPart,
-  ReasoningPart,
+  ToolPart as ToolPartType,
+  UserMessage as UserMessageType,
+  TextPart as TextPartType,
+  ReasoningPart as ReasoningPartType,
 } from "@opencode-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
@@ -1055,65 +1055,7 @@ export function Session() {
                 {(message, index) => (
                   <Switch>
                     <Match when={message.id === revert()?.messageID}>
-                      {(function () {
-                        const command = useCommandDialog()
-                        const [hover, setHover] = createSignal(false)
-                        const dialog = useDialog()
-
-                        const handleUnrevert = async () => {
-                          const confirmed = await DialogConfirm.show(
-                            dialog,
-                            "Confirm Redo",
-                            "Are you sure you want to restore the reverted messages?",
-                          )
-                          if (confirmed) {
-                            command.trigger("session.redo")
-                          }
-                        }
-
-                        return (
-                          <box
-                            onMouseOver={() => setHover(true)}
-                            onMouseOut={() => setHover(false)}
-                            onMouseUp={handleUnrevert}
-                            marginTop={1}
-                            flexShrink={0}
-                            border={["left"]}
-                            customBorderChars={SplitBorder.customBorderChars}
-                            borderColor={theme.backgroundPanel}
-                          >
-                            <box
-                              paddingTop={1}
-                              paddingBottom={1}
-                              paddingLeft={2}
-                              backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
-                            >
-                              <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
-                              <text fg={theme.textMuted}>
-                                <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to
-                                restore
-                              </text>
-                              <Show when={revert()!.diffFiles?.length}>
-                                <box marginTop={1}>
-                                  <For each={revert()!.diffFiles}>
-                                    {(file) => (
-                                      <text fg={theme.text}>
-                                        {file.filename}
-                                        <Show when={file.additions > 0}>
-                                          <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
-                                        </Show>
-                                        <Show when={file.deletions > 0}>
-                                          <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
-                                        </Show>
-                                      </text>
-                                    )}
-                                  </For>
-                                </box>
-                              </Show>
-                            </box>
-                          </box>
-                        )
-                      })()}
+                      <RevertNotice data={revert() as RevertNoticeData} />
                     </Match>
                     <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
                       <></>
@@ -1131,7 +1073,7 @@ export function Session() {
                             />
                           ))
                         }}
-                        message={message as UserMessage}
+                        message={message as UserMessageType}
                         parts={sync.data.part[message.id] ?? []}
                         pending={pending()}
                       />
@@ -1139,7 +1081,7 @@ export function Session() {
                     <Match when={message.role === "assistant"}>
                       <AssistantMessage
                         last={lastAssistant()?.id === message.id}
-                        message={message as AssistantMessage}
+                        message={message as AssistantMessageType}
                         parts={sync.data.part[message.id] ?? []}
                       />
                     </Match>
@@ -1206,8 +1148,84 @@ const MIME_BADGE: Record<string, string> = {
   "application/x-directory": "dir",
 }
 
+type RevertNoticeData = {
+  messageID: string
+  reverted: UserMessageType[]
+  diff?: string
+  diffFiles: {
+    filename: string
+    additions: number
+    deletions: number
+  }[]
+}
+
+function RevertNotice(props: { data: RevertNoticeData }) {
+  const keybind = useKeybind()
+  const command = useCommandDialog()
+  const dialog = useDialog()
+  const { theme } = useTheme()
+  const [hover, setHover] = createSignal(false)
+
+  const handleUnrevert = async () => {
+    const confirmed = await DialogConfirm.show(
+      dialog,
+      "Confirm Redo",
+      "Are you sure you want to restore the reverted messages?",
+    )
+    if (confirmed) {
+      command.trigger("session.redo")
+    }
+  }
+
+  return (
+    <>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+      {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
+      <box
+        onMouseOver={() => setHover(true)}
+        onMouseOut={() => setHover(false)}
+        onMouseUp={handleUnrevert}
+        marginTop={1}
+        flexShrink={0}
+        border={["left"]}
+        customBorderChars={SplitBorder.customBorderChars}
+        borderColor={theme.backgroundPanel}
+      >
+        <box
+          paddingTop={1}
+          paddingBottom={1}
+          paddingLeft={2}
+          backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+        >
+          <text fg={theme.textMuted}>{props.data.reverted.length} message reverted</text>
+          <text fg={theme.textMuted}>
+            <span style={{ fg: theme.text }}>{keybind.print("messages_redo")}</span> or /redo to restore
+          </text>
+          <Show when={props.data.diffFiles.length > 0}>
+            <box marginTop={1}>
+              <For each={props.data.diffFiles}>
+                {(file) => (
+                  <text fg={theme.text}>
+                    {file.filename}
+                    <Show when={file.additions > 0}>
+                      <span style={{ fg: theme.diffAdded }}> +{file.additions}</span>
+                    </Show>
+                    <Show when={file.deletions > 0}>
+                      <span style={{ fg: theme.diffRemoved }}> -{file.deletions}</span>
+                    </Show>
+                  </text>
+                )}
+              </For>
+            </box>
+          </Show>
+        </box>
+      </box>
+    </>
+  )
+}
+
 function UserMessage(props: {
-  message: UserMessage
+  message: UserMessageType
   parts: Part[]
   onMouseUp: () => void
   index: number
@@ -1237,6 +1255,8 @@ function UserMessage(props: {
           customBorderChars={SplitBorder.customBorderChars}
           marginTop={props.index === 0 ? 0 : 1}
         >
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+          {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
           <box
             onMouseOver={() => {
               setHover(true)
@@ -1307,7 +1327,7 @@ function UserMessage(props: {
   )
 }
 
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: { message: AssistantMessageType; parts: Part[]; last: boolean }) {
   const local = useLocal()
   const { theme } = useTheme()
   const sync = useSync()
@@ -1395,9 +1415,9 @@ const PART_MAPPING = {
   message: MessagePartComponent,
 }
 
-type MessagePartData = MessagePart
+type MessagePartData = MessagePartType
 
-function MessagePartComponent(props: { last: boolean; part: MessagePartData; message: AssistantMessage }) {
+function MessagePartComponent(props: { last: boolean; part: MessagePartData; message: AssistantMessageType }) {
   const { theme, syntax } = useTheme()
   const ctx = use()
   const sync = useSync()
@@ -1532,10 +1552,13 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
             </text>
           }
         >
-          <text onMouseUp={handlePeerClick}>
-            <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>{peerInfo().name}</span>
-            {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
-          </text>
+          <>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+            <text onMouseUp={handlePeerClick}>
+              <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>{peerInfo().name}</span>
+              {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
+            </text>
+          </>
         </Show>
         <text>
           {seq() !== undefined && <span style={{ fg: theme.textMuted }}> seq: {seq()}</span>}
@@ -1544,9 +1567,12 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
         </text>
       </box>
       <Show when={!isToHuman && contentInfo().canExpand}>
-        <text fg={theme.textMuted} onMouseUp={toggleExpand}>
-          {expanded() ? " ▼ collapse" : " ▶ expand"}
-        </text>
+        <>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+          <text fg={theme.textMuted} onMouseUp={toggleExpand}>
+            {expanded() ? " ▼ collapse" : " ▶ expand"}
+          </text>
+        </>
       </Show>
       <Show
         when={isToHuman}
@@ -1588,7 +1614,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   )
 }
 
-function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
+function ReasoningPart(props: { last: boolean; part: ReasoningPartType; message: AssistantMessageType }) {
   const { theme, subtleSyntax } = useTheme()
   const ctx = use()
   const content = createMemo(() => {
@@ -1596,6 +1622,20 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
     // OpenRouter sends encrypted reasoning data that appears as [REDACTED]
     return props.part.text.replace("[REDACTED]", "").trim()
   })
+
+  const label = createMemo(() => {
+    if (props.part.ignored !== true) return "_Thinking:_"
+
+    const meta = props.part.metadata
+    const opencode = meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
+    const reason =
+      opencode && typeof opencode === "object" ? (opencode as { reason?: unknown }).reason : undefined
+
+    if (reason === "interrupted") return "_Thinking (omitted when you continued):_"
+    if (reason === "provider_rejected_reasoning_context") return "_Thinking (not sent to provider):_"
+    return "_Thinking (omitted from model context):_"
+  })
+
   return (
     <Show when={content() && ctx.showThinking()}>
       <box
@@ -1612,7 +1652,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
           drawUnstyledText={false}
           streaming={true}
           syntaxStyle={subtleSyntax()}
-          content={"_Thinking:_ " + content()}
+          content={label() + " " + content()}
           conceal={ctx.conceal()}
           fg={theme.textMuted}
         />
@@ -1621,7 +1661,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
   )
 }
 
-function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
+function TextPart(props: { last: boolean; part: TextPartType; message: AssistantMessageType }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
   return (
@@ -1650,7 +1690,7 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
 
 // Pending messages moved to individual tool pending functions
 
-function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMessage }) {
+function ToolPart(props: { last: boolean; part: ToolPartType; message: AssistantMessageType }) {
   const ctx = use()
   const sync = useSync()
 
@@ -1784,7 +1824,7 @@ type ToolProps<T extends Tool.Info> = {
   permission: Record<string, any>
   tool: string
   output?: string
-  part: ToolPart
+  part: ToolPartType
 }
 function GenericTool(props: ToolProps<any>) {
   return (
@@ -1811,7 +1851,7 @@ function InlineTool(props: {
   complete: any
   pending: string
   children: JSX.Element
-  part: ToolPart
+  part: ToolPartType
 }) {
   const [margin, setMargin] = createSignal(0)
   const { theme } = useTheme()
@@ -1878,7 +1918,7 @@ function InlineTool(props: {
   )
 }
 
-function BlockTool(props: { title: string; children: JSX.Element; onClick?: () => void; part?: ToolPart }) {
+function BlockTool(props: { title: string; children: JSX.Element; onClick?: () => void; part?: ToolPartType }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const [hover, setHover] = createSignal(false)

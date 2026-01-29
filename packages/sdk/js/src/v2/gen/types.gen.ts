@@ -867,6 +867,16 @@ export type Session = {
     files: number
     diffs?: Array<FileDiff>
   }
+  context?: {
+    cpd?: {
+      updated: number
+      upto: string
+      size?: number
+    }
+    trim?: boolean
+    think?: boolean
+    rctx?: boolean
+  }
   share?: {
     url: string
   }
@@ -1013,8 +1023,8 @@ export type Event =
   | EventQuestionReplied
   | EventQuestionRejected
   | EventSessionCompacted
-  | EventFileWatcherUpdated
   | EventTodoUpdated
+  | EventFileWatcherUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
@@ -1932,6 +1942,10 @@ export type Config = {
     chatMaxRetries?: number
     disable_paste_summary?: boolean
     /**
+     * Enable the new context pipeline (CPD + tail) for compaction, trimming, and reasoning preservation. Defaults to enabled when unset.
+     */
+    context_pipeline?: boolean
+    /**
      * Enable the batch tool
      */
     batch_tool?: boolean
@@ -2126,6 +2140,21 @@ export type McpResource = {
   description?: string
   mimeType?: string
   client: string
+}
+
+export type SessionContext = {
+  cpd: {
+    text: string
+    upto: string
+    updated: number
+    size?: number
+  } | null
+  flags: {
+    cpd: boolean
+    trim: boolean
+    think: boolean
+    rctx: boolean
+  }
 }
 
 export type TextPartInput = {
@@ -3170,6 +3199,43 @@ export type SessionUpdateResponses = {
 }
 
 export type SessionUpdateResponse = SessionUpdateResponses[keyof SessionUpdateResponses]
+
+export type SessionContextData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/context"
+}
+
+export type SessionContextErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Internal server error
+   */
+  500: UnknownError
+}
+
+export type SessionContextError = SessionContextErrors[keyof SessionContextErrors]
+
+export type SessionContextResponses = {
+  /**
+   * Session context
+   */
+  200: SessionContext
+}
+
+export type SessionContextResponse = SessionContextResponses[keyof SessionContextResponses]
 
 export type SessionChildrenData = {
   body?: never

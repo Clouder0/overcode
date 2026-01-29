@@ -13,20 +13,22 @@ export namespace SystemPrompt {
   }
 
   export function provider(model: Provider.Model) {
-    if (model.api.id.includes("gpt-5")) return [PROMPT_CODEX]
-    if (model.api.id.includes("gpt-") || model.api.id.includes("o1") || model.api.id.includes("o3")) {
+    const name = model.api?.id ?? model.id ?? ""
+    if (name.includes("gpt-5")) return [PROMPT_CODEX]
+    if (name.includes("gpt-") || name.includes("o1") || name.includes("o3")) {
       return [PROMPT_BEAST]
     }
-    if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
-    if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
+    if (name.includes("gemini-")) return [PROMPT_GEMINI]
+    if (name.includes("claude")) return [PROMPT_ANTHROPIC]
     return [PROMPT_ANTHROPIC_WITHOUT_TODO]
   }
 
   export async function environment(model: Provider.Model) {
     const project = Instance.project
+    const name = model.api?.id ?? model.id ?? "unknown"
     return [
       [
-        `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
+        `You are powered by the model named ${name}. The exact model ID is ${model.providerID}/${name}`,
         `Here is some useful information about the environment you are running in:`,
         `<env>`,
         `  Working directory: ${Instance.directory}`,
