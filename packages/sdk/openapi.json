@@ -11945,11 +11945,145 @@
               "think",
               "rctx"
             ]
+          },
+          "actions": {
+            "type": "object",
+            "properties": {
+              "trim": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "count": {
+                    "type": "number"
+                  },
+                  "tokens": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "at",
+                  "count",
+                  "tokens"
+                ]
+              },
+              "think": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "count": {
+                    "type": "number"
+                  },
+                  "tokens": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "at",
+                  "count",
+                  "tokens"
+                ]
+              },
+              "rctx": {
+                "type": "object",
+                "properties": {
+                  "at": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "at"
+                ]
+              }
+            },
+            "required": [
+              "trim",
+              "think",
+              "rctx"
+            ]
+          },
+          "estimate": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "total": {
+                "type": "number"
+              },
+              "system": {
+                "type": "number"
+              },
+              "messages": {
+                "type": "number"
+              },
+              "budget": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "context": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "target",
+              "total",
+              "system",
+              "messages",
+              "budget",
+              "context"
+            ]
           }
         },
         "required": [
           "cpd",
-          "flags"
+          "flags",
+          "actions",
+          "estimate"
         ]
       },
       "TextPartInput": {

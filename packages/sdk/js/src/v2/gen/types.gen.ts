@@ -2095,6 +2095,29 @@ export type SessionContext = {
     think: boolean
     rctx: boolean
   }
+  actions: {
+    trim: {
+      at: number | null
+      count: number
+      tokens: number
+    }
+    think: {
+      at: number | null
+      count: number
+      tokens: number
+    }
+    rctx: {
+      at: number | null
+    }
+  }
+  estimate: {
+    target: string | null
+    total: number
+    system: number
+    messages: number
+    budget: number | null
+    context: number | null
+  }
 }
 
 export type TextPartInput = {

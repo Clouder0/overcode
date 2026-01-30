@@ -36,19 +36,33 @@ export namespace SessionCPD {
 
   export async function set(sessionID: string, input: { text: string; upto: string; updated?: number }) {
     const updated = input.updated ?? Date.now()
-    const data: Data = {
-      text: input.text,
-      upto: Identifier.schema("message").parse(input.upto),
-      updated,
-    }
-    await Storage.write(key(sessionID), data)
+    const upto = Identifier.schema("message").parse(input.upto)
+
+    // CPD must only advance forward. Do the monotonic check inside a single
+    // write-lock so concurrent updates can't move the boundary backwards.
+    const result = await Storage.upsert<Data>(
+      key(sessionID),
+      () => ({
+        text: input.text,
+        upto,
+        updated,
+      }),
+      (draft) => {
+        if (draft.upto > upto) return false
+        draft.text = input.text
+        draft.upto = upto
+        draft.updated = updated
+      },
+    )
+
+    if (!result.wrote) return
 
     const size = Token.estimate(input.text)
     await Session.update(sessionID, (draft) => {
       if (!draft.context) draft.context = {}
       draft.context.cpd = {
         updated,
-        upto: data.upto,
+        upto,
         size,
       }
     })

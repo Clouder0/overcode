@@ -71,6 +71,30 @@ export namespace SessionProcessor {
           // - the TUI can show an indicator
           await SessionCPD.flag(input.sessionID, { rctx: true })
 
+          // Add a transcript marker (UI-only) for auditability.
+          const now = Date.now()
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: input.assistantMessage.id,
+            sessionID: input.sessionID,
+            type: "text",
+            synthetic: true,
+            ignored: true,
+            text: "Provider rejected prior reasoning context (older thinking dropped)",
+            time: {
+              start: now,
+              end: now,
+            },
+            metadata: {
+              opencode: {
+                marker: {
+                  kind: "rctx",
+                  at: now,
+                },
+              },
+            },
+          })
+
           const msgs = await Session.messages({ sessionID: input.sessionID })
 
           for (const msg of msgs) {

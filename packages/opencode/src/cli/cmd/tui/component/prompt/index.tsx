@@ -264,7 +264,9 @@ export function Prompt(props: PromptProps) {
     }, exitWindow)
   }
 
-  // Initialize agent/model/variant from last user message when session changes
+  // Initialize agent/model/variant from last user message when session changes.
+  // Keep this scoped to primary sessions so viewing a subagent transcript doesn't
+  // mutate the global model/variant selection.
   let syncedSessionID: string | undefined
   createEffect(() => {
     const sessionID = props.sessionID
@@ -272,6 +274,9 @@ export function Prompt(props: PromptProps) {
 
     if (sessionID !== syncedSessionID) {
       if (!sessionID || !msg) return
+
+      const session = sync.session.get(sessionID)
+      if (!session || session.sessionType === "subagent") return
 
       syncedSessionID = sessionID
 
@@ -809,15 +814,47 @@ export function Prompt(props: PromptProps) {
     const agentName = displayAgentName()
 
     if (store.mode === "shell") {
-      sdk.client.session.shell({
-        sessionID,
-        agent: agentName,
-        model: {
-          providerID: selectedModel.providerID,
-          modelID: selectedModel.modelID,
-        },
-        command: inputText,
-      })
+      sdk.client.session
+        .shell({
+          sessionID,
+          agent: agentName,
+          model: {
+            providerID: selectedModel.providerID,
+            modelID: selectedModel.modelID,
+          },
+          command: inputText,
+        })
+        .catch((error) => {
+          const name = error instanceof Error ? error.name : undefined
+          if (name === "AbortError") return
+
+          const status = (() => {
+            if (!error || typeof error !== "object") return
+
+            const direct = (error as { status?: unknown }).status
+            if (typeof direct === "number") return direct
+
+            const response = (error as { response?: unknown }).response
+            if (!response || typeof response !== "object") return
+            const nested = (response as { status?: unknown }).status
+            if (typeof nested === "number") return nested
+          })()
+
+          if (status === 409) {
+            toast.show({
+              variant: "warning",
+              message: "Session is busy; wait or interrupt before running shell",
+              duration: 2500,
+            })
+            return
+          }
+
+          toast.show({
+            variant: "error",
+            message: "Failed to run shell command",
+            duration: 3500,
+          })
+        })
       setStore("mode", "normal")
     } else if (
       inputText.startsWith("/") &&
@@ -836,6 +873,16 @@ export function Prompt(props: PromptProps) {
         messageID,
         variant,
       })
+    } else if (
+      inputText.startsWith("/") &&
+      iife(() => {
+        const name = inputText.trim().split(/\s+/)[0]
+        return command.slashes().some((s) => s.display === name || s.aliases?.includes(name))
+      })
+    ) {
+      const name = inputText.trim().split(/\s+/)[0]
+      const slash = command.slashes().find((s) => s.display === name || s.aliases?.includes(name))
+      slash?.onSelect()
     } else {
       sdk.client.session
         .prompt({
@@ -857,7 +904,37 @@ export function Prompt(props: PromptProps) {
             })),
           ],
         })
-        .catch(() => {})
+        .catch((error) => {
+          const name = error instanceof Error ? error.name : undefined
+          if (name === "AbortError") return
+
+          const status = (() => {
+            if (!error || typeof error !== "object") return
+
+            const direct = (error as { status?: unknown }).status
+            if (typeof direct === "number") return direct
+
+            const response = (error as { response?: unknown }).response
+            if (!response || typeof response !== "object") return
+            const nested = (response as { status?: unknown }).status
+            if (typeof nested === "number") return nested
+          })()
+
+          if (status === 409) {
+            toast.show({
+              variant: "warning",
+              message: "Session is busy; wait or interrupt before sending",
+              duration: 2500,
+            })
+            return
+          }
+
+          toast.show({
+            variant: "error",
+            message: "Failed to send message",
+            duration: 3500,
+          })
+        })
     }
     history.append({
       ...store.prompt,

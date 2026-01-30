@@ -220,6 +220,57 @@ export namespace Storage {
     })
   }
 
+  export async function upsert<T>(
+    key: string[],
+    create: () => T,
+    fn: (draft: T) => boolean | void,
+  ): Promise<{ value: T; wrote: boolean }> {
+    assertSafeSegments(key, "key")
+    const dir = await state().then((x) => x.dir)
+    const target = path.join(dir, ...key) + ".json"
+    return withErrorHandling(async () => {
+      using _ = await Lock.write(target)
+
+      const file = Bun.file(target)
+
+      const existing = await (async () => {
+        if (!(await file.exists())) return
+
+        const raw = await file.text().catch((error) => {
+          // The file can be deleted between exists() and text() across processes.
+          // Treat it as missing and proceed with create().
+          const errno = error as NodeJS.ErrnoException
+          if (errno?.code === "ENOENT") return
+          throw error
+        })
+        if (!raw) return
+        try {
+          return JSON.parse(raw) as T
+        } catch (error) {
+          // CPD/marker data is derived; if the JSON is corrupt, recover by
+          // moving it aside so the next write can proceed.
+          if (!(error instanceof SyntaxError)) throw error
+
+          const moved = await fs
+            .rename(target, target + `.corrupt.${Date.now()}`)
+            .then(() => true)
+            .catch(() => false)
+          if (!moved) {
+            await fs.unlink(target).catch(() => {})
+          }
+          return
+        }
+      })()
+
+      const value = existing ?? create()
+      const wrote = fn(value) !== false
+      if (wrote) {
+        await Bun.write(target, JSON.stringify(value, null, 2))
+      }
+      return { value, wrote }
+    })
+  }
+
   export async function write<T>(key: string[], content: T) {
     assertSafeSegments(key, "key")
     const dir = await state().then((x) => x.dir)
@@ -241,7 +292,7 @@ export namespace Storage {
     })
   }
 
-  const glob = new Bun.Glob("**/*")
+  const glob = new Bun.Glob("**/*.json")
   export async function list(prefix: string[]) {
     assertSafeSegments(prefix, "prefix")
     const dir = await state().then((x) => x.dir)

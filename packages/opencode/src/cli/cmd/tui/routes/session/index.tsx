@@ -70,6 +70,7 @@ import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
+import { DialogContext } from "./dialog-context"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
@@ -137,7 +138,14 @@ export function Session() {
   const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
   const questions = createMemo(() => sync.data.question[route.sessionID] ?? [])
 
-  const pending = createMemo(() => messages().findLast((x) => x.role === "assistant" && !x.time.completed)?.id)
+  // When processing queued user messages FIFO, the assistant message can be created after
+  // later user messages. Use the *parent user id* to mark queued prompts reliably.
+  const pending = createMemo(() => {
+    const active = messages().findLast((x) => x.role === "assistant" && !x.time.completed) as
+      | AssistantMessageType
+      | undefined
+    return active?.parentID
+  })
 
   const lastAssistant = createMemo(() => {
     return messages().findLast((x) => x.role === "assistant")
@@ -176,10 +184,25 @@ export function Session() {
     return new CustomSpeedScroll(3)
   })
 
+  const toast = useToast()
+  const sdk = useSDK()
+  const [compacting, setCompacting] = createSignal(false)
+  const [tick, setTick] = createSignal(Date.now())
+  const clock = setInterval(() => setTick(Date.now()), 30_000)
+  onCleanup(() => clearInterval(clock))
+  const [ready, setReady] = createSignal(false)
+
+  const isCompacting = (value?: number) => {
+    if (typeof value !== "number") return false
+    return tick() - value < 10 * 60 * 1000
+  }
+
   createEffect(async () => {
+    setReady(false)
     await sync.session
       .sync(route.sessionID)
       .then(() => {
+        setReady(true)
         if (scroll) scroll.scrollBy(100_000)
       })
       .catch((e) => {
@@ -206,8 +229,42 @@ export function Session() {
       })
   })
 
-  const toast = useToast()
-  const sdk = useSDK()
+  // Keep previous CPD timestamp without creating a reactive feedback loop.
+  const contextState = {
+    current: undefined as
+      | {
+          sessionID: string
+          cpdUpdated: number | null
+        }
+      | undefined,
+  }
+
+  createEffect(() => {
+    const value = session()
+    if (!value) return
+
+    const ctx = value.context
+    const next = {
+      sessionID: value.id,
+      cpdUpdated: ctx?.cpd?.updated ?? null,
+    }
+
+    const prev = contextState.current
+    if (!prev || prev.sessionID !== next.sessionID) {
+      contextState.current = next
+      return
+    }
+
+    if (next.cpdUpdated !== null && next.cpdUpdated !== prev.cpdUpdated) {
+      toast.show({
+        variant: "info",
+        message: "Context updated (CPD refreshed)",
+        duration: 2000,
+      })
+    }
+
+    contextState.current = next
+  })
 
   // Get task prompt for current session
   const currentTaskPrompt = createMemo((): string | undefined => {
@@ -223,6 +280,13 @@ export function Session() {
   const [promptHandle, setPromptHandle] = createSignal<PromptRef | undefined>(undefined)
 
   createEffect(() => {
+    // Apply `initialPrompt` once per session navigation.
+    route.sessionID
+    route.initialPrompt
+    setInitialPromptApplied(false)
+  })
+
+  createEffect(() => {
     const initial = route.initialPrompt
     if (!initial) return
     const handle = promptHandle()
@@ -233,8 +297,41 @@ export function Session() {
   })
 
   let lastSwitch: string | undefined = undefined
+
+  const markerKind = (part: { metadata?: unknown }) => {
+    const meta = part.metadata
+    if (!meta || typeof meta !== "object") return
+    const base = meta as Record<string, unknown>
+    const opencode = base.opencode
+    if (!opencode || typeof opencode !== "object") return
+    const marker = (opencode as Record<string, unknown>).marker
+    if (!marker || typeof marker !== "object") return
+    const record = marker as Record<string, unknown>
+    const kind = record.kind
+    if (typeof kind !== "string") return
+    return kind
+  }
+
   sdk.event.on("message.part.updated", (evt) => {
     const part = evt.properties.part
+
+    if (part.type === "text" && part.synthetic === true && part.ignored === true) {
+      if (part.sessionID !== route.sessionID) return
+      if (!ready()) return
+      const kind = markerKind(part)
+      if (!kind) return
+
+      const variant = kind === "rctx" ? "error" : kind === "think" ? "warning" : kind === "trim" ? "warning" : "info"
+      const duration = kind === "rctx" ? 4000 : 3000
+
+      toast.show({
+        variant,
+        message: part.text,
+        duration,
+      })
+      return
+    }
+
     if (part.type !== "tool") return
     if (part.sessionID !== route.sessionID) return
     if (part.state.status !== "completed") return
@@ -429,11 +526,19 @@ export function Session() {
       value: "session.compact",
       keybind: "session_compact",
       category: "Session",
+      enabled:
+        !compacting() &&
+        (() => {
+          const status = sync.data.session_status?.[route.sessionID]
+          if (status?.type && status.type !== "idle") return false
+          if (status?.type === "idle") return true
+          return !isCompacting(session()?.time?.compacting)
+        })(),
       slash: {
         name: "compact",
         aliases: ["summarize"],
       },
-      onSelect: (dialog) => {
+      onSelect: async (dialog) => {
         const selectedModel = local.model.current()
         if (!selectedModel) {
           toast.show({
@@ -443,12 +548,64 @@ export function Session() {
           })
           return
         }
-        sdk.client.session.summarize({
-          sessionID: route.sessionID,
-          modelID: selectedModel.modelID,
-          providerID: selectedModel.providerID,
+
+        const status = sync.data.session_status?.[route.sessionID]
+        if (status?.type && status.type !== "idle") {
+          toast.show({
+            variant: "warning",
+            message: "Session is busy; interrupt or wait before compacting",
+            duration: 2500,
+          })
+          return
+        }
+
+        if (!status?.type && isCompacting(session()?.time?.compacting)) {
+          toast.show({
+            variant: "warning",
+            message: "Session is already compacting",
+            duration: 2500,
+          })
+          return
+        }
+
+        if (compacting()) return
+
+        setCompacting(true)
+        toast.show({
+          variant: "info",
+          message: "Compacting session...",
+          duration: 1500,
         })
+
+        await sdk.client.session
+          .summarize({
+            sessionID: route.sessionID,
+            modelID: selectedModel.modelID,
+            providerID: selectedModel.providerID,
+          })
+          .catch((e) => {
+            const name = e instanceof Error ? e.name : undefined
+            if (name === "AbortError") return
+            toast.show({
+              variant: "error",
+              message: "Failed to compact session",
+              duration: 3500,
+            })
+          })
+          .finally(() => setCompacting(false))
+
         dialog.clear()
+      },
+    },
+    {
+      title: "Show context",
+      value: "session.context",
+      category: "Session",
+      slash: {
+        name: "context",
+      },
+      onSelect: (dialog) => {
+        dialog.replace(() => <DialogContext sessionID={route.sessionID} />)
       },
     },
     {
@@ -1351,6 +1508,7 @@ function AssistantMessage(props: { message: AssistantMessageType; parts: Part[];
   const local = useLocal()
   const { theme } = useTheme()
   const sync = useSync()
+  const renderer = useRenderer()
   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
 
   const final = createMemo(() => {
@@ -1363,6 +1521,25 @@ function AssistantMessage(props: { message: AssistantMessageType; parts: Part[];
     const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
     if (!user || !user.time) return 0
     return props.message.time.completed - user.time.created
+  })
+
+  const replyingTo = createMemo(() => {
+    const list = messages()
+    const idx = list.findIndex((x) => x.id === props.message.id)
+    if (idx <= 0) return
+
+    const prev = list[idx - 1]
+    if (prev?.id === props.message.parentID) return
+
+    const user = list.find((x) => x.role === "user" && x.id === props.message.parentID)
+    if (!user) return `#${props.message.parentID.slice(-4)}`
+    const parts = sync.data.part[user.id] ?? []
+    const part = parts.find((p) => p.type === "text" && !p.synthetic && !p.ignored) as TextPartType | undefined
+    if (!part) return `#${props.message.parentID.slice(-4)}`
+
+    const line = part.text.replace(/\n/g, " ").trim()
+    if (!line) return `#${props.message.parentID.slice(-4)}`
+    return line
   })
 
   const reactiveParts = createMemo(() => sync.data.part[props.message.id] ?? props.parts)
@@ -1414,6 +1591,12 @@ function AssistantMessage(props: { message: AssistantMessageType; parts: Part[];
               </span>{" "}
               <span style={{ fg: theme.text }}>{Locale.titlecase(props.message.mode)}</span>
               <span style={{ fg: theme.textMuted }}> · {props.message.modelID}</span>
+              <Show when={replyingTo()}>
+                <span style={{ fg: theme.textMuted }}>
+                  {" "}
+                  · ↳ {truncateEnd({ method: renderer.widthMethod, text: replyingTo()!, max: 60, tail: "..." })}
+                </span>
+              </Show>
               <Show when={duration()}>
                 <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
               </Show>
@@ -1575,7 +1758,9 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
           <>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
             <text onMouseUp={handlePeerClick}>
-              <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>{peerInfo().name}</span>
+              <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>
+                {peerInfo().name}
+              </span>
               {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
             </text>
           </>
@@ -1648,8 +1833,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPartType; message:
 
     const meta = props.part.metadata
     const opencode = meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
-    const reason =
-      opencode && typeof opencode === "object" ? (opencode as { reason?: unknown }).reason : undefined
+    const reason = opencode && typeof opencode === "object" ? (opencode as { reason?: unknown }).reason : undefined
 
     if (reason === "interrupted") return "_Thinking (omitted when you continued):_"
     if (reason === "provider_rejected_reasoning_context") return "_Thinking (not sent to provider):_"
@@ -1684,19 +1868,59 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPartType; message:
 function TextPart(props: { last: boolean; part: TextPartType; message: AssistantMessageType }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+
+  const marker = createMemo(() => {
+    if (props.part.ignored !== true) return
+
+    const meta = props.part.metadata
+    if (!meta || typeof meta !== "object") return
+
+    const opencode = (meta as any).opencode
+    if (!opencode || typeof opencode !== "object") return
+
+    const marker = (opencode as any).marker
+    if (!marker || typeof marker !== "object") return
+
+    const kind = (marker as any).kind
+    if (kind === "trim" || kind === "think" || kind === "rctx") return kind as "trim" | "think" | "rctx"
+  })
+
+  const badge = createMemo(() => {
+    const kind = marker()
+    if (!kind) return
+
+    if (kind === "rctx") return { label: "RCTX", bg: theme.error }
+    if (kind === "trim") return { label: "TRIM", bg: theme.warning }
+    return { label: "THINK", bg: theme.warning }
+  })
+
   return (
     <Show when={props.part.text.trim()}>
-      <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
-        <code
-          filetype="markdown"
-          drawUnstyledText={false}
-          streaming={true}
-          syntaxStyle={syntax()}
-          content={props.part.text.trim()}
-          conceal={ctx.conceal()}
-          fg={theme.text}
-        />
-      </box>
+      <Show
+        when={badge()}
+        fallback={
+          <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
+            <code
+              filetype="markdown"
+              drawUnstyledText={false}
+              streaming={true}
+              syntaxStyle={syntax()}
+              content={props.part.text.trim()}
+              conceal={ctx.conceal()}
+              fg={theme.text}
+            />
+          </box>
+        }
+      >
+        {(value) => (
+          <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
+            <text fg={theme.textMuted}>
+              <span style={{ bg: value().bg, fg: theme.backgroundPanel, bold: true }}> {value().label} </span>
+              <span style={{ fg: theme.textMuted }}> {props.part.text.trim()}</span>
+            </text>
+          </box>
+        )}
+      </Show>
     </Show>
   )
 }
@@ -1937,31 +2161,35 @@ function BlockTool(props: { title: string; children: JSX.Element; onClick?: () =
   const [hover, setHover] = createSignal(false)
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
   return (
-    <box
-      border={["left"]}
-      paddingTop={1}
-      paddingBottom={1}
-      paddingLeft={2}
-      marginTop={1}
-      gap={1}
-      backgroundColor={hover() ? theme.backgroundMenu : theme.backgroundPanel}
-      customBorderChars={SplitBorder.customBorderChars}
-      borderColor={theme.background}
-      onMouseOver={() => props.onClick && setHover(true)}
-      onMouseOut={() => setHover(false)}
-      onMouseUp={() => {
-        if (renderer.getSelection()?.getSelectedText()) return
-        props.onClick?.()
-      }}
-    >
-      <text paddingLeft={3} fg={theme.textMuted}>
-        {props.title}
-      </text>
-      {props.children}
-      <Show when={error()}>
-        <text fg={theme.error}>{error()}</text>
-      </Show>
-    </box>
+    <>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+      {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
+      <box
+        border={["left"]}
+        paddingTop={1}
+        paddingBottom={1}
+        paddingLeft={2}
+        marginTop={1}
+        gap={1}
+        backgroundColor={hover() ? theme.backgroundMenu : theme.backgroundPanel}
+        customBorderChars={SplitBorder.customBorderChars}
+        borderColor={theme.background}
+        onMouseOver={() => props.onClick && setHover(true)}
+        onMouseOut={() => setHover(false)}
+        onMouseUp={() => {
+          if (renderer.getSelection()?.getSelectedText()) return
+          props.onClick?.()
+        }}
+      >
+        <text paddingLeft={3} fg={theme.textMuted}>
+          {props.title}
+        </text>
+        {props.children}
+        <Show when={error()}>
+          <text fg={theme.error}>{error()}</text>
+        </Show>
+      </box>
+    </>
   )
 }
 

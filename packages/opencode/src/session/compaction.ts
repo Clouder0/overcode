@@ -47,17 +47,73 @@ export namespace SessionCompaction {
     }
   }
 
-  const MARKER_TTL = 60 * 60 * 1000
+  // If a compaction crashes mid-flight, the marker is the only signal used to
+  // inject "arrived while compacting" reminders for delivered messages.
+  // Keep this TTL short to avoid false reminders long after a crash.
+  const MARKER_TTL = 10 * 60 * 1000
+
+  type Active = {
+    abort: AbortController
+    requestID: string
+    startedAt: number
+  }
+
+  // Manual `/compact` (server summarize endpoint) runs outside the prompt-loop state.
+  // Track it separately so we can reject overlaps and support session.abort cancellation.
+
+  const active = Instance.state(
+    () => new Map<string, Active>(),
+    async (map) => {
+      for (const item of map.values()) {
+        item.abort.abort()
+      }
+      map.clear()
+    },
+  )
+
+  export function manual(sessionID: string): { requestID: string; startedAt: number } | undefined {
+    const entry = getActive(sessionID)
+    if (!entry) return
+    return {
+      requestID: entry.requestID,
+      startedAt: entry.startedAt,
+    }
+  }
+
+  function getActive(sessionID: string) {
+    return active().get(sessionID)
+  }
 
   function markerKey(sessionID: string) {
     return ["compaction", sessionID]
   }
 
   export async function marker(sessionID: string): Promise<{ requestID: string; startedAt: number } | undefined> {
-    const existing = await Storage.read<Marker>(markerKey(sessionID)).catch(() => undefined)
+    const existing = await Storage.read<Marker>(markerKey(sessionID)).catch((error) => {
+      // Marker records are derived; if the JSON is corrupt, clear it.
+      if (Storage.NotFoundError.isInstance(error)) return
+      Storage.remove(markerKey(sessionID)).catch(() => {})
+      return
+    })
     if (!existing) return
 
-    const stale = Date.now() - existing.time.created > MARKER_TTL
+    const created = existing.time?.created
+    if (typeof created !== "number") {
+      Storage.remove(markerKey(sessionID)).catch(() => {})
+      return
+    }
+
+    if (typeof existing.requestID !== "string" || !existing.requestID) {
+      Storage.remove(markerKey(sessionID)).catch(() => {})
+      return
+    }
+
+    if (typeof existing.startedAt !== "number") {
+      Storage.remove(markerKey(sessionID)).catch(() => {})
+      return
+    }
+
+    const stale = Date.now() - created > MARKER_TTL
     if (stale) {
       Storage.remove(markerKey(sessionID)).catch(() => {})
       return
@@ -83,6 +139,48 @@ export namespace SessionCompaction {
     const existing = await marker(sessionID)
     if (!existing) return
     if (existing.requestID !== requestID) return
+    await Storage.remove(markerKey(sessionID)).catch(() => {})
+  }
+
+  export async function unmark(sessionID: string, requestID: string) {
+    await clearMarker(sessionID, requestID)
+  }
+
+  export function beginManual(input: { sessionID: string; requestID: string; startedAt: number }) {
+    const existing = getActive(input.sessionID)
+    if (existing) return
+
+    const abort = new AbortController()
+    const entry: Active = {
+      abort,
+      requestID: input.requestID,
+      startedAt: input.startedAt,
+    }
+    active().set(input.sessionID, entry)
+    return entry
+  }
+
+  export function abortManual(sessionID: string) {
+    const entry = getActive(sessionID)
+    if (!entry) return false
+    entry.abort.abort()
+    return true
+  }
+
+  export function endManual(input: { sessionID: string; requestID: string }) {
+    const existing = active().get(input.sessionID)
+    if (!existing) return
+    if (existing.requestID !== input.requestID) return
+    active().delete(input.sessionID)
+  }
+
+  export function forceEndManual(sessionID: string) {
+    if (!active().has(sessionID)) return false
+    active().delete(sessionID)
+    return true
+  }
+
+  export async function clearAnyMarker(sessionID: string) {
     await Storage.remove(markerKey(sessionID)).catch(() => {})
   }
 
@@ -141,13 +239,41 @@ export namespace SessionCompaction {
     }
     log.info("found", { pruned, total })
     if (pruned > PRUNE_MINIMUM) {
+      const started = Date.now()
       for (const part of toPrune) {
         if (part.state.status === "completed") {
-          part.state.time.compacted = Date.now()
+          part.state.time.compacted = started
           await Session.updatePart(part)
         }
       }
       await SessionCPD.flag(input.sessionID, { trim: true })
+
+      const messageID = msgs.at(-1)?.info.id
+      if (messageID) {
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: input.sessionID,
+          messageID,
+          type: "text",
+          synthetic: true,
+          ignored: true,
+          text: `Tool outputs trimmed (${toPrune.length}; ~${pruned.toLocaleString()} tokens)`,
+          time: {
+            start: started,
+            end: started,
+          },
+          metadata: {
+            opencode: {
+              marker: {
+                kind: "trim",
+                at: started,
+                count: toPrune.length,
+                tokens: pruned,
+              },
+            },
+          },
+        })
+      }
       log.info("pruned", { count: toPrune.length })
     }
   }
@@ -263,194 +389,8 @@ export namespace SessionCompaction {
         model,
       })
 
-      if (result === "continue" && input.auto) {
-        const parentIndex = input.messages.findIndex((m) => m.info.id === input.parentID)
-        const history = parentIndex > 0 ? input.messages.slice(0, parentIndex) : []
-        const target = history
-          .slice()
-          .reverse()
-          .find((m) => {
-            if (m.info.role !== "user") return false
-            if (m.parts.some((p) => p.type === "compaction")) return false
-            if (m.parts.some((p) => p.type === "text" && !p.ignored && !p.synthetic)) return true
-            if (m.parts.some((p) => p.type === "message" && p.direction === "incoming")) return true
-            if (m.parts.some((p) => p.type === "file")) return true
-            return false
-          })
-
-        const targetUser = target ? (target.info as MessageV2.User) : undefined
-
-        const answered = (() => {
-          if (!targetUser) return false
-          return history.some((m) => {
-            if (m.info.role !== "assistant") return false
-            const assistant = m.info as MessageV2.Assistant
-            if (assistant.parentID !== targetUser.id) return false
-            if (!assistant.finish) return false
-            if (["tool-calls", "unknown"].includes(assistant.finish)) return false
-            if (assistant.error) return false
-            return true
-          })
-        })()
-
-        const replayable = !!target && !!targetUser && !answered
-
-        if (replayable) {
-          const now = Date.now()
-          const replayMsg = await Session.updateMessage({
-            id: Identifier.ascending("message"),
-            role: "user",
-            sessionID: input.sessionID,
-            time: {
-              created: now,
-            },
-            agent: targetUser.agent,
-            model: targetUser.model,
-            system: targetUser.system,
-            tools: targetUser.tools,
-            variant: targetUser.variant,
-          })
-
-          const meta = {
-            opencode: {
-              replay: true,
-              sourceMessageID: targetUser.id,
-            },
-          }
-
-          const fileLabel = (file: MessageV2.FilePart) => {
-            if (file.filename) return file.filename
-            const src = file.source
-            if (src && (src.type === "file" || src.type === "symbol")) return src.path
-            if (file.url.startsWith("file://")) return file.url.replace(/^file:\/\//, "").split("?")[0]
-            if (file.url.startsWith("data:")) return `inline ${file.mime}`
-            return file.url
-          }
-
-          const files = target.parts.filter((p): p is MessageV2.FilePart => p.type === "file")
-          const dropped = files.filter((f) => f.mime === "text/plain" || f.mime === "application/x-directory")
-
-          if (dropped.length > 0) {
-            await Session.updatePart({
-              id: Identifier.ascending("part"),
-              messageID: replayMsg.id,
-              sessionID: input.sessionID,
-              type: "text",
-              synthetic: true,
-              text: [
-                "Some attachments may not be available after compaction:",
-                ...dropped.map((f) => `- ${fileLabel(f)} (${f.mime})`),
-                "Re-read them in this session if needed.",
-              ].join("\n"),
-              time: {
-                start: now,
-                end: now,
-              },
-            })
-          }
-
-          const msgs = target.parts.filter(
-            (p): p is MessageV2.MessagePart => p.type === "message" && p.direction === "incoming",
-          )
-          for (const msg of msgs) {
-            await Session.updatePart({
-              id: Identifier.ascending("part"),
-              messageID: replayMsg.id,
-              sessionID: input.sessionID,
-              type: "message",
-              direction: msg.direction,
-              peer: msg.peer,
-              peerType: msg.peerType,
-              text: msg.text,
-              timeout: msg.timeout,
-              timeoutOccurred: msg.timeoutOccurred,
-              time: msg.time,
-            })
-          }
-
-          const texts = target.parts.filter(
-            (p): p is MessageV2.TextPart => p.type === "text" && !p.ignored && !p.synthetic,
-          )
-
-          for (const text of texts) {
-            await Session.updatePart({
-              id: Identifier.ascending("part"),
-              messageID: replayMsg.id,
-              sessionID: input.sessionID,
-              type: "text",
-              text: text.text,
-              synthetic: true,
-              metadata: meta,
-              time: {
-                start: now,
-                end: now,
-              },
-            })
-          }
-
-          if (texts.length === 0) {
-            const list =
-              files.length > 0
-                ? ["Attachments:", ...files.map((f) => `- ${fileLabel(f)} (${f.mime})`)].join("\n")
-                : undefined
-            const note =
-              msgs.length > 0 ? "Please respond to the message(s) above." : "Please respond to the previous user input."
-            const text = list ? [note, list].join("\n\n") : note
-            await Session.updatePart({
-              id: Identifier.ascending("part"),
-              messageID: replayMsg.id,
-              sessionID: input.sessionID,
-              type: "text",
-              text,
-              synthetic: true,
-              metadata: meta,
-              time: {
-                start: now,
-                end: now,
-              },
-            })
-          }
-
-          for (const file of files) {
-            await Session.updatePart({
-              id: Identifier.ascending("part"),
-              messageID: replayMsg.id,
-              sessionID: input.sessionID,
-              type: "file",
-              mime: file.mime,
-              filename: file.filename,
-              url: file.url,
-              source: file.source,
-            })
-          }
-        }
-
-        if (!replayable) {
-          const now = Date.now()
-          const continueMsg = await Session.updateMessage({
-            id: Identifier.ascending("message"),
-            role: "user",
-            sessionID: input.sessionID,
-            time: {
-              created: now,
-            },
-            agent: userMessage.agent,
-            model: userMessage.model,
-          })
-          await Session.updatePart({
-            id: Identifier.ascending("part"),
-            messageID: continueMsg.id,
-            sessionID: input.sessionID,
-            type: "text",
-            synthetic: true,
-            text: "Continue if you have next steps",
-            time: {
-              start: now,
-              end: now,
-            },
-          })
-        }
-      }
+      // Legacy auto-compaction replay prompts are retired. The context pipeline
+      // continues the session without synthesizing new user messages.
       if (processor.message.error) return "stop"
       Bus.publish(Event.Compacted, { sessionID: input.sessionID })
       return "continue"

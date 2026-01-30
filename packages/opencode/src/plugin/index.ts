@@ -5,7 +5,6 @@ import { Config } from "../config/config"
 import { Bus } from "../bus"
 import { Log } from "../util/log"
 import { createOpencodeClient } from "@opencode-ai/sdk"
-import { Server } from "../server/server"
 import { BunProc } from "../bun"
 import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
@@ -23,10 +22,14 @@ export namespace Plugin {
   const INTERNAL_PLUGINS: PluginInstance[] = [CodexAuthPlugin, CopilotAuthPlugin]
 
   const state = Instance.state(async () => {
+    // Lazy import to avoid circular dependency during module initialization:
+    // plugin -> server -> routes/session -> SessionCPD -> session -> prompt -> plugin
+    const mod = await import("../server/server")
+
     const client = createOpencodeClient({
       baseUrl: "http://localhost:4096",
       // @ts-ignore - fetch type incompatibility
-      fetch: async (...args) => Server.App().fetch(...args),
+      fetch: async (...args) => mod.Server.App().fetch(...args),
     })
     const config = await Config.get()
     const hooks: Hooks[] = []
@@ -35,7 +38,7 @@ export namespace Plugin {
       project: Instance.project,
       worktree: Instance.worktree,
       directory: Instance.directory,
-      serverUrl: Server.url(),
+      serverUrl: mod.Server.url(),
       $: Bun.$,
     }
 

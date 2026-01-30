@@ -473,6 +473,8 @@ export namespace Session {
       messageID: Identifier.schema("message"),
     }),
     async (input) => {
+      const parts = await Storage.list(["part", input.messageID]).catch(() => [])
+      await Promise.all(parts.map((key) => Storage.remove(key).catch(() => {})))
       await Storage.remove(["message", input.sessionID, input.messageID])
       Bus.publish(MessageV2.Event.Removed, {
         sessionID: input.sessionID,
