@@ -9,6 +9,7 @@ import { Storage } from "../storage/storage"
 import { Bus } from "../bus"
 import { SessionPrompt } from "./prompt"
 import { SessionMessage } from "./message-routing"
+import { SessionCPD } from "./cpd"
 import { SessionSummary } from "./summary"
 
 export namespace SessionRevert {
@@ -104,12 +105,36 @@ export namespace SessionRevert {
   export async function cleanup(session: Session.Info) {
     if (!session.revert) return
     const sessionID = session.id
+
+    const cpd = await SessionCPD.get(sessionID)
+
     SessionMessage.clear(sessionID)
     let msgs = await Session.messages({ sessionID })
     const messageID = session.revert.messageID
-    const [preserve, remove] = splitWhen(msgs, (x) => x.info.id === messageID)
+
+    const split = (() => {
+      const idx = msgs.findIndex((x) => x.info.id === messageID)
+      if (idx === -1) {
+        return {
+          preserve: msgs,
+          remove: [] as MessageV2.WithParts[],
+        }
+      }
+
+      const boundary = session.revert.partID ? idx + 1 : idx
+      return {
+        preserve: msgs.slice(0, boundary),
+        remove: msgs.slice(boundary),
+      }
+    })()
+
+    const preserve = split.preserve
+    const remove = split.remove
     msgs = preserve
     for (const msg of remove) {
+      const parts = await Storage.list(["part", msg.info.id]).catch(() => [])
+      await Promise.all(parts.map((key) => Storage.remove(key).catch(() => {})))
+
       await Storage.remove(["message", sessionID, msg.info.id])
       await Bus.publish(MessageV2.Event.Removed, { sessionID: sessionID, messageID: msg.info.id })
     }
@@ -127,6 +152,60 @@ export namespace SessionRevert {
         })
       }
     }
+
+    const opencode = (meta: unknown) => {
+      if (!meta || typeof meta !== "object") return
+      const base = meta as Record<string, unknown>
+      const value = base.opencode
+      if (!value || typeof value !== "object") return
+      return value as Record<string, unknown>
+    }
+
+    const kind = (part: { metadata?: unknown }) => {
+      const meta = opencode(part.metadata)
+      const marker = meta?.marker
+      if (!marker || typeof marker !== "object") return
+      const record = marker as Record<string, unknown>
+      const value = record.kind
+      if (typeof value !== "string") return
+      return value
+    }
+
+    const omitted = (part: MessageV2.Part) => {
+      if (part.type !== "reasoning") return
+      if (part.ignored !== true) return
+      const meta = opencode(part.metadata)
+      const value = meta?.reason
+      if (typeof value !== "string") return
+      return value
+    }
+
+    const think = msgs.some((msg) =>
+      msg.parts.some((part) => kind(part) === "think" || omitted(part) === "context_limit"),
+    )
+    const rctx = msgs.some((msg) =>
+      msg.parts.some((part) => kind(part) === "rctx" || omitted(part) === "provider_rejected_reasoning_context"),
+    )
+
+    const flags = {
+      trim: msgs.some((msg) =>
+        msg.parts.some((part) => {
+          if (part.type !== "tool") return false
+          if (part.state.status !== "completed") return false
+          return !!part.state.time.compacted
+        }),
+      ),
+      think,
+      rctx,
+    }
+
+    await SessionCPD.flag(sessionID, flags)
+
+    const invalid = cpd && cpd.upto >= messageID
+    if (invalid) {
+      await SessionCPD.clear(sessionID)
+    }
+
     await Session.update(sessionID, (draft) => {
       draft.revert = undefined
     })

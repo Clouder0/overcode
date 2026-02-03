@@ -141,10 +141,51 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       return out
     }
 
+    const fullSyncedSessions = new Set<string>()
+    const fullSyncInFlight = new Map<string, Promise<void>>()
+    const sessionInfoInFlight = new Map<string, Promise<void>>()
+    // A session.list response can be stale (race with optimistic session creation).
+    // Track deletions so a late list can't resurrect a deleted session.
+    const sessionTombstones = new Set<string>()
+
+    function mergeSessionList(list: typeof store.session) {
+      // Merge instead of replace: session.create() optimistically inserts the
+      // new session into the store; a stale session.list response must not
+      // delete it and briefly blank the Session route.
+      setStore(
+        "session",
+        produce((draft) => {
+          const map = new Map<string, (typeof store.session)[number]>()
+          for (const item of draft) {
+            map.set(item.id, item)
+          }
+          for (const item of list) {
+            if (sessionTombstones.has(item.id)) continue
+            const existing = map.get(item.id)
+            if (existing) {
+              // Preserve any fields populated via session.get/session.sync.
+              Object.assign(existing, item)
+              continue
+            }
+            map.set(item.id, item)
+          }
+          for (const id of sessionTombstones) {
+            map.delete(id)
+          }
+          const merged = Array.from(map.values()).toSorted((a, b) => a.id.localeCompare(b.id))
+          draft.splice(0, draft.length, ...merged)
+        }),
+      )
+    }
+
     sdk.event.listen((e) => {
       const event = e.details
       switch (event.type) {
         case "server.instance.disposed":
+          fullSyncedSessions.clear()
+          fullSyncInFlight.clear()
+          sessionInfoInFlight.clear()
+          sessionTombstones.clear()
           bootstrap()
           break
         case "permission.replied": {
@@ -244,6 +285,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "session.deleted": {
+          sessionTombstones.add(event.properties.info.id)
           const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
           if (result.found) {
             setStore(
@@ -450,7 +492,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               setStore("provider_next", reconcile(providerList))
               setStore("agent", reconcile(agents))
               setStore("config", reconcile(config))
-              if (sessions !== undefined) setStore("session", reconcile(sessions))
+              if (sessions !== undefined) mergeSessionList(sessions)
             })
           })
         })
@@ -458,7 +500,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (store.status !== "complete") setStore("status", "partial")
           // non-blocking
           Promise.all([
-            ...(args.continue ? [] : [sessionListPromise.then((sessions) => setStore("session", reconcile(sessions)))]),
+            ...(args.continue ? [] : [sessionListPromise.then((sessions) => mergeSessionList(sessions))]),
             sdk.client.command.list().then((x) => setStore("command", reconcile(x.data ?? []))),
             sdk.client.lsp.status().then((x) => setStore("lsp", reconcile(x.data!))),
             sdk.client.mcp.status().then((x) => setStore("mcp", reconcile(x.data!))),
@@ -487,10 +529,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     onMount(() => {
       bootstrap()
     })
-
-    const fullSyncedSessions = new Set<string>()
-    const fullSyncInFlight = new Map<string, Promise<void>>()
-    const sessionInfoInFlight = new Map<string, Promise<void>>()
     const result = {
       data: store,
       set: setStore,
@@ -509,7 +547,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         status(sessionID: string) {
           const session = result.session.get(sessionID)
           if (!session) return "idle"
-          if (session.time.compacting) return "compacting"
+          const status = store.session_status?.[sessionID] as { type?: string } | undefined
+          const compacting = session.time.compacting
+          if (typeof compacting === "number") {
+            // If status is explicitly idle, treat any lingering timestamp as stale.
+            if (status?.type && status.type !== "idle") return "compacting"
+            if (!status?.type && Date.now() - compacting < 10 * 60 * 1000) return "compacting"
+          }
           const messages = store.message[sessionID] ?? []
           const last = messages.at(-1)
           if (!last) return "idle"

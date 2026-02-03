@@ -645,7 +645,7 @@ export namespace MessageV2 {
           parts: [],
         }
         for (const part of msg.parts) {
-          if (part.type === "text")
+          if (part.type === "text" && !part.ignored)
             assistantMessage.parts.push({
               type: "text",
               text: part.text,

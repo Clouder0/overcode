@@ -9,10 +9,10 @@ import { SessionProcessor } from "../../src/session/processor"
 import { LLM } from "../../src/session/llm"
 import { Config } from "../../src/config/config"
 import { tmpdir } from "../fixture/fixture"
-import { SessionCompaction } from "../../src/session/compaction"
-import { Agent } from "../../src/agent/agent"
 import { Provider } from "../../src/provider/provider"
-import { Plugin } from "../../src/plugin"
+import { SessionPrompt } from "../../src/session/prompt"
+import { SessionCPD } from "../../src/session/cpd"
+import { SessionSummary } from "../../src/session/summary"
 
 Log.init({ print: false })
 
@@ -319,431 +319,286 @@ describe("session.processor compact-on-context-length", () => {
   })
 })
 
-describe("session.compaction replay", () => {
-  test("replays the last unanswered user prompt when auto", async () => {
+describe("legacy replay prompts", () => {
+  test("treats synthetic replay text as user-relevant", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const pluginSpy = spyOn(Plugin, "trigger").mockImplementation(
-          async (_name: any, _input: any, output: any) => output,
-        )
-        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({ id: "dummy", providerID: "dummy" } as any)
-        const agentSpy = spyOn(Agent, "get").mockResolvedValue({
-          name: "compaction",
-          options: {},
-          permission: [],
+        const cfgSpy = spyOn(Config, "get").mockResolvedValue({ compaction: { auto: true }, experimental: {} } as any)
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          limit: {
+            context: 2,
+            output: 1,
+          },
         } as any)
 
-        let captured: any
-        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
-          return {
-            message: args.assistantMessage,
-            async process(input: any) {
-              captured = input
-              return "continue"
-            },
-          } as any
-        })
-
         const session = await Session.create({})
+
+        const g = globalThis as any
+        const prev = g.__OPENCODE_TEST_ALLOW_LOOP__
+        g.__OPENCODE_TEST_ALLOW_LOOP__ = new Set([session.id])
+
         await using _cleanup = {
           [Symbol.asyncDispose]: async () => {
-            pluginSpy.mockRestore()
+            cfgSpy.mockRestore()
             providerSpy.mockRestore()
-            agentSpy.mockRestore()
-            processorSpy.mockRestore()
             await Session.remove(session.id)
+            if (prev === undefined) delete g.__OPENCODE_TEST_ALLOW_LOOP__
+            if (prev !== undefined) g.__OPENCODE_TEST_ALLOW_LOOP__ = prev
           },
         }
 
         const now = Date.now()
-        const user1 = await Session.updateMessage({
+        const user = await Session.updateMessage({
           id: Identifier.ascending("message"),
           role: "user",
           sessionID: session.id,
-          agent: "test",
+          agent: "build",
           model: { providerID: "dummy", modelID: "dummy" },
           time: { created: now },
         })
+
         await Session.updatePart({
           id: Identifier.ascending("part"),
-          messageID: user1.id,
+          messageID: user.id,
           sessionID: session.id,
           type: "text",
+          synthetic: true,
           text: "please do the thing",
+          metadata: {
+            opencode: {
+              replay: true,
+              sourceMessageID: "msg_source",
+            },
+          },
+          time: {
+            start: now,
+            end: now,
+          },
         })
 
-        const assistant1: MessageV2.Assistant = {
-          id: Identifier.ascending("message"),
-          role: "assistant",
-          sessionID: session.id,
-          parentID: user1.id,
-          modelID: "dummy",
+        await SessionPrompt.loop(session.id)
+
+        const msgs = await Session.messages({ sessionID: session.id })
+        const assistant = msgs.find((m) => m.info.role === "assistant" && (m.info as any).parentID === user.id)
+        expect(assistant).toBeDefined()
+      },
+    })
+  })
+})
+
+describe("session.prompt context maintenance", () => {
+  test("marks incomplete reasoning-only attempts as omitted before next continuation", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const cfgSpy = spyOn(Config, "get").mockResolvedValue({ compaction: { auto: true }, experimental: {} } as any)
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
           providerID: "dummy",
-          mode: "test",
-          agent: "test",
-          path: { cwd: tmp.path, root: tmp.path },
-          cost: 0,
-          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: now + 1 },
-        }
-        await Session.updateMessage(assistant1)
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: assistant1.id,
-          sessionID: session.id,
-          type: "reasoning",
-          text: "lots of hidden thinking",
-          time: { start: now + 1 },
-        })
-
-        const compactReq = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "test",
-          model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now + 2 },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: compactReq.id,
-          sessionID: session.id,
-          type: "compaction",
-          auto: true,
-        })
-
-        const history = await Session.messages({ sessionID: session.id })
-        await SessionCompaction.process({
-          parentID: compactReq.id,
-          messages: history,
-          sessionID: session.id,
-          abort: new AbortController().signal,
-          auto: true,
-        })
-
-        expect(captured).toBeDefined()
-        const hasReasoning = (captured.messages ?? []).some((m: any) => {
-          const content = m.content
-          if (!Array.isArray(content)) return false
-          return content.some((p: any) => p && p.type === "reasoning")
-        })
-        expect(hasReasoning).toBe(false)
-
-        const after = await Session.messages({ sessionID: session.id })
-        const replay = after
-          .filter((m) => m.info.role === "user")
-          .flatMap((m) => m.parts)
-          .find((p) => p.type === "text" && (p.metadata as any)?.opencode?.replay === true)
-
-        expect(replay).toBeDefined()
-        if (!replay || replay.type !== "text") throw new Error("expected replay text part")
-        expect(replay.synthetic).toBe(true)
-        expect(replay.text).toBe("please do the thing")
-      },
-    })
-  })
-
-  test("replays a file-only user prompt when auto", async () => {
-    await using tmp = await tmpdir({ git: true })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const pluginSpy = spyOn(Plugin, "trigger").mockImplementation(
-          async (_name: any, _input: any, output: any) => output,
-        )
-        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({ id: "dummy", providerID: "dummy" } as any)
-        const agentSpy = spyOn(Agent, "get").mockResolvedValue({
-          name: "compaction",
-          options: {},
-          permission: [],
+          api: {
+            id: "dummy",
+          },
+          limit: {
+            context: 100_000,
+            output: 1_000,
+          },
         } as any)
 
-        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
-          return {
-            message: args.assistantMessage,
-            async process() {
-              return "continue"
-            },
-          } as any
-        })
+        const summarySpy = spyOn(SessionSummary, "summarize").mockResolvedValue(undefined as any)
+        const cpdSpy = spyOn(SessionCPD, "update").mockResolvedValue({ text: "cpd", rctx: false })
 
         const session = await Session.create({})
+
+        const g = globalThis as any
+        const prev = g.__OPENCODE_TEST_ALLOW_LOOP__
+        g.__OPENCODE_TEST_ALLOW_LOOP__ = new Set([session.id])
+
         await using _cleanup = {
           [Symbol.asyncDispose]: async () => {
-            pluginSpy.mockRestore()
+            cfgSpy.mockRestore()
             providerSpy.mockRestore()
-            agentSpy.mockRestore()
-            processorSpy.mockRestore()
+            summarySpy.mockRestore()
+            cpdSpy.mockRestore()
             await Session.remove(session.id)
+            if (prev === undefined) delete g.__OPENCODE_TEST_ALLOW_LOOP__
+            if (prev !== undefined) g.__OPENCODE_TEST_ALLOW_LOOP__ = prev
           },
         }
 
         const now = Date.now()
-        const user1 = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
+
+        const user1 = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: user1,
           sessionID: session.id,
-          agent: "test",
-          model: { providerID: "dummy", modelID: "dummy" },
+          role: "user",
           time: { created: now },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: user1.id,
-          sessionID: session.id,
-          type: "file",
-          mime: "text/plain",
-          filename: "note.txt",
-          url: "file:///note.txt",
-        })
-
-        const compactReq = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "test",
+          agent: "build",
           model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now + 1 },
         })
         await Session.updatePart({
           id: Identifier.ascending("part"),
-          messageID: compactReq.id,
           sessionID: session.id,
-          type: "compaction",
-          auto: true,
-        })
-
-        const history = await Session.messages({ sessionID: session.id })
-        await SessionCompaction.process({
-          parentID: compactReq.id,
-          messages: history,
-          sessionID: session.id,
-          abort: new AbortController().signal,
-          auto: true,
-        })
-
-        const after = await Session.messages({ sessionID: session.id })
-        const replay = after
-          .filter((m) => m.info.role === "user")
-          .flatMap((m) => m.parts)
-          .find((p) => p.type === "text" && (p.metadata as any)?.opencode?.replay === true)
-
-        expect(replay).toBeDefined()
-        if (!replay || replay.type !== "text") throw new Error("expected replay text part")
-        expect(replay.synthetic).toBe(true)
-        expect(replay.text.length).toBeGreaterThan(0)
-        expect(replay.text).toContain("note.txt")
-      },
-    })
-  })
-
-  test("replays a message-only user prompt when auto", async () => {
-    await using tmp = await tmpdir({ git: true })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const pluginSpy = spyOn(Plugin, "trigger").mockImplementation(
-          async (_name: any, _input: any, output: any) => output,
-        )
-        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({ id: "dummy", providerID: "dummy" } as any)
-        const agentSpy = spyOn(Agent, "get").mockResolvedValue({
-          name: "compaction",
-          options: {},
-          permission: [],
-        } as any)
-
-        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
-          return {
-            message: args.assistantMessage,
-            async process() {
-              return "continue"
-            },
-          } as any
-        })
-
-        const session = await Session.create({})
-        await using _cleanup = {
-          [Symbol.asyncDispose]: async () => {
-            pluginSpy.mockRestore()
-            providerSpy.mockRestore()
-            agentSpy.mockRestore()
-            processorSpy.mockRestore()
-            await Session.remove(session.id)
-          },
-        }
-
-        const now = Date.now()
-        const user1 = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "test",
-          model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: user1.id,
-          sessionID: session.id,
-          type: "message",
-          direction: "incoming",
-          peer: "ses_agent",
-          peerType: "agent",
-          text: "hi from agent",
-          time: { created: now },
-        })
-
-        const compactReq = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "test",
-          model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now + 1 },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: compactReq.id,
-          sessionID: session.id,
-          type: "compaction",
-          auto: true,
-        })
-
-        const history = await Session.messages({ sessionID: session.id })
-        await SessionCompaction.process({
-          parentID: compactReq.id,
-          messages: history,
-          sessionID: session.id,
-          abort: new AbortController().signal,
-          auto: true,
-        })
-
-        const after = await Session.messages({ sessionID: session.id })
-        const replay = after
-          .filter((m) => m.info.role === "user")
-          .flatMap((m) => m.parts)
-          .find((p) => p.type === "text" && (p.metadata as any)?.opencode?.replay === true)
-
-        expect(replay).toBeDefined()
-        if (!replay) throw new Error("expected replay part")
-
-        const msg = after.find((m) => m.info.id === replay.messageID)
-        expect(msg).toBeDefined()
-        if (!msg) throw new Error("expected replay message")
-
-        const echoed = msg.parts.some((p) => p.type === "message" && p.text === "hi from agent")
-        expect(echoed).toBe(true)
-      },
-    })
-  })
-
-  test("falls back to continue prompt when last user was already answered", async () => {
-    await using tmp = await tmpdir({ git: true })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const pluginSpy = spyOn(Plugin, "trigger").mockImplementation(
-          async (_name: any, _input: any, output: any) => output,
-        )
-        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({ id: "dummy", providerID: "dummy" } as any)
-        const agentSpy = spyOn(Agent, "get").mockResolvedValue({
-          name: "compaction",
-          options: {},
-          permission: [],
-        } as any)
-
-        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
-          return {
-            message: args.assistantMessage,
-            async process() {
-              return "continue"
-            },
-          } as any
-        })
-
-        const session = await Session.create({})
-        await using _cleanup = {
-          [Symbol.asyncDispose]: async () => {
-            pluginSpy.mockRestore()
-            providerSpy.mockRestore()
-            agentSpy.mockRestore()
-            processorSpy.mockRestore()
-            await Session.remove(session.id)
-          },
-        }
-
-        const now = Date.now()
-        const user1 = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
-          sessionID: session.id,
-          agent: "test",
-          model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now },
-        })
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: user1.id,
-          sessionID: session.id,
+          messageID: user1,
           type: "text",
-          text: "already answered",
+          text: "first",
         })
 
-        const assistant1: MessageV2.Assistant = {
-          id: Identifier.ascending("message"),
-          role: "assistant",
+        const assistant1 = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: assistant1,
           sessionID: session.id,
-          parentID: user1.id,
+          role: "assistant",
+          parentID: user1,
           modelID: "dummy",
           providerID: "dummy",
           mode: "test",
-          agent: "test",
+          agent: "build",
           path: { cwd: tmp.path, root: tmp.path },
+          summary: false,
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: now + 1 },
-          finish: "end_turn",
-        }
-        await Session.updateMessage(assistant1)
-
-        const compactReq = await Session.updateMessage({
-          id: Identifier.ascending("message"),
-          role: "user",
+          time: { created: now, completed: now },
+          finish: "stop",
+        } as any)
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
           sessionID: session.id,
-          agent: "test",
+          messageID: assistant1,
+          type: "text",
+          text: "ok",
+        })
+
+        const user2 = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: user2,
+          sessionID: session.id,
+          role: "user",
+          time: { created: now + 1 },
+          agent: "build",
           model: { providerID: "dummy", modelID: "dummy" },
-          time: { created: now + 2 },
         })
         await Session.updatePart({
           id: Identifier.ascending("part"),
-          messageID: compactReq.id,
           sessionID: session.id,
-          type: "compaction",
-          auto: true,
+          messageID: user2,
+          type: "text",
+          text: "second",
         })
 
-        const history = await Session.messages({ sessionID: session.id })
-        await SessionCompaction.process({
-          parentID: compactReq.id,
-          messages: history,
-          sessionID: session.id,
-          abort: new AbortController().signal,
-          auto: true,
+        const calls = { user2: 0 }
+
+        spyOn(SessionProcessor, "create").mockImplementation((input: any) => {
+          const assistant = input.assistantMessage as MessageV2.Assistant
+
+          const processor: any = {
+            message: assistant,
+            compactionRequest: undefined,
+            waitSince: () => undefined,
+            partFromToolCall: () => undefined,
+            process: async (args: any) => {
+              if (args.user.id === user2) {
+                calls.user2 += 1
+                if (calls.user2 === 1) {
+                  await Session.updatePart({
+                    id: Identifier.ascending("part"),
+                    sessionID: session.id,
+                    messageID: assistant.id,
+                    type: "reasoning",
+                    text: "partial thinking",
+                    time: { start: Date.now(), end: Date.now() },
+                  })
+                  assistant.time.completed = Date.now()
+                  await Session.updateMessage(assistant)
+
+                  processor.compactionRequest = {
+                    reason: "context_length",
+                    fallbackError: {
+                      name: "APIError",
+                      data: {
+                        message:
+                          "This model's maximum context length is 8192 tokens, however you requested 9000 tokens.",
+                        responseBody: JSON.stringify({
+                          error: {
+                            message:
+                              "This model's maximum context length is 8192 tokens, however you requested 9000 tokens.",
+                            code: "context_length_exceeded",
+                          },
+                        }),
+                      },
+                    },
+                  }
+                  return "compact"
+                }
+
+                await Session.updatePart({
+                  id: Identifier.ascending("part"),
+                  sessionID: session.id,
+                  messageID: assistant.id,
+                  type: "text",
+                  text: "done",
+                })
+                assistant.finish = "stop"
+                assistant.time.completed = Date.now()
+                await Session.updateMessage(assistant)
+                return "stop"
+              }
+
+              await Session.updatePart({
+                id: Identifier.ascending("part"),
+                sessionID: session.id,
+                messageID: assistant.id,
+                type: "text",
+                text: "third",
+              })
+              assistant.finish = "stop"
+              assistant.time.completed = Date.now()
+              await Session.updateMessage(assistant)
+              return "stop"
+            },
+          }
+
+          return processor
         })
 
-        const after = await Session.messages({ sessionID: session.id })
-        const continueText = after
-          .filter((m) => m.info.role === "user")
-          .flatMap((m) => m.parts)
-          .find((p) => p.type === "text" && p.text === "Continue if you have next steps")
+        await SessionPrompt.loop(session.id)
 
-        expect(continueText).toBeDefined()
+        const user3 = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: user3,
+          sessionID: session.id,
+          role: "user",
+          time: { created: now + 2 },
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: user3,
+          type: "text",
+          text: "third",
+        })
+
+        await SessionPrompt.loop(session.id)
+
+        const msgs = await Session.messages({ sessionID: session.id })
+        const attempts = msgs.filter((m) => m.info.role === "assistant" && (m.info as any).parentID === user2)
+        expect(attempts.length).toBeGreaterThanOrEqual(2)
+
+        const firstAttempt = attempts.find((m) => !(m.info as any).finish)
+        expect(firstAttempt).toBeDefined()
+
+        const reasoning = firstAttempt!.parts.find((p) => p.type === "reasoning") as MessageV2.ReasoningPart | undefined
+        expect(reasoning).toBeDefined()
+        expect(reasoning!.ignored).toBe(true)
       },
     })
   })

@@ -7,16 +7,32 @@ It focuses on long-reasoning models (native thinking) and a TUI-first user exper
 
 Use this checklist to track implementation status.
 
-- [ ] Phase 0: Feature flags + scaffolding
-- [ ] Phase 1: CPD storage + injection
-- [ ] Phase 2: FIFO Target User selection
-- [ ] Phase 3: Budget-driven tool output trimming (pre-flight)
-- [ ] Phase 4: CPD update model call (tail-in / prefix-out) + reasoning rejection fallback
-- [ ] Phase 5: Tail reasoning truncation (assistant-step unit) + persistent banner
-- [ ] Phase 6: Manual `/compact` mapped to CPD update (no auto-continue)
-- [ ] Phase 7: Retire old auto-compaction replay flow / compaction request artifacts
-- [ ] TUI: Header badges + toasts + transcript markers + `/context` dialog
-- [ ] Tests: Session + provider rejection + TUI acceptance pass
+- [x] Phase 0: Feature flags + scaffolding
+- [x] Phase 1: CPD storage + injection
+- [x] Phase 2: FIFO Target User selection
+- [x] Phase 3: Budget-driven tool output trimming (pre-flight)
+- [x] Phase 4: CPD update model call (tail-in / prefix-out) + reasoning rejection fallback
+- [x] Phase 5: Tail reasoning truncation (assistant-step unit) + persistent banner
+- [x] Phase 6: Manual `/compact` mapped to CPD update (no auto-continue)
+- [x] Phase 7: Retire old auto-compaction replay flow / compaction request artifacts
+- [x] TUI: Header badges + toasts + transcript markers + `/context` dialog
+- [x] Tests: Session + provider rejection + TUI acceptance pass
+
+### Hardening follow-ups
+
+- [x] Force maintenance pipeline on provider `compact` results (overflow + context_length)
+- [x] Omit incomplete reasoning-only attempt messages from provider context
+- [x] Fix TUI context toasts to trigger on transitions (not initial load)
+- [x] Regenerate JS SDK for `session.context` endpoint
+
+### Additional follow-ups (Jan 2026)
+
+- [x] `/context` endpoint includes last actions + prompt-fit token estimate
+- [x] TUI toasts fire from persisted transcript markers (TRIM/THINK/RCTX)
+- [x] Typed local slash commands (e.g. `/context`) execute from prompt input
+- [x] Regenerate JS SDK after extending `SessionContext` schema
+- [x] Tests cover CPD pipeline (banner injection, FIFO, trim, CPD update, think, rctx)
+- [x] Optional: add server test for `session.context` response shape (actions + estimate)
 
 ## Goals
 

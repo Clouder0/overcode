@@ -1,4 +1,4 @@
-import { type Accessor, createMemo, createSignal, Match, Show, Switch } from "solid-js"
+import { type Accessor, createMemo, createSignal, Match, onCleanup, Show, Switch } from "solid-js"
 import { useRouteData } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { pipe, sumBy } from "remeda"
@@ -47,6 +47,10 @@ export function Header() {
   const session = createMemo(() => sync.session.get(route.sessionID)!)
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
 
+  const [tick, setTick] = createSignal(Date.now())
+  const timer = setInterval(() => setTick(Date.now()), 30_000)
+  onCleanup(() => clearInterval(timer))
+
   const tree = createMemo(() =>
     buildSessionTree({
       currentSessionID: route.sessionID,
@@ -92,12 +96,22 @@ export function Header() {
 
   const flags = createMemo(() => {
     const ctx = session()?.context
+    const status = sync.data.session_status?.[route.sessionID] as { type?: string } | undefined
+    const compacting = session()?.time?.compacting
+    const cmp = (() => {
+      if (typeof compacting !== "number") return false
+      // If status is explicitly idle, treat any lingering timestamp as stale.
+      if (status?.type === "idle") return false
+      // If we have an explicit non-idle status, prefer it over stale time heuristics.
+      if (status?.type && status.type !== "idle") return true
+      return tick() - compacting < 10 * 60 * 1000
+    })()
     return {
       cpd: !!ctx?.cpd,
       trim: ctx?.trim === true,
       think: ctx?.think === true,
       rctx: ctx?.rctx === true,
-      cmp: !!session()?.time?.compacting,
+      cmp,
     }
   })
 
