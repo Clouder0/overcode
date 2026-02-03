@@ -82,7 +82,8 @@ export namespace SessionProcessor {
               const openai = (part.metadata as { openai?: unknown }).openai
               if (!openai || typeof openai !== "object") continue
 
-              const base = part.metadata && typeof part.metadata === "object" ? (part.metadata as Record<string, unknown>) : {}
+              const base =
+                part.metadata && typeof part.metadata === "object" ? (part.metadata as Record<string, unknown>) : {}
               const existing =
                 base.opencode && typeof base.opencode === "object" ? (base.opencode as Record<string, unknown>) : {}
 
@@ -149,6 +150,10 @@ export namespace SessionProcessor {
             let currentText: MessageV2.TextPart | undefined
             const storeReasoning = streamInput.agent.name !== "compaction"
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+
+            // Snapshot once per stream attempt so `since=0` waits can't lose messages
+            // that arrive while the model is still generating tool calls.
+            const baseline = SessionMessage.nowSeq()
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -235,10 +240,13 @@ export namespace SessionProcessor {
 
                   toolcalls[value.id] = part as MessageV2.ToolPart
 
-                  // Tool args can stream in over time; snapshot a baseline at the moment a wait call begins.
-                  // This avoids a lost-wake when an agent message arrives before the wait tool executes.
+                  // Tool args can stream in over time. Capture a baseline cursor for `since=0`
+                  // waits before the tool runs, even if messages arrive mid-stream.
                   if (value.toolName === "wait_agent_message") {
-                    waits.set(value.id, SessionMessage.nowSeq())
+                    const current = waits.get(value.id)
+                    if (current === undefined || baseline < current) {
+                      waits.set(value.id, baseline)
+                    }
                   }
 
                   break
@@ -251,6 +259,13 @@ export namespace SessionProcessor {
                   break
 
                 case "tool-call": {
+                  if (value.toolName === "wait_agent_message") {
+                    const current = waits.get(value.toolCallId)
+                    if (current === undefined || baseline < current) {
+                      waits.set(value.toolCallId, baseline)
+                    }
+                  }
+
                   if (streamInput.tools[value.toolName]) {
                     retrySafe = false
                   }

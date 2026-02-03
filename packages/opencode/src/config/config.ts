@@ -142,9 +142,11 @@ export namespace Config {
         }
       }
 
-      const exists = existsSync(path.join(dir, "node_modules"))
+      const modules = path.join(dir, "node_modules")
+      const exists = existsSync(modules)
+      const plugin = existsSync(path.join(modules, "@opencode-ai", "plugin", "package.json"))
       const installing = installDependencies(dir)
-      if (!exists) await installing
+      if (!exists || !plugin) await installing
 
       result.command = mergeDeep(result.command ?? {}, await loadCommand(dir))
       result.agent = mergeDeep(result.agent, await loadAgent(dir))
@@ -216,15 +218,38 @@ export namespace Config {
     const hasGitIgnore = await Bun.file(gitignore).exists()
     if (!hasGitIgnore) await Bun.write(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
 
-    // Use "latest" for local dev and preview/feature branches since those versions don't exist on npm
-    const pluginVersion = Installation.isLocal() || Installation.isPreview() ? "latest" : Installation.VERSION
+    // Use "latest" for local dev and preview builds.
+    // For stable builds, pin to the ecosystem version (sdk/plugin) this binary was built against.
+    const pluginVersion = Installation.isLocal() || Installation.isPreview() ? "latest" : Installation.ECOSYSTEM_VERSION
     await BunProc.run(["add", `@opencode-ai/plugin@${pluginVersion}`, "--exact"], {
       cwd: dir,
-    }).catch(() => {})
+    }).catch(async (err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      log.error("failed to install @opencode-ai/plugin", {
+        dir,
+        version: pluginVersion,
+        error: message,
+      })
+      const { Session } = await import("@/session")
+      Bus.publish(Session.Event.Error, {
+        error: new NamedError.Unknown({
+          message: `Failed to install @opencode-ai/plugin@${pluginVersion} in ${dir}: ${message}`,
+        }).toObject(),
+      })
+    })
 
     // Install any additional dependencies defined in the package.json
     // This allows local plugins and custom tools to use external packages
-    await BunProc.run(["install"], { cwd: dir }).catch(() => {})
+    await BunProc.run(["install"], { cwd: dir }).catch(async (err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      log.error("failed to install config directory dependencies", { dir, error: message })
+      const { Session } = await import("@/session")
+      Bus.publish(Session.Event.Error, {
+        error: new NamedError.Unknown({
+          message: `Failed to install dependencies in ${dir}: ${message}`,
+        }).toObject(),
+      })
+    })
   }
 
   function rel(item: string, patterns: string[]) {
@@ -354,7 +379,7 @@ export namespace Config {
         log.error("failed to load mode", { mode: item, err })
         return undefined
       })
-       if (!md) continue
+      if (!md) continue
 
       const data = md.data as Record<string, unknown>
       const hasName = "name" in data
@@ -1147,9 +1172,7 @@ export namespace Config {
                 .min(0)
                 .max(1)
                 .optional()
-                .describe(
-                  "Fraction of the LSP cache reserved for protected entries in a segmented LRU policy (0..1).",
-                ),
+                .describe("Fraction of the LSP cache reserved for protected entries in a segmented LRU policy (0..1)."),
             })
             .optional()
             .describe("Experimental LSP process cache configuration."),

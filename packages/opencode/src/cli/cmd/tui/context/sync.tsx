@@ -600,12 +600,54 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                   if (!match.found) draft.session.splice(match.index, 0, session.data!)
                   draft.todo[sessionID] = todo.data ?? []
 
-                  const previous = new Set((draft.message[sessionID] ?? []).map((m) => m.id))
-                  const next = new Set(messages.data!.map((x) => x.info.id))
+                  const current = draft.message[sessionID] ?? []
+                  const previous = new Set(current.map((m) => m.id))
 
-                  draft.message[sessionID] = messages.data!.map((x) => x.info)
-                  for (const message of messages.data!) {
-                    draft.part[message.info.id] = message.parts
+                  // Merge the snapshot with any newer SSE updates already in memory.
+                  // This avoids clobbering newer messages/parts when a sync response races with live events.
+                  const list = messages.data ?? []
+                  const existingByID = new Map(current.map((m) => [m.id, m]))
+
+                  const snapshotInfos = list.map((x) => {
+                    const existing = existingByID.get(x.info.id)
+                    if (!existing) return x.info
+
+                    // Keep the completed message if the snapshot is stale.
+                    if (existing.role === "assistant" && x.info.role === "assistant") {
+                      if (existing.time.completed !== undefined && x.info.time.completed === undefined) return existing
+                    }
+
+                    return x.info
+                  })
+
+                  const lastSnapshotID = snapshotInfos.at(-1)?.id
+                  const newer = (() => {
+                    if (snapshotInfos.length === 0) return current
+                    if (!lastSnapshotID) return current
+                    return current.filter((m) => m.id > lastSnapshotID)
+                  })()
+
+                  const mergedInfos = snapshotInfos.concat(newer)
+                  const cappedInfos =
+                    mergedInfos.length <= 100 ? mergedInfos : mergedInfos.slice(Math.max(0, mergedInfos.length - 100))
+
+                  const next = new Set(cappedInfos.map((m) => m.id))
+                  draft.message[sessionID] = cappedInfos
+
+                  for (const message of list) {
+                    const existing = draft.part[message.info.id] ?? []
+                    const snapshot = message.parts ?? []
+                    const partsByID = new Map(existing.map((p) => [p.id, p]))
+
+                    const snapshotParts = snapshot.map((p) => partsByID.get(p.id) ?? p)
+                    const lastSnapshotPartID = snapshotParts.at(-1)?.id
+                    const newerParts = (() => {
+                      if (snapshotParts.length === 0) return existing
+                      if (!lastSnapshotPartID) return existing
+                      return existing.filter((p) => p.id > lastSnapshotPartID)
+                    })()
+
+                    draft.part[message.info.id] = snapshotParts.concat(newerParts)
                   }
 
                   for (const id of previous) {

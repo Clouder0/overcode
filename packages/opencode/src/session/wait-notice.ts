@@ -1,3 +1,6 @@
+import { Instance } from "@/project/instance"
+import { InstanceBootstrap } from "@/project/bootstrap"
+import { Session } from "@/session"
 import { SessionMessage } from "@/session/message-routing"
 import { SessionStatus } from "@/session/status"
 import { WaitPolicy } from "@/session/wait-policy"
@@ -88,11 +91,19 @@ export namespace WaitNotice {
     })
     if (!marked) return
 
-    await SessionMessage.deliver({
-      from: "Wait notice",
-      to: input.source,
-      text: notice({ waiter: input.waiter, source: input.source, policy: input.policy }),
-      messageType: "notice",
+    const target = await Session.get(input.source).catch(() => undefined)
+    if (!target) return
+
+    await Instance.provide({
+      directory: target.directory,
+      init: InstanceBootstrap,
+      fn: () =>
+        SessionMessage.deliver({
+          from: "Wait notice",
+          to: input.source,
+          text: notice({ waiter: input.waiter, source: input.source, policy: input.policy }),
+          messageType: "notice",
+        }),
     })
   }
 
@@ -163,12 +174,21 @@ export namespace WaitNotice {
             ? notice({ waiter: waits[0]!.waiter, source: sessionID, policy: waits[0]!.policy })
             : aggregate({ source: sessionID, waits })
 
-        SessionMessage.deliver({
-          from: "Wait notice",
-          to: sessionID,
-          text,
-          messageType: "notice",
-        }).catch(() => {})
+        Session.get(sessionID)
+          .then((target) => {
+            return Instance.provide({
+              directory: target.directory,
+              init: InstanceBootstrap,
+              fn: () =>
+                SessionMessage.deliver({
+                  from: "Wait notice",
+                  to: sessionID,
+                  text,
+                  messageType: "notice",
+                }),
+            })
+          })
+          .catch(() => {})
       }
     })
   }

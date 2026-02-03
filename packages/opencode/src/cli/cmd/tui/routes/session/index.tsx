@@ -990,6 +990,16 @@ export function Session() {
   // snap to bottom when session changes
   createEffect(on(() => route.sessionID, toBottom))
 
+  // Ensure history is loaded when navigating between sessions.
+  createEffect(
+    on(
+      () => route.sessionID,
+      (id) => {
+        sync.session.sync(id).catch(() => {})
+      },
+    ),
+  )
+
   return (
     <context.Provider
       value={{
@@ -1011,84 +1021,89 @@ export function Session() {
             <Show when={!sidebarVisible() || !wide() || !!session()?.parentID}>
               <Header />
             </Show>
-            <scrollbox
-              ref={(r) => {
-                scroll = r
-              }}
-              viewportOptions={{
-                paddingRight: showScrollbar() ? 1 : 0,
-              }}
-              verticalScrollbarOptions={{
-                paddingLeft: 1,
-                visible: showScrollbar(),
-                trackOptions: {
-                  backgroundColor: theme.backgroundElement,
-                  foregroundColor: theme.border,
-                },
-              }}
-              stickyScroll={true}
-              stickyStart="bottom"
-              flexGrow={1}
-              scrollAcceleration={scrollAcceleration()}
-            >
-              {/* Task prompt card - stable placeholder to avoid scrollbox child insertion issues */}
-              <box id="task-prompt">
-                <Show when={currentTaskPrompt()}>
-                  {(prompt) => (
-                    <box
-                      id="task-prompt-card"
-                      marginTop={1}
-                      paddingLeft={2}
-                      border={["left"]}
-                      borderColor={theme.secondary}
-                      customBorderChars={SplitBorder.customBorderChars}
-                    >
-                      <text fg={theme.secondary}>
-                        <b>Task</b>
-                      </text>
-                      <text fg={theme.text}>{prompt()}</text>
-                    </box>
-                  )}
-                </Show>
-              </box>
-              <For each={messages()}>
-                {(message, index) => (
-                  <Switch>
-                    <Match when={message.id === revert()?.messageID}>
-                      <RevertNotice data={revert() as RevertNoticeData} />
-                    </Match>
-                    <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
-                      <></>
-                    </Match>
-                    <Match when={message.role === "user"}>
-                      <UserMessage
-                        index={index()}
-                        onMouseUp={() => {
-                          if (renderer.getSelection()?.getSelectedText()) return
-                          dialog.replace(() => (
-                            <DialogMessage
-                              messageID={message.id}
-                              sessionID={route.sessionID}
-                              setPrompt={(promptInfo) => prompt.set(promptInfo)}
-                            />
-                          ))
-                        }}
-                        message={message as UserMessageType}
-                        parts={sync.data.part[message.id] ?? []}
-                        pending={pending()}
-                      />
-                    </Match>
-                    <Match when={message.role === "assistant"}>
-                      <AssistantMessage
-                        last={lastAssistant()?.id === message.id}
-                        message={message as AssistantMessageType}
-                        parts={sync.data.part[message.id] ?? []}
-                      />
-                    </Match>
-                  </Switch>
-                )}
-              </For>
-            </scrollbox>
+            <Show when={route.sessionID} keyed>
+              {(sessionID) => (
+                <scrollbox
+                  id={"messages-" + sessionID}
+                  ref={(r) => {
+                    scroll = r
+                  }}
+                  viewportOptions={{
+                    paddingRight: showScrollbar() ? 1 : 0,
+                  }}
+                  verticalScrollbarOptions={{
+                    paddingLeft: 1,
+                    visible: showScrollbar(),
+                    trackOptions: {
+                      backgroundColor: theme.backgroundElement,
+                      foregroundColor: theme.border,
+                    },
+                  }}
+                  stickyScroll={true}
+                  stickyStart="bottom"
+                  flexGrow={1}
+                  scrollAcceleration={scrollAcceleration()}
+                >
+                  {/* Task prompt card - stable placeholder to avoid scrollbox child insertion issues */}
+                  <box id="task-prompt">
+                    <Show when={currentTaskPrompt()}>
+                      {(prompt) => (
+                        <box
+                          id="task-prompt-card"
+                          marginTop={1}
+                          paddingLeft={2}
+                          border={["left"]}
+                          borderColor={theme.secondary}
+                          customBorderChars={SplitBorder.customBorderChars}
+                        >
+                          <text fg={theme.secondary}>
+                            <b>Task</b>
+                          </text>
+                          <text fg={theme.text}>{prompt()}</text>
+                        </box>
+                      )}
+                    </Show>
+                  </box>
+                  <For each={sync.data.message[sessionID] ?? []}>
+                    {(message, index) => (
+                      <Switch>
+                        <Match when={message.id === revert()?.messageID}>
+                          <RevertNotice data={revert() as RevertNoticeData} />
+                        </Match>
+                        <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
+                          <></>
+                        </Match>
+                        <Match when={message.role === "user"}>
+                          <UserMessage
+                            index={index()}
+                            onMouseUp={() => {
+                              if (renderer.getSelection()?.getSelectedText()) return
+                              dialog.replace(() => (
+                                <DialogMessage
+                                  messageID={message.id}
+                                  sessionID={sessionID}
+                                  setPrompt={(promptInfo) => prompt.set(promptInfo)}
+                                />
+                              ))
+                            }}
+                            message={message as UserMessageType}
+                            parts={sync.data.part[message.id] ?? []}
+                            pending={pending()}
+                          />
+                        </Match>
+                        <Match when={message.role === "assistant"}>
+                          <AssistantMessage
+                            last={lastAssistant()?.id === message.id}
+                            message={message as AssistantMessageType}
+                            parts={sync.data.part[message.id] ?? []}
+                          />
+                        </Match>
+                      </Switch>
+                    )}
+                  </For>
+                </scrollbox>
+              )}
+            </Show>
             <box flexShrink={0}>
               <Show when={permissions().length > 0}>
                 <PermissionPrompt request={permissions()[0]} />
@@ -1555,7 +1570,9 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
           <>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
             <text onMouseUp={handlePeerClick}>
-              <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>{peerInfo().name}</span>
+              <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>
+                {peerInfo().name}
+              </span>
               {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
             </text>
           </>
@@ -1628,8 +1645,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPartType; message:
 
     const meta = props.part.metadata
     const opencode = meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
-    const reason =
-      opencode && typeof opencode === "object" ? (opencode as { reason?: unknown }).reason : undefined
+    const reason = opencode && typeof opencode === "object" ? (opencode as { reason?: unknown }).reason : undefined
 
     if (reason === "interrupted") return "_Thinking (omitted when you continued):_"
     if (reason === "provider_rejected_reasoning_context") return "_Thinking (not sent to provider):_"
@@ -1924,31 +1940,35 @@ function BlockTool(props: { title: string; children: JSX.Element; onClick?: () =
   const [hover, setHover] = createSignal(false)
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
   return (
-    <box
-      border={["left"]}
-      paddingTop={1}
-      paddingBottom={1}
-      paddingLeft={2}
-      marginTop={1}
-      gap={1}
-      backgroundColor={hover() ? theme.backgroundMenu : theme.backgroundPanel}
-      customBorderChars={SplitBorder.customBorderChars}
-      borderColor={theme.background}
-      onMouseOver={() => props.onClick && setHover(true)}
-      onMouseOut={() => setHover(false)}
-      onMouseUp={() => {
-        if (renderer.getSelection()?.getSelectedText()) return
-        props.onClick?.()
-      }}
-    >
-      <text paddingLeft={3} fg={theme.textMuted}>
-        {props.title}
-      </text>
-      {props.children}
-      <Show when={error()}>
-        <text fg={theme.error}>{error()}</text>
-      </Show>
-    </box>
+    <>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+      {/* biome-ignore lint/a11y/useKeyWithMouseEvents: TUI hover handler */}
+      <box
+        border={["left"]}
+        paddingTop={1}
+        paddingBottom={1}
+        paddingLeft={2}
+        marginTop={1}
+        gap={1}
+        backgroundColor={hover() ? theme.backgroundMenu : theme.backgroundPanel}
+        customBorderChars={SplitBorder.customBorderChars}
+        borderColor={theme.background}
+        onMouseOver={() => props.onClick && setHover(true)}
+        onMouseOut={() => setHover(false)}
+        onMouseUp={() => {
+          if (renderer.getSelection()?.getSelectedText()) return
+          props.onClick?.()
+        }}
+      >
+        <text paddingLeft={3} fg={theme.textMuted}>
+          {props.title}
+        </text>
+        {props.children}
+        <Show when={error()}>
+          <text fg={theme.error}>{error()}</text>
+        </Show>
+      </box>
+    </>
   )
 }
 
@@ -2446,6 +2466,7 @@ function WaitAgentMessage(props: ToolProps<any>) {
   const sync = useSync()
   const route = useRoute()
   const renderer = useRenderer()
+  const ctx = use()
 
   const state = createMemo(() => props.part.state as any)
 
@@ -2475,10 +2496,37 @@ function WaitAgentMessage(props: ToolProps<any>) {
 
   const isWildcard = createMemo(() => sources().length === 1 && sources()[0] === "*")
   const respondedSources = createMemo(() => (meta()?.respondedSources as string[] | undefined) ?? [])
+  const respondedSeqs = createMemo(() => (meta()?.respondedSeqs as Record<string, number> | undefined) ?? {})
+  const timedOutSeqs = createMemo(() => (meta()?.timedOutSeqs as Record<string, number> | undefined) ?? {})
 
   const createdAt = createMemo(() => meta()?.createdAt as number | undefined)
   const deadline = createMemo(() => meta()?.deadline as number | undefined)
-  const since = createMemo(() => (meta()?.since as number | undefined) ?? (input()?.since as number | undefined))
+  const baselineSince = createMemo(() => meta()?.since as number | undefined)
+  const rawSince = createMemo(() => {
+    const value = input()?.since
+    if (typeof value !== "number") return undefined
+    return value
+  })
+  const sinceLabel = createMemo(() => {
+    const baseline = baselineSince()
+    if (baseline !== undefined) {
+      const raw = rawSince()
+      if (raw === undefined || raw === baseline) return String(baseline)
+      return `${baseline} (raw: ${raw})`
+    }
+
+    const raw = rawSince()
+    if (raw === undefined) return undefined
+    return String(raw)
+  })
+  const resolvedAt = createMemo(() => meta()?.resolvedAt as number | undefined)
+  const resolvedElapsed = createMemo(() => {
+    const start = createdAt()
+    if (start === undefined) return undefined
+    const end = resolvedAt()
+    if (end === undefined) return undefined
+    return Math.max(0, end - start)
+  })
   const interruptedAt = createMemo(() => meta()?.interruptedAt as number | undefined)
   const interruptedBy = createMemo(() => meta()?.interruptedBy as "prompt" | "abort" | undefined)
 
@@ -2553,6 +2601,20 @@ function WaitAgentMessage(props: ToolProps<any>) {
     return `agent#${shortId}`
   }
 
+  const label = (id: string) => {
+    if (!id.startsWith("ses_")) return id
+    return getAgentName(id)
+  }
+
+  const formatSeqs = (seqs: Record<string, number>) => {
+    const entries = Object.entries(seqs)
+    if (entries.length === 0) return undefined
+    return entries.map(([id, seq]) => `${label(id)}:${seq}`).join(", ")
+  }
+
+  const respondedSeqLine = createMemo(() => formatSeqs(respondedSeqs()))
+  const timedOutSeqLine = createMemo(() => formatSeqs(timedOutSeqs()))
+
   const failedSources = createMemo(() => {
     if (isWildcard()) return []
     const responded = new Set(respondedSources())
@@ -2619,7 +2681,7 @@ function WaitAgentMessage(props: ToolProps<any>) {
   const MetaLine = (props: { elapsed?: number; left?: number }) => {
     return (
       <text fg={theme.textMuted}>
-        ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s{since() !== undefined ? `, since: ${since()}` : ""})
+        ({mode()}, {Math.round((timeout() ?? 0) / 1000)}s{sinceLabel() ? `, since: ${sinceLabel()}` : ""})
         {props.elapsed !== undefined && <span> · {fmt(props.elapsed)} elapsed</span>}
         {props.left !== undefined && <span> · {fmt(props.left)} left</span>}
       </text>
@@ -2630,18 +2692,49 @@ function WaitAgentMessage(props: ToolProps<any>) {
     <Switch>
       <Match when={effectiveStatus() === "blocked"}>
         <box marginTop={1} paddingLeft={6}>
-          <text fg={statusColor()}>⛔ wait_agent_message blocked</text>
+          <box flexDirection="column">
+            <box flexDirection="row" flexWrap="wrap">
+              <text fg={statusColor()}>⛔ wait blocked</text>
+              <Show when={meta()?.error}>
+                <text fg={theme.textMuted}> · {meta()?.error}</text>
+              </Show>
+            </box>
+            <MetaLine />
+          </box>
         </box>
       </Match>
-      <Match when={effectiveStatus() === "resolved" && mode() === "all"}>{null}</Match>
+      <Match when={effectiveStatus() === "resolved" && mode() === "all"}>
+        <box marginTop={1} paddingLeft={6}>
+          <box flexDirection="column">
+            <box flexDirection="row" flexWrap="wrap">
+              <text fg={statusColor()}>✓ </text>
+              <CommaList sessions={respondedSources().length > 0 ? respondedSources() : sources()} fg={statusColor()} />
+              <Show when={failedSources().length > 0}>
+                <text fg={theme.textMuted}> · ○ </text>
+                <CommaList sessions={failedSources()} fg={theme.textMuted} />
+              </Show>
+            </box>
+            <MetaLine elapsed={resolvedElapsed()} />
+            <Show when={ctx.showDetails() && respondedSeqLine()}>
+              <text fg={theme.textMuted}>seq: {respondedSeqLine()}</text>
+            </Show>
+          </box>
+        </box>
+      </Match>
       <Match when={effectiveStatus() === "resolved" && mode() === "any"}>
         <box marginTop={1} paddingLeft={6}>
-          <box flexDirection="row" flexWrap="wrap">
-            <text fg={statusColor()}>✓ </text>
-            <CommaList sessions={respondedSources()} fg={statusColor()} />
-            <Show when={failedSources().length > 0}>
-              <text fg={theme.textMuted}> · ○ </text>
-              <CommaList sessions={failedSources()} fg={theme.textMuted} />
+          <box flexDirection="column">
+            <box flexDirection="row" flexWrap="wrap">
+              <text fg={statusColor()}>✓ </text>
+              <CommaList sessions={respondedSources()} fg={statusColor()} />
+              <Show when={failedSources().length > 0}>
+                <text fg={theme.textMuted}> · ○ </text>
+                <CommaList sessions={failedSources()} fg={theme.textMuted} />
+              </Show>
+            </box>
+            <MetaLine elapsed={resolvedElapsed()} />
+            <Show when={ctx.showDetails() && respondedSeqLine()}>
+              <text fg={theme.textMuted}>seq: {respondedSeqLine()}</text>
             </Show>
           </box>
         </box>
@@ -2664,18 +2757,32 @@ function WaitAgentMessage(props: ToolProps<any>) {
               </Show>
             </box>
             <MetaLine elapsed={interruptedElapsed()} left={interruptedLeft()} />
+            <Show when={ctx.showDetails() && respondedSeqLine()}>
+              <text fg={theme.textMuted}>seq: {respondedSeqLine()}</text>
+            </Show>
           </box>
         </box>
       </Match>
       <Match when={effectiveStatus() === "timedOut"}>
         <box marginTop={1} paddingLeft={6}>
-          <box flexDirection="row" flexWrap="wrap">
-            <text fg={statusColor()}>⏱ </text>
-            <CommaList sessions={timedOutSources()} fg={statusColor()} />
-            <text fg={statusColor()}> timed out</text>
-            <Show when={respondedSources().length > 0}>
-              <text fg={theme.success}> · ✓ </text>
-              <CommaList sessions={respondedSources()} fg={theme.success} />
+          <box flexDirection="column">
+            <box flexDirection="row" flexWrap="wrap">
+              <text fg={statusColor()}>⏱ </text>
+              <CommaList sessions={timedOutSources()} fg={statusColor()} />
+              <text fg={statusColor()}> timed out</text>
+              <Show when={respondedSources().length > 0}>
+                <text fg={theme.success}> · ✓ </text>
+                <CommaList sessions={respondedSources()} fg={theme.success} />
+              </Show>
+            </box>
+            <MetaLine elapsed={resolvedElapsed()} />
+            <Show when={ctx.showDetails() && (respondedSeqLine() || timedOutSeqLine())}>
+              <Show when={respondedSeqLine()}>
+                <text fg={theme.textMuted}>seq: {respondedSeqLine()}</text>
+              </Show>
+              <Show when={timedOutSeqLine()}>
+                <text fg={theme.textMuted}>last: {timedOutSeqLine()}</text>
+              </Show>
             </Show>
           </box>
         </box>
@@ -2704,6 +2811,9 @@ function WaitAgentMessage(props: ToolProps<any>) {
               </Show>
             </box>
             <MetaLine elapsed={elapsed()} left={remaining()} />
+            <Show when={ctx.showDetails() && respondedSeqLine()}>
+              <text fg={theme.textMuted}>seq: {respondedSeqLine()}</text>
+            </Show>
           </box>
         </box>
       </Match>

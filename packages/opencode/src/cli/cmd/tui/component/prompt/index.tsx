@@ -129,6 +129,51 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+
+  const [waitNow, setWaitNow] = createSignal(Date.now())
+  createEffect(() => {
+    if ((status() as any).type !== "waiting") return
+    const timer = setInterval(() => setWaitNow(Date.now()), 250)
+    onCleanup(() => clearInterval(timer))
+  })
+
+  const waitText = createMemo(() => {
+    const s = status() as any
+    if (s.type !== "waiting") return ""
+
+    const sources = Array.isArray(s.sources) ? (s.sources as string[]) : ([] as string[])
+    const mode = typeof s.mode === "string" ? s.mode : "?"
+    const timeoutMs = typeof s.timeout === "number" ? s.timeout : undefined
+    const timeout = timeoutMs === undefined ? "?" : `${Math.round(timeoutMs / 1000)}s`
+    const since = typeof s.since === "number" ? s.since : undefined
+
+    const deadline = s.time?.deadline as number | undefined
+    const leftMs = deadline === undefined ? undefined : Math.max(0, deadline - waitNow())
+    const left = leftMs === undefined ? undefined : `${Math.ceil(leftMs / 1000)}s left`
+
+    const sourceName = (id: string) => {
+      if (!id.startsWith("ses_")) return id
+      const shortId = id.slice(-4)
+      const session = sync.session.get(id)
+      if (session?.title?.startsWith("Subagent - ")) return `${session.title.slice(11)}#${shortId}`
+      if (session?.title) return `${session.title}#${shortId}`
+      return `session#${shortId}`
+    }
+
+    const targets = (() => {
+      if (sources.length === 1 && sources[0] === "*") return "any session"
+      if (sources.length === 0) return "no sessions"
+
+      const names = sources.map(sourceName)
+      const shown = names.slice(0, 2)
+      const more = names.length > 2 ? ` +${names.length - 2}` : ""
+      return `${shown.join(", ")}${more}`
+    })()
+
+    const sincePart = since === undefined ? "" : `, since ${since}`
+    const leftPart = left === undefined ? "" : ` · ${left}`
+    return `Waiting (${mode}, ${timeout}${sincePart}) on ${targets}${leftPart}`
+  })
   // For subagent sessions, get the locked agent name from the session
   const session = createMemo(() => (props.sessionID ? sync.session.get(props.sessionID) : undefined))
   const lockedAgentName = createMemo(() => (session() as any)?.agentName as string | undefined)
@@ -2040,120 +2085,119 @@ export function Prompt(props: PromptProps) {
             }}
           >
             <Switch>
-            <Match when={(status() as any).type === "waiting"}>
-              <box flexDirection="row" gap={1} flexGrow={1} justifyContent="space-between">
-                <box flexShrink={0} flexDirection="row" gap={1}>
-                  <box marginLeft={1}>
-                    <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
-                      <spinner color={theme.accent} frames={["◜", "◠", "◝", "◞", "◡", "◟"]} interval={80} />
-                    </Show>
+              <Match when={(status() as any).type === "waiting"}>
+                <box flexDirection="row" gap={1} flexGrow={1} justifyContent="space-between">
+                  <box flexGrow={1} flexShrink={1} flexDirection="row" gap={1}>
+                    <box marginLeft={1}>
+                      <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                        <spinner color={theme.accent} frames={["◜", "◠", "◝", "◞", "◡", "◟"]} interval={80} />
+                      </Show>
+                    </box>
+                    <text fg={theme.accent} width="100%" overflow="hidden">
+                      {waitText()}
+                    </text>
                   </box>
-                  <text fg={theme.accent}>
-                    Waiting for {(status() as any).sources?.length ?? 0} subagent
-                    {(status() as any).sources?.length === 1 ? "" : "s"}...
+                  <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
+                    esc{" "}
+                    <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
+                      {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                    </span>
                   </text>
                 </box>
-                <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
-                  esc{" "}
-                  <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                    {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
-                  </span>
-                </text>
-              </box>
-            </Match>
-            <Match when={status().type !== "idle"}>
-              <box
-                flexDirection="row"
-                gap={1}
-                flexGrow={1}
-                justifyContent={status().type === "retry" ? "space-between" : "flex-start"}
-              >
-                <box flexShrink={0} flexDirection="row" gap={1}>
-                  <box marginLeft={1}>
-                    <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
-                      <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
-                    </Show>
-                  </box>
-                  <box flexDirection="row" gap={1} flexShrink={0}>
-                    {(() => {
-                      const retry = createMemo(() => {
-                        const s = status()
-                        if (s.type !== "retry") return
-                        return s
-                      })
-                      const message = createMemo(() => {
-                        const r = retry()
-                        if (!r) return
-                        if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
-                          return "gemini is way too hot right now"
-
-                        return truncateEnd({
-                          method: renderer.widthMethod,
-                          text: r.message,
-                          max: 80,
-                          tail: "...",
+              </Match>
+              <Match when={status().type !== "idle"}>
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  flexGrow={1}
+                  justifyContent={status().type === "retry" ? "space-between" : "flex-start"}
+                >
+                  <box flexShrink={0} flexDirection="row" gap={1}>
+                    <box marginLeft={1}>
+                      <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                        <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
+                      </Show>
+                    </box>
+                    <box flexDirection="row" gap={1} flexShrink={0}>
+                      {(() => {
+                        const retry = createMemo(() => {
+                          const s = status()
+                          if (s.type !== "retry") return
+                          return s
                         })
-                      })
-                      const isTruncated = createMemo(() => {
-                        const r = retry()
-                        if (!r) return false
-                        return cols(renderer.widthMethod, r.message) > 120
-                      })
-                      const [seconds, setSeconds] = createSignal(0)
-                      onMount(() => {
-                        const timer = setInterval(() => {
-                          const next = retry()?.next
-                          if (next) setSeconds(Math.round((next - Date.now()) / 1000))
-                        }, 1000)
+                        const message = createMemo(() => {
+                          const r = retry()
+                          if (!r) return
+                          if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
+                            return "gemini is way too hot right now"
 
-                        onCleanup(() => {
-                          clearInterval(timer)
+                          return truncateEnd({
+                            method: renderer.widthMethod,
+                            text: r.message,
+                            max: 80,
+                            tail: "...",
+                          })
                         })
-                      })
-                      const handleMessageClick = () => {
-                        const r = retry()
-                        if (!r) return
-                        if (isTruncated()) {
-                          DialogAlert.show(dialog, "Retry Error", r.message)
+                        const isTruncated = createMemo(() => {
+                          const r = retry()
+                          if (!r) return false
+                          return cols(renderer.widthMethod, r.message) > 120
+                        })
+                        const [seconds, setSeconds] = createSignal(0)
+                        onMount(() => {
+                          const timer = setInterval(() => {
+                            const next = retry()?.next
+                            if (next) setSeconds(Math.round((next - Date.now()) / 1000))
+                          }, 1000)
+
+                          onCleanup(() => {
+                            clearInterval(timer)
+                          })
+                        })
+                        const handleMessageClick = () => {
+                          const r = retry()
+                          if (!r) return
+                          if (isTruncated()) {
+                            DialogAlert.show(dialog, "Retry Error", r.message)
+                          }
                         }
-                      }
 
-                      const retryText = () => {
-                        const r = retry()
-                        if (!r) return ""
-                        const baseMessage = message()
-                        const truncatedHint = isTruncated() ? " (click to expand)" : ""
-                        const retryInfo = ` [retrying ${seconds() > 0 ? `in ${seconds()}s ` : ""}attempt #${r.attempt}]`
-                        return baseMessage + truncatedHint + retryInfo
-                      }
+                        const retryText = () => {
+                          const r = retry()
+                          if (!r) return ""
+                          const baseMessage = message()
+                          const truncatedHint = isTruncated() ? " (click to expand)" : ""
+                          const retryInfo = ` [retrying ${seconds() > 0 ? `in ${seconds()}s ` : ""}attempt #${r.attempt}]`
+                          return baseMessage + truncatedHint + retryInfo
+                        }
 
-                      return (
-                        <Show when={retry()}>
-                          {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
-                          <box onMouseUp={handleMessageClick}>
-                            <text fg={theme.error}>{retryText()}</text>
-                          </box>
-                        </Show>
-                      )
-                    })()}
+                        return (
+                          <Show when={retry()}>
+                            {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
+                            <box onMouseUp={handleMessageClick}>
+                              <text fg={theme.error}>{retryText()}</text>
+                            </box>
+                          </Show>
+                        )
+                      })()}
+                    </box>
                   </box>
+                  <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
+                    esc{" "}
+                    <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
+                      {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                    </span>
+                  </text>
                 </box>
-                <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
-                  esc{" "}
-                  <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                    {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
-                  </span>
+              </Match>
+              <Match when={!tall() && !stack()}>
+                <text width="100%" overflow="hidden">
+                  <span style={{ fg: highlight() }}>{footMeta().head}</span>
+                  <span style={{ fg: keybind.leader ? theme.textMuted : theme.text }}>{footMeta().model}</span>
+                  <span style={{ fg: theme.textMuted }}>{footMeta().provider}</span>
+                  <span style={{ fg: theme.warning, bold: true }}>{footMeta().variant}</span>
                 </text>
-              </box>
-            </Match>
-            <Match when={!tall() && !stack()}>
-              <text width="100%" overflow="hidden">
-                <span style={{ fg: highlight() }}>{footMeta().head}</span>
-                <span style={{ fg: keybind.leader ? theme.textMuted : theme.text }}>{footMeta().model}</span>
-                <span style={{ fg: theme.textMuted }}>{footMeta().provider}</span>
-                <span style={{ fg: theme.warning, bold: true }}>{footMeta().variant}</span>
-              </text>
-            </Match>
+              </Match>
             </Switch>
           </box>
           <Show when={status().type !== "retry"}>

@@ -14,6 +14,7 @@ import { SessionCompaction } from "./compaction"
 import { SessionCPD } from "./cpd"
 import { SessionRetry } from "./retry"
 import { Instance } from "../project/instance"
+import { InstanceBootstrap } from "../project/bootstrap"
 import { Bus } from "../bus"
 import { TuiEvent } from "../cli/cmd/tui/event"
 import { ProviderTransform } from "../provider/transform"
@@ -62,6 +63,17 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
   export const OUTPUT_TOKEN_MAX = Flag.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
+
+  async function inSessionDirectory<T>(sessionID: string, fn: () => Promise<T>): Promise<T> {
+    const session = await Session.get(sessionID)
+    if (session.directory === Instance.directory) return fn()
+
+    return Instance.provide({
+      directory: session.directory,
+      init: InstanceBootstrap,
+      fn,
+    })
+  }
 
   const warnState = Instance.state(() => {
     return {
@@ -303,6 +315,10 @@ export namespace SessionPrompt {
       respondedFromSources,
     })
 
+    const respondedSeqs = Object.fromEntries(
+      result.respondedSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
+    )
+
     const parts = await MessageV2.parts(policy.messageID)
     const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === policy.callID)
     if (!tool) return
@@ -312,6 +328,7 @@ export namespace SessionPrompt {
       status: result.timedOut ? "timedOut" : "waiting",
       sources: policy.sources,
       respondedSources: result.respondedSources,
+      respondedSeqs,
       timedOutSources: result.timedOut ? result.missingSources : [],
       timeout: policy.timeout,
       mode: policy.mode,
@@ -344,17 +361,26 @@ export namespace SessionPrompt {
     const interruptedAt = Date.now()
 
     const prev = tool.state.metadata as any
-    const respondedSources = Array.isArray(prev?.respondedSources) ? prev.respondedSources : []
+    const respondedSources: string[] = (Array.isArray(prev?.respondedSources) ? prev.respondedSources : []).filter(
+      (x: unknown): x is string => typeof x === "string",
+    )
+
+    // Best-effort observability: which seq we last saw per responded source.
+    const respondedSeqs = Object.fromEntries(
+      respondedSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
+    )
 
     const meta = {
       ok: true,
       status: "interrupted",
       sources: policy.sources,
       respondedSources,
+      respondedSeqs,
       timedOutSources: [],
       timeout: policy.timeout,
       mode: policy.mode,
       allReceived: false,
+      since: policy.since,
       createdAt: policy.time.created,
       deadline: policy.time.deadline,
       interruptedAt,
@@ -717,53 +743,55 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
-    const session = await Session.get(input.sessionID)
-    await SessionRevert.cleanup(session)
+    return inSessionDirectory(input.sessionID, async () => {
+      const session = await Session.get(input.sessionID)
+      await SessionRevert.cleanup(session)
 
-    // Human input cancels waiting.
-    if (WaitPolicy.isWaiting(input.sessionID)) {
-      const wait = WaitPolicy.get(input.sessionID)
-      if (wait) {
-        await interruptWaitInDirectory(input.sessionID, wait, Instance.directory, "prompt").catch((error) => {
-          log.error("failed to mark wait interrupted", { sessionID: input.sessionID, error: error?.message })
+      // Human input cancels waiting.
+      if (WaitPolicy.isWaiting(input.sessionID)) {
+        const wait = WaitPolicy.get(input.sessionID)
+        if (wait) {
+          await interruptWaitInDirectory(input.sessionID, wait, Instance.directory, "prompt").catch((error) => {
+            log.error("failed to mark wait interrupted", { sessionID: input.sessionID, error: error?.message })
+          })
+        }
+        WaitPolicy.clear(input.sessionID)
+        SessionStatus.set(input.sessionID, { type: "idle" })
+      }
+
+      const message = await createUserMessage(input)
+      await Session.touch(input.sessionID)
+
+      // this is backwards compatibility for allowing `tools` to be specified when
+      // prompting
+      const permissions: PermissionNext.Ruleset = []
+      for (const [tool, enabled] of Object.entries(input.tools ?? {})) {
+        permissions.push({
+          permission: tool,
+          action: enabled ? "allow" : "deny",
+          pattern: "*",
         })
       }
-      WaitPolicy.clear(input.sessionID)
-      SessionStatus.set(input.sessionID, { type: "idle" })
-    }
+      if (permissions.length > 0) {
+        session.permission = permissions
+        await Session.update(session.id, (draft) => {
+          draft.permission = permissions
+        })
+      }
 
-    const message = await createUserMessage(input)
-    await Session.touch(input.sessionID)
+      if (input.noReply === true) {
+        return message
+      }
 
-    // this is backwards compatibility for allowing `tools` to be specified when
-    // prompting
-    const permissions: PermissionNext.Ruleset = []
-    for (const [tool, enabled] of Object.entries(input.tools ?? {})) {
-      permissions.push({
-        permission: tool,
-        action: enabled ? "allow" : "deny",
-        pattern: "*",
-      })
-    }
-    if (permissions.length > 0) {
-      session.permission = permissions
-      await Session.update(session.id, (draft) => {
-        draft.permission = permissions
-      })
-    }
+      if (message.info.role === "user" && message.info.model) {
+        await warnMachineConcurrency({
+          session,
+          model: message.info.model,
+        })
+      }
 
-    if (input.noReply === true) {
-      return message
-    }
-
-    if (message.info.role === "user" && message.info.model) {
-      await warnMachineConcurrency({
-        session,
-        model: message.info.model,
-      })
-    }
-
-    return loop(input.sessionID)
+      return runLoop(input.sessionID)
+    })
   })
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
@@ -846,7 +874,7 @@ export namespace SessionPrompt {
     return controller.signal
   }
 
-  export function cancel(sessionID: string, input?: { force?: boolean }) {
+  function cancelLocal(sessionID: string, input?: { force?: boolean }) {
     log.info("cancel", { sessionID })
     const s = state()
     const match = s[sessionID]
@@ -940,6 +968,25 @@ export namespace SessionPrompt {
     wake(sessionID)
   }
 
+  export function cancel(sessionID: string, input?: { force?: boolean }) {
+    // Best-effort: cancel immediately if the session is running in this instance.
+    cancelLocal(sessionID, input)
+
+    // Also cancel in the session's owning directory, to avoid cross-instance stuck loops.
+    void Session.get(sessionID)
+      .then((session) => {
+        if (session.directory === Instance.directory) return
+        return Instance.provide({
+          directory: session.directory,
+          init: InstanceBootstrap,
+          fn: () => cancelLocal(sessionID, input),
+        })
+      })
+      .catch((error) => {
+        log.error("failed to cancel in session directory", { sessionID, error: error?.message })
+      })
+  }
+
   export async function omitOrphanThinking(input: {
     sessionID: string
     assistant: MessageV2.WithParts
@@ -1012,8 +1059,20 @@ export namespace SessionPrompt {
 
   function isUserRelevant(msg: MessageV2.WithParts) {
     if (msg.info.role !== "user") return false
+
+    const record = (value: unknown): Record<string, unknown> =>
+      value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+
     return msg.parts.some((part) => {
-      if (part.type === "text") return !part.ignored && part.synthetic !== true
+      if (part.type === "text") {
+        if (part.ignored) return false
+        if (part.synthetic !== true) return true
+
+        // Some sessions (subagents/subtasks) are intentionally bootstrapped with a
+        // synthetic "user" message so the loop can start even with no human input.
+        const opencode = record(part.metadata).opencode
+        return record(opencode).bootstrap === true
+      }
       if (part.type === "file") return true
       if (part.type === "subtask") return true
       if (part.type === "agent") return true
@@ -1213,7 +1272,7 @@ export namespace SessionPrompt {
       })
     }
 
-    using _ = defer(() => cancel(sessionID, { force: false }))
+    using _ = defer(() => cancelLocal(sessionID, { force: false }))
 
     let step = 0
     let pendingPersistFailures = 0
@@ -1241,6 +1300,7 @@ export namespace SessionPrompt {
             sources: wait.sources,
             timeout: wait.timeout,
             mode: wait.mode,
+            since: wait.since,
             time: wait.time,
           })
           break
@@ -1342,17 +1402,29 @@ export namespace SessionPrompt {
           const status = result.timedOut ? "timedOut" : "resolved"
           const allReceived = wait.mode === "all" && !result.timedOut
 
+          const resolvedAt = Date.now()
+          const respondedSeqs = Object.fromEntries(
+            respondedSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
+          )
+          const timedOutSeqs = Object.fromEntries(
+            timedOutSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
+          )
+
           const meta = {
             ok: true,
             status,
             sources: wait.sources,
             respondedSources,
+            respondedSeqs,
             timedOutSources,
+            timedOutSeqs,
             timeout: wait.timeout,
             mode: wait.mode,
             allReceived,
+            since: wait.since,
             createdAt: wait.time.created,
             deadline: wait.time.deadline,
+            resolvedAt,
           }
 
           await Session.updatePart({
@@ -1396,6 +1468,11 @@ export namespace SessionPrompt {
             type: "text",
             text: "Begin your task as specified in the system prompt.",
             synthetic: true,
+            metadata: {
+              opencode: {
+                bootstrap: true,
+              },
+            },
           }
           await Session.updatePart(initialPart)
           // Continue loop to process the initial message
@@ -1555,6 +1632,11 @@ export namespace SessionPrompt {
           type: "text",
           text: "Begin your task as specified in the system prompt.",
           synthetic: true,
+          metadata: {
+            opencode: {
+              bootstrap: true,
+            },
+          },
         } satisfies MessageV2.TextPart)
 
         const parentID = sessionID
@@ -1565,12 +1647,14 @@ export namespace SessionPrompt {
             error: error?.message || String(error),
           })
 
-          await SessionMessage.deliver({
-            from: child.id,
-            to: parentID,
-            text: `Subagent error: ${error?.message || "Unknown error"}`,
-            messageType: "error",
-          })
+          await inSessionDirectory(parentID, () =>
+            SessionMessage.deliver({
+              from: child.id,
+              to: parentID,
+              text: `Subagent error: ${error?.message || "Unknown error"}`,
+              messageType: "error",
+            }),
+          )
 
           SessionStatus.set(child.id, { type: "idle" })
         })
@@ -1772,12 +1856,7 @@ export namespace SessionPrompt {
               key: envKey,
               load: () => SystemPrompt.environment(model),
             })),
-            ...SystemPrompt.messageProtocol(
-              current.sessionType,
-              sessionID,
-              current.parentID,
-              current.subagentPrompt,
-            ),
+            ...SystemPrompt.messageProtocol(current.sessionType, sessionID, current.parentID, current.subagentPrompt),
             ...(cpd ? [cpdBlock(cpd.text)] : []),
             integrity(current),
             ...(await InstructionPrompt.system()),
@@ -1944,7 +2023,9 @@ export namespace SessionPrompt {
 
                   return [[`Tool ${p.tool}:`, `Input: ${JSON.stringify(p.state.input)}`, `Output:\n${body}`].join("\n")]
                 })
-              const blocks = [texts.join("\n"), files.join("\n"), msgs.join("\n\n"), tools.join("\n\n")].filter((x) => x)
+              const blocks = [texts.join("\n"), files.join("\n"), msgs.join("\n\n"), tools.join("\n\n")].filter(
+                (x) => x,
+              )
               if (blocks.length === 0) return ""
               return [`[${role}]`, ...blocks].join("\n")
             })
@@ -1978,7 +2059,9 @@ export namespace SessionPrompt {
               return 0
             })()
             const segment = parts.slice(start)
-            const reasoningParts = segment.filter((p): p is MessageV2.ReasoningPart => p.type === "reasoning" && !p.ignored)
+            const reasoningParts = segment.filter(
+              (p): p is MessageV2.ReasoningPart => p.type === "reasoning" && !p.ignored,
+            )
             if (reasoningParts.length === 0) return
             return {
               role: "assistant" as const,
@@ -2348,7 +2431,9 @@ export namespace SessionPrompt {
     throw new Error("Impossible")
   }
 
-  export const loop = fn(Identifier.schema("session"), runLoop)
+  export const loop = fn(Identifier.schema("session"), async (sessionID) => {
+    return inSessionDirectory(sessionID, () => runLoop(sessionID))
+  })
 
   async function lastModel(sessionID: string) {
     const visited = new Set<string>()
@@ -3184,12 +3269,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     command: z.string(),
   })
   export type ShellInput = z.infer<typeof ShellInput>
-  export async function shell(input: ShellInput) {
+  async function shellLocal(input: ShellInput) {
     const abort = start(input.sessionID)
     if (!abort) {
       throw new Session.BusyError({ sessionID: input.sessionID })
     }
-    using _ = defer(() => cancel(input.sessionID))
+    using _ = defer(() => cancelLocal(input.sessionID))
 
     const session = await Session.get(input.sessionID)
     if (session.revert) {
@@ -3410,6 +3495,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     return { info: msg, parts: [part] }
   }
 
+  export async function shell(input: ShellInput) {
+    return inSessionDirectory(input.sessionID, () => shellLocal(input))
+  }
+
   export const CommandInput = z.object({
     messageID: Identifier.schema("message").optional(),
     sessionID: Identifier.schema("session"),
@@ -3442,7 +3531,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
    * Does not match when preceded by word characters or backticks (to avoid email addresses and quoted references)
    */
 
-  export async function command(input: CommandInput) {
+  async function commandLocal(input: CommandInput) {
     log.info("command", input)
     const command = await Command.get(input.command)
     const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
@@ -3583,6 +3672,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     return result
+  }
+
+  export async function command(input: CommandInput) {
+    return inSessionDirectory(input.sessionID, () => commandLocal(input))
   }
 
   async function ensureTitle(input: {

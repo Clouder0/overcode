@@ -21,7 +21,8 @@ test("ClaudeCode.defaults includes Claude Code header fingerprints", () => {
   const headers = ClaudeCode.defaults()
 
   expect(headers["x-app"]).toBe("cli")
-  expect(headers["user-agent"]).toContain("claude-cli/2.1.5")
+  expect(headers["user-agent"]).toMatch(/^claude-cli\/\d+\.\d+\.\d+/)
+  expect(headers["user-agent"]).toContain("(external, cli)")
   expect(headers["anthropic-version"]).toBe("2023-06-01")
   expect(headers["anthropic-dangerous-direct-browser-access"]).toBe("true")
 
@@ -130,9 +131,4 @@ test("ClaudeCode.transform does not inject cache_control into message content bl
   expect(blocks[0].cache_control).toBeUndefined()
   expect(blocks[1].type).toBe("text")
   expect(blocks[1].cache_control).toBeUndefined()
-})
-
-test("ClaudeCode.helper sets helper headers based on request body", () => {
-  expect(ClaudeCode.helper({ stream: true })).toMatchObject({ "x-stainless-helper-method": "stream" })
-  expect(ClaudeCode.helper({ tools: [{ name: "Read" }] })).toMatchObject({ "x-stainless-helper": "BetaToolRunner" })
 })

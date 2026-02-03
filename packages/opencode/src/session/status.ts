@@ -23,6 +23,8 @@ export namespace SessionStatus {
         sources: z.array(z.string()),
         timeout: z.number(),
         mode: z.enum(["all", "any"]),
+        // Baseline cursor used for this wait (numeric seq).
+        since: z.number().optional(),
         time: z.object({
           created: z.number(),
           deadline: z.number().optional(),

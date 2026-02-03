@@ -14,6 +14,7 @@ process.chdir(dir)
 
 import pkg from "../package.json"
 import root from "../../../package.json"
+import plugin from "../../plugin/package.json"
 import { Script } from "@opencode-ai/script"
 
 const snapshotFlag = process.argv.includes("--update-models-snapshot")
@@ -142,6 +143,7 @@ for (const item of targets) {
     entrypoints: ["./src/index.ts", parserWorker, workerPath],
     define: {
       OPENCODE_VERSION: `'${Script.version}'`,
+      OPENCODE_ECOSYSTEM_VERSION: `'${plugin.version}'`,
       OTUI_TREE_SITTER_WORKER_PATH: bunfsRoot + workerRelativePath,
       OPENCODE_WORKER_PATH: workerPath,
       OPENCODE_CHANNEL: `'${Script.channel}'`,

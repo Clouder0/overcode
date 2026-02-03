@@ -52,7 +52,12 @@ export namespace ToolRegistry {
 
       for (const match of matches) {
         const namespace = path.basename(match, path.extname(match))
-        const mod = await import(match)
+        const mod = await import(match).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err)
+          log.error("failed to load custom tool", { path: match, error: message })
+          return undefined
+        })
+        if (!mod) continue
         const entries = sortEntries(Object.entries<ToolDefinition>(mod))
         for (const [id, def] of entries) {
           custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))

@@ -10,6 +10,7 @@ import { Flag } from "../flag/flag"
 declare global {
   const OPENCODE_VERSION: string
   const OPENCODE_CHANNEL: string
+  const OPENCODE_ECOSYSTEM_VERSION: string
 }
 
 export namespace Installation {
@@ -130,7 +131,8 @@ export namespace Installation {
     const run = async (cmd: ReturnType<typeof $>) => {
       const result = await cmd.quiet().throws(false)
       if (result.exitCode !== 0) {
-        const stderr = method === "choco" ? "not running from an elevated command shell" : result.stderr.toString("utf8")
+        const stderr =
+          method === "choco" ? "not running from an elevated command shell" : result.stderr.toString("utf8")
         throw new UpgradeFailedError({
           stderr: stderr,
         })
@@ -195,6 +197,15 @@ export namespace Installation {
     typeof OPENCODE_VERSION === "string" ? OPENCODE_VERSION : process.env.OPENCODE_VERSION || "local"
   export const CHANNEL =
     typeof OPENCODE_CHANNEL === "string" ? OPENCODE_CHANNEL : process.env.OPENCODE_CHANNEL || "local"
+
+  // The npm ecosystem (sdk/plugin) version this binary expects.
+  //
+  // Overcode's distribution version may not match upstream opencode's semver,
+  // so we cannot safely pin helper deps (like @opencode-ai/plugin) using VERSION.
+  export const ECOSYSTEM_VERSION =
+    typeof OPENCODE_ECOSYSTEM_VERSION === "string"
+      ? OPENCODE_ECOSYSTEM_VERSION
+      : process.env.OPENCODE_ECOSYSTEM_VERSION || (VERSION.startsWith("1.") ? VERSION : "latest")
   export const USER_AGENT = `opencode/${CHANNEL}/${VERSION}/${Flag.OPENCODE_CLIENT}`
 
   export async function latest(installMethod?: Method) {

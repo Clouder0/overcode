@@ -137,6 +137,7 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       sources,
       timeout: params.timeout,
       mode: params.mode,
+      since: policy.since,
       time: policy.time,
     })
 

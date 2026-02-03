@@ -11,9 +11,9 @@ export namespace ClaudeCode {
     "You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK."
   export const IdentityAgent = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
 
-  const USER_AGENT = "claude-cli/2.1.5 (external, repl_main_thread)"
+  const USER_AGENT = "claude-cli/2.1.12 (external, cli)"
   const STAINLESS_PKG_VERSION = "0.70.0"
-  const STAINLESS_RUNTIME_VERSION = "v20.0.0"
+  const STAINLESS_RUNTIME_VERSION = "v24.3.0"
 
   const USER_ID_RE = /^[0-9a-f]{64}$/
 
@@ -83,18 +83,10 @@ export namespace ClaudeCode {
     return next.toString()
   }
 
-  export function helper(body: unknown) {
-    if (!isRecord(body)) return {}
-
-    return {
-      ...(body["stream"] === true ? { "x-stainless-helper-method": "stream" } : {}),
-      ...(Array.isArray(body["tools"]) && body["tools"].length > 0 ? { "x-stainless-helper": "BetaToolRunner" } : {}),
-    }
-  }
-
   export function defaults() {
     return {
       accept: "application/json",
+      "accept-encoding": "identity",
       "content-type": "application/json",
       "x-app": "cli",
       "user-agent": USER_AGENT,
@@ -108,8 +100,7 @@ export namespace ClaudeCode {
       "x-stainless-arch": arch(),
       "x-stainless-retry-count": "0",
       "x-stainless-timeout": "600",
-      "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
-      ...(process.env.CLAUDE_CODE_ADDITIONAL_PROTECTION ? { "x-anthropic-additional-protection": "true" } : {}),
+      "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
     }
   }
 
@@ -337,8 +328,6 @@ export namespace ClaudeCode {
 
     // IMPORTANT: do not inject `cache_control` at the body layer.
     // It can invalidate requests when the prompt contains thinking blocks.
-
-    for (const [k, v] of Object.entries(helper(body))) headers.set(k, v)
 
     return {
       input: nextInput,

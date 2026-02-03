@@ -2,6 +2,8 @@ import z from "zod"
 import { Identifier } from "@/id/id"
 import { Session } from "@/session"
 import { SessionMessage } from "@/session/message-routing"
+import { Instance } from "@/project/instance"
+import { InstanceBootstrap } from "@/project/bootstrap"
 import type { MessageV2 } from "@/session/message-v2"
 import { Tool } from "./tool"
 
@@ -50,10 +52,15 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
       }
     }
 
-    const delivered = await SessionMessage.deliver({
-      from: ctx.sessionID,
-      to: target,
-      text: params.text,
+    const delivered = await Instance.provide({
+      directory: session.directory,
+      init: InstanceBootstrap,
+      fn: () =>
+        SessionMessage.deliver({
+          from: ctx.sessionID,
+          to: target,
+          text: params.text,
+        }),
     })
 
     const part: MessageV2.MessagePart = {

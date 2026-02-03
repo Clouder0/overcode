@@ -2,6 +2,7 @@ import z from "zod"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
+import { InstanceBootstrap } from "@/project/bootstrap"
 import { Provider } from "@/provider/provider"
 import { Session } from "@/session"
 import { LLMConcurrencyMachine } from "@/session/llm-concurrency-machine"
@@ -238,12 +239,29 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
             error: error?.message || String(error),
           })
 
-          await SessionMessage.deliver({
-            from: session.id,
-            to: parentID,
-            text: `Subagent error: ${error?.message || "Unknown error"}`,
-            messageType: "error",
-          })
+          const parent = await Session.get(parentID).catch(() => undefined)
+          if (parent) {
+            await Instance.provide({
+              directory: parent.directory,
+              init: InstanceBootstrap,
+              fn: () =>
+                SessionMessage.deliver({
+                  from: session.id,
+                  to: parentID,
+                  text: `Subagent error: ${error?.message || "Unknown error"}`,
+                  messageType: "error",
+                }),
+            })
+          }
+
+          if (!parent) {
+            await SessionMessage.deliver({
+              from: session.id,
+              to: parentID,
+              text: `Subagent error: ${error?.message || "Unknown error"}`,
+              messageType: "error",
+            })
+          }
 
           SessionStatus.set(session.id, { type: "idle" })
         })

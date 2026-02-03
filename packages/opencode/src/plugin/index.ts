@@ -78,15 +78,37 @@ export namespace Plugin {
         })
         if (!plugin) continue
       }
-      const mod = await import(plugin)
+      const mod = await import(plugin).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        log.error("failed to import plugin", { path: plugin, error: message })
+        Bus.publish(Session.Event.Error, {
+          error: new NamedError.Unknown({
+            message: `Failed to load plugin ${plugin}: ${message}`,
+          }).toObject(),
+        })
+        return undefined
+      })
+      if (!mod) continue
       // Prevent duplicate initialization when plugins export the same function
       // as both a named export and default export (e.g., `export const X` and `export default X`).
       // Object.entries(mod) would return both entries pointing to the same function reference.
       const seen = new Set<PluginInstance>()
-      for (const [_name, fn] of Object.entries<PluginInstance>(mod)) {
-        if (seen.has(fn)) continue
-        seen.add(fn)
-        const init = await fn(input)
+      for (const [_name, fn] of Object.entries(mod)) {
+        if (typeof fn !== "function") continue
+        const pluginFn = fn as PluginInstance
+        if (seen.has(pluginFn)) continue
+        seen.add(pluginFn)
+        const init = await pluginFn(input).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err)
+          log.error("failed to initialize plugin", { path: plugin, error: message })
+          Bus.publish(Session.Event.Error, {
+            error: new NamedError.Unknown({
+              message: `Failed to initialize plugin ${plugin}: ${message}`,
+            }).toObject(),
+          })
+          return undefined
+        })
+        if (!init) continue
         hooks.push(init)
       }
     }
