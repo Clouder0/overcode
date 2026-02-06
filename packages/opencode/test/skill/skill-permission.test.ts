@@ -20,7 +20,7 @@ name: allowed-skill
 description: A skill that should be allowed
 ---
 Instructions
-        `
+        `,
       )
 
       await fs.mkdir(path.join(dir, ".opencode", "skill", "denied-skill"), { recursive: true })
@@ -31,21 +31,25 @@ name: denied-skill
 description: A skill that should be denied
 ---
 Instructions
-        `
+        `,
       )
 
       // Configure permissions to deny denied-skill
       await Bun.write(
         path.join(dir, ".opencode", "opencode.json"),
-        JSON.stringify({
-          permission: {
-            skill: {
-              "denied-skill": "deny"
-            }
-          }
-        }, null, 2)
+        JSON.stringify(
+          {
+            permission: {
+              skill: {
+                "denied-skill": "deny",
+              },
+            },
+          },
+          null,
+          2,
+        ),
       )
-    }
+    },
   })
 
   await Instance.provide({
@@ -56,8 +60,8 @@ Instructions
       // Check that both skills exist
       const allSkills = await Skill.all()
       expect(allSkills.length).toBe(2)
-      expect(allSkills.find(s => s.name === "allowed-skill")).toBeDefined()
-      expect(allSkills.find(s => s.name === "denied-skill")).toBeDefined()
+      expect(allSkills.find((s) => s.name === "allowed-skill")).toBeDefined()
+      expect(allSkills.find((s) => s.name === "denied-skill")).toBeDefined()
 
       // Initialize skill tool with agent context
       const skillToolInit = await SkillTool.init({ agent })
@@ -65,6 +69,6 @@ Instructions
       // Check that only allowed-skill appears in the description
       expect(skillToolInit.description).toContain("allowed-skill")
       expect(skillToolInit.description).not.toContain("denied-skill")
-    }
+    },
   })
 })

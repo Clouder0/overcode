@@ -155,6 +155,7 @@ export type SessionStatus =
       sources: Array<string>
       timeout: number
       mode: "all" | "any"
+      since?: number
       time: {
         created: number
         deadline?: number
@@ -180,13 +181,6 @@ export type EventLspUpdated = {
   type: "lsp.updated"
   properties: {
     [key: string]: unknown
-  }
-}
-
-export type EventFileEdited = {
-  type: "file.edited"
-  properties: {
-    file: string
   }
 }
 
@@ -781,6 +775,13 @@ export type EventSessionCompacted = {
   }
 }
 
+export type EventFileEdited = {
+  type: "file.edited"
+  properties: {
+    file: string
+  }
+}
+
 export type EventFileWatcherUpdated = {
   type: "file.watcher.updated"
   properties: {
@@ -1011,7 +1012,6 @@ export type Event =
   | EventSessionStatus
   | EventSessionIdle
   | EventLspUpdated
-  | EventFileEdited
   | EventMessageUpdated
   | EventMessageRemoved
   | EventMessagePartUpdated
@@ -1023,8 +1023,9 @@ export type Event =
   | EventQuestionReplied
   | EventQuestionRejected
   | EventSessionCompacted
-  | EventTodoUpdated
+  | EventFileEdited
   | EventFileWatcherUpdated
+  | EventTodoUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
@@ -3410,6 +3411,7 @@ export type SessionAbortData = {
   }
   query?: {
     directory?: string
+    force?: "true" | "false" | "1" | "0"
   }
   url: "/session/{sessionID}/abort"
 }

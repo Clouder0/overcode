@@ -163,7 +163,9 @@ describe("session context maintenance concurrency", () => {
 
         if (!reminder) {
           const parts = await MessageV2.parts(delivered.id)
-          throw new Error(`missing compaction reminder. delivered=${JSON.stringify(parts)} human=${JSON.stringify(human.parts)}`)
+          throw new Error(
+            `missing compaction reminder. delivered=${JSON.stringify(parts)} human=${JSON.stringify(human.parts)}`,
+          )
         }
 
         const humanReminder = human.parts.find((p) => {

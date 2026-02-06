@@ -121,8 +121,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         flush()
         await new Promise<void>((resolve) => setTimeout(resolve, 250))
       }
-    })()
-      .catch(() => undefined)
+    })().catch(() => undefined)
 
     const subscribe = (_directory: string) => {
       // No-op: we subscribe to the global event stream.

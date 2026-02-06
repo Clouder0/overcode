@@ -47,7 +47,7 @@ Use this checklist to track implementation status.
 
 - Perfect token counting across all providers (we will use conservative estimates + retries).
 - Preserving unlimited native reasoning history (we explicitly truncate older reasoning when required).
-- Changing tool semantics or how tools work (only trimming tool *outputs* to reduce context).
+- Changing tool semantics or how tools work (only trimming tool _outputs_ to reduce context).
 
 ## Current Issues (Summary)
 
@@ -95,7 +95,7 @@ This is the unit we use when truncating reasoning: drop reasoning from older ste
 
 CPD is a session-level, bounded, structured digest of all Prefix content.
 
-CPD is *not* a chat message.
+CPD is _not_ a chat message.
 It is injected into prompts as a system-style block.
 
 CPD is authoritative for earlier context: once prefix is compacted, the model should not expect the full prefix.
@@ -159,7 +159,7 @@ Notes:
 
 If candidate prompt is too large:
 
-- Trim tool *outputs* only (not tool calls, not tool inputs).
+- Trim tool _outputs_ only (not tool calls, not tool inputs).
 - Prefer trimming oldest outputs in Prefix first.
 - If still too large, trim tool outputs in Tail.
 
@@ -178,10 +178,9 @@ If still too large:
 
 - Update CPD using a dedicated compaction model call.
 - CPD update input includes:
-
-  1) Tail Snapshot (conditioning) including the *latest native thinking* (latest assistant step reasoning)
-  2) Existing CPD (if any)
-  3) Prefix Delta (only messages not yet included in CPD)
+  1. Tail Snapshot (conditioning) including the _latest native thinking_ (latest assistant step reasoning)
+  2. Existing CPD (if any)
+  3. Prefix Delta (only messages not yet included in CPD)
 
 Rebuild candidate prompt (`system + CPD + banner + Tail`) and re-check.
 

@@ -11,6 +11,7 @@ import { Identifier } from "@/id/id"
 import { createStore, produce } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
+import { usePromptQueue } from "./queue"
 import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
@@ -224,6 +225,28 @@ export function Prompt(props: PromptProps) {
 
   const history = usePromptHistory()
   const stash = usePromptStash()
+  const queue = usePromptQueue()
+
+  function statusCode(error: unknown) {
+    if (!error || typeof error !== "object") return
+
+    const direct = (error as { status?: unknown }).status
+    if (typeof direct === "number") return direct
+
+    const response = (error as { response?: unknown }).response
+    if (!response || typeof response !== "object") return
+    const nested = (response as { status?: unknown }).status
+    if (typeof nested === "number") return nested
+  }
+
+  function responseStatus(result: unknown) {
+    if (!result || typeof result !== "object") return
+    const response = (result as { response?: unknown }).response
+    if (!response || typeof response !== "object") return
+    const status = (response as { status?: unknown }).status
+    if (typeof status === "number") return status
+  }
+
   const command = useCommandDialog()
   const renderer = useRenderer()
   const dimensions = useTerminalDimensions()
@@ -845,7 +868,6 @@ export function Prompt(props: PromptProps) {
           sync.session.add(newSession)
           return newSession.id
         })()
-    const messageID = Identifier.ascending("message")
     let inputText = textWithExpandedPastes()
 
     // Filter out text parts (pasted content) since they're now expanded inline
@@ -859,44 +881,60 @@ export function Prompt(props: PromptProps) {
     const agentName = displayAgentName()
 
     if (store.mode === "shell") {
-      sdk.client.session
-        .shell({
-          sessionID,
-          agent: agentName,
-          model: {
-            providerID: selectedModel.providerID,
-            modelID: selectedModel.modelID,
+      void sdk.client.session
+        .shell(
+          {
+            sessionID,
+            agent: agentName,
+            model: {
+              providerID: selectedModel.providerID,
+              modelID: selectedModel.modelID,
+            },
+            command: inputText,
           },
-          command: inputText,
-        })
-        .catch((error) => {
-          const name = error instanceof Error ? error.name : undefined
+          {
+            throwOnError: false,
+          },
+        )
+        .then((result) => {
+          if (!result.error) return
+          const name = result.error instanceof Error ? result.error.name : undefined
           if (name === "AbortError") return
 
-          const status = (() => {
-            if (!error || typeof error !== "object") return
-
-            const direct = (error as { status?: unknown }).status
-            if (typeof direct === "number") return direct
-
-            const response = (error as { response?: unknown }).response
-            if (!response || typeof response !== "object") return
-            const nested = (response as { status?: unknown }).status
-            if (typeof nested === "number") return nested
-          })()
-
+          const status = responseStatus(result)
           if (status === 409) {
+            stash.push({
+              input: inputText,
+              parts: nonTextParts,
+            })
             toast.show({
               variant: "warning",
-              message: "Session is busy; wait or interrupt before running shell",
+              message: "Session is busy; shell command stashed",
               duration: 2500,
             })
             return
           }
 
+          stash.push({
+            input: inputText,
+            parts: nonTextParts,
+          })
           toast.show({
             variant: "error",
-            message: "Failed to run shell command",
+            message: "Failed to run shell command; stashed for later",
+            duration: 3500,
+          })
+        })
+        .catch((error) => {
+          const name = error instanceof Error ? error.name : undefined
+          if (name === "AbortError") return
+          stash.push({
+            input: inputText,
+            parts: nonTextParts,
+          })
+          toast.show({
+            variant: "error",
+            message: "Failed to run shell command; stashed for later",
             duration: 3500,
           })
         })
@@ -916,15 +954,61 @@ export function Prompt(props: PromptProps) {
       const restOfInput = firstLineEnd === -1 ? "" : inputText.slice(firstLineEnd + 1)
       const args = firstLineArgs.join(" ") + (restOfInput ? "\n" + restOfInput : "")
 
-      sdk.client.session.command({
-        sessionID,
-        command: command.slice(1),
-        arguments: args,
-        agent: agentName,
-        model: `${selectedModel.providerID}/${selectedModel.modelID}`,
-        messageID,
-        variant,
-      })
+      const messageID = Identifier.ascending("message")
+      void sdk.client.session
+        .command(
+          {
+            sessionID,
+            command: command.slice(1),
+            arguments: args,
+            agent: agentName,
+            model: `${selectedModel.providerID}/${selectedModel.modelID}`,
+            messageID,
+            variant,
+          },
+          {
+            throwOnError: false,
+          },
+        )
+        .then((result) => {
+          if (!result.error) return
+          const name = result.error instanceof Error ? result.error.name : undefined
+          if (name === "AbortError") return
+
+          stash.push({
+            input: inputText,
+            parts: nonTextParts,
+          })
+
+          const status = responseStatus(result)
+          if (status === 409) {
+            toast.show({
+              variant: "warning",
+              message: "Session is busy; command stashed",
+              duration: 2500,
+            })
+            return
+          }
+
+          toast.show({
+            variant: "error",
+            message: "Failed to run command; stashed for later",
+            duration: 3500,
+          })
+        })
+        .catch((error) => {
+          const name = error instanceof Error ? error.name : undefined
+          if (name === "AbortError") return
+          stash.push({
+            input: inputText,
+            parts: nonTextParts,
+          })
+          toast.show({
+            variant: "error",
+            message: "Failed to run command; stashed for later",
+            duration: 3500,
+          })
+        })
     } else if (
       inputText.startsWith("/") &&
       iife(() => {
@@ -936,54 +1020,81 @@ export function Prompt(props: PromptProps) {
       const slash = command.slashes().find((s) => s.display === name || s.aliases?.includes(name))
       slash?.onSelect()
     } else {
-      sdk.client.session
-        .prompt({
-          sessionID,
-          ...selectedModel,
-          messageID,
-          agent: agentName,
-          model: selectedModel,
-          variant,
-          parts: [
-            {
-              id: Identifier.ascending("part"),
-              type: "text",
-              text: inputText,
-            },
-            ...nonTextParts.map((x) => ({
-              id: Identifier.ascending("part"),
-              ...x,
-            })),
-          ],
+      const payload = {
+        sessionID,
+        agent: agentName,
+        model: {
+          providerID: selectedModel.providerID,
+          modelID: selectedModel.modelID,
+        },
+        variant,
+        text: inputText,
+        parts: nonTextParts,
+      }
+
+      const messageID = Identifier.ascending("message")
+      void sdk.client.session
+        .prompt(
+          {
+            sessionID,
+            messageID,
+            agent: agentName,
+            model: payload.model,
+            variant,
+            parts: [
+              {
+                id: Identifier.ascending("part"),
+                type: "text",
+                text: inputText,
+              },
+              ...nonTextParts.map((x) => ({
+                id: Identifier.ascending("part"),
+                ...x,
+              })),
+            ],
+          },
+          {
+            throwOnError: false,
+          },
+        )
+        .then((result) => {
+          if (!result.error) return
+          const name = result.error instanceof Error ? result.error.name : undefined
+          if (name === "AbortError") return
+
+          const status = responseStatus(result)
+          if (status === 409) {
+            queue.enqueue(payload)
+            return
+          }
+
+          stash.push({
+            input: inputText,
+            parts: nonTextParts,
+          })
+          toast.show({
+            variant: "error",
+            message: "Failed to send message; stashed for later",
+            duration: 3500,
+          })
         })
         .catch((error) => {
           const name = error instanceof Error ? error.name : undefined
           if (name === "AbortError") return
 
-          const status = (() => {
-            if (!error || typeof error !== "object") return
-
-            const direct = (error as { status?: unknown }).status
-            if (typeof direct === "number") return direct
-
-            const response = (error as { response?: unknown }).response
-            if (!response || typeof response !== "object") return
-            const nested = (response as { status?: unknown }).status
-            if (typeof nested === "number") return nested
-          })()
-
+          const status = statusCode(error)
           if (status === 409) {
-            toast.show({
-              variant: "warning",
-              message: "Session is busy; wait or interrupt before sending",
-              duration: 2500,
-            })
+            queue.enqueue(payload)
             return
           }
 
+          stash.push({
+            input: inputText,
+            parts: nonTextParts,
+          })
           toast.show({
             variant: "error",
-            message: "Failed to send message",
+            message: "Failed to send message; stashed for later",
             duration: 3500,
           })
         })

@@ -68,10 +68,10 @@ export function DialogContext(props: { sessionID: string }) {
                         Target: <span style={{ fg: theme.text }}>{estValue().target ?? "-"}</span>
                       </text>
                       <text fg={theme.textMuted}>
-                        Tokens:{" "}
-                        <span style={{ fg: theme.text }}>{estValue().total}</span>
+                        Tokens: <span style={{ fg: theme.text }}>{estValue().total}</span>
                         <span style={{ fg: theme.textMuted }}>
-                          {" "}(system {estValue().system}, messages {estValue().messages})
+                          {" "}
+                          (system {estValue().system}, messages {estValue().messages})
                         </span>
                       </text>
                       <Show when={estValue().budget !== null && estValue().budget !== undefined}>
@@ -97,8 +97,7 @@ export function DialogContext(props: { sessionID: string }) {
                         <span style={{ fg: theme.textMuted }}> at {formatAt(actionsValue().think.at)}</span>
                       </text>
                       <text fg={theme.textMuted}>
-                        RCTX:{" "}
-                        <span style={{ fg: theme.text }}>{formatAt(actionsValue().rctx.at)}</span>
+                        RCTX: <span style={{ fg: theme.text }}>{formatAt(actionsValue().rctx.at)}</span>
                       </text>
                     </box>
                   )}

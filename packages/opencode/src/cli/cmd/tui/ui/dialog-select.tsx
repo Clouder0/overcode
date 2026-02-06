@@ -75,7 +75,10 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   const filtered = createMemo(() => {
     if (props.skipFilter) return props.options.filter((x) => x.disabled !== true)
     const needle = store.filter.toLowerCase()
-    const options = pipe(props.options, filter((x) => x.disabled !== true))
+    const options = pipe(
+      props.options,
+      filter((x) => x.disabled !== true),
+    )
     if (!needle) return options
 
     // prioritize title matches (weight: 2) over category matches (weight: 1).

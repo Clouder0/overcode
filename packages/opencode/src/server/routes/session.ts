@@ -11,6 +11,7 @@ import { SessionRevert } from "../../session/revert"
 import { isAssistantAnswered, isTextRelevant, isUserRelevant } from "../../session/relevance"
 import { SessionCompaction } from "../../session/compaction"
 import { SystemPrompt } from "../../session/system"
+import { InstructionPrompt } from "@/session/instruction"
 import { SessionStatus } from "@/session/status"
 import { SessionMessage } from "../../session/message-routing"
 import { SessionSummary } from "@/session/summary"
@@ -449,16 +450,21 @@ export const SessionRoutes = lazy(() =>
           const slice = users.slice(startIndex, targetIndex + 1)
           const thread = slice.flatMap((m) => [m, ...(byParent.get(m.info.id) ?? [])])
 
+          const modelID = model.api?.id ?? model.id
+          const envKey = `${model.providerID}/${modelID}`
+
           const inputSystem = [
-            ...(await SessionPrompt.getCachedEnvironment(sessionID)),
-            ...(await SystemPrompt.custom()),
+            ...(await SessionPrompt.getCachedEnvironment(sessionID, {
+              key: envKey,
+              load: () => SystemPrompt.environment(model),
+            })),
             ...SystemPrompt.messageProtocol(session.sessionType, sessionID, session.parentID, session.subagentPrompt),
             ...(cpd ? [cpdBlock(cpd.text)] : []),
             integrity(session),
+            ...(await InstructionPrompt.system()),
           ]
 
-          const system = SystemPrompt.header(model.providerID)
-          system.push(
+          const system = [
             [
               ...(agent.prompt ? [agent.prompt] : SystemPrompt.provider(model)),
               ...inputSystem,
@@ -466,9 +472,9 @@ export const SessionRoutes = lazy(() =>
             ]
               .filter((x) => x)
               .join("\n"),
-          )
+          ]
 
-          const mm = MessageV2.toModelMessage(thread)
+          const mm = MessageV2.toModelMessages(thread, model)
           const systemTokens = estimateSystem(system)
           const messageTokens = estimateModel(mm)
 
@@ -1025,12 +1031,12 @@ export const SessionRoutes = lazy(() =>
           request.id = requestID
           entry.requestID = requestID
 
-           if (SessionCompaction.manual(sessionID)?.requestID !== requestID) {
-             entry.abort.abort()
-             return c.json(true)
-           }
+          if (SessionCompaction.manual(sessionID)?.requestID !== requestID) {
+            entry.abort.abort()
+            return c.json(true)
+          }
 
-           await SessionCompaction.mark({ sessionID, requestID, startedAt: started }).catch(() => {})
+          await SessionCompaction.mark({ sessionID, requestID, startedAt: started }).catch(() => {})
 
           const existing = await SessionCPD.get(sessionID)
           const startIndex = (() => {
@@ -1075,13 +1081,7 @@ export const SessionRoutes = lazy(() =>
                   const note = truncated ? `[Output truncated for CPD delta (${raw.length} chars total)]` : ""
                   const trimmed = p.state.time.compacted ? "[Tool output trimmed in continuation prompt]" : ""
                   const body = [excerpt, note, trimmed].filter((x) => x).join("\n")
-                  return [
-                    [
-                      `Tool ${p.tool}:`,
-                      `Input: ${JSON.stringify(p.state.input)}`,
-                      `Output:\n${body}`,
-                    ].join("\n"),
-                  ]
+                  return [[`Tool ${p.tool}:`, `Input: ${JSON.stringify(p.state.input)}`, `Output:\n${body}`].join("\n")]
                 })
               const blocks = [texts.join("\n"), files.join("\n"), msgs.join("\n\n"), tools.join("\n\n")].filter(
                 (x) => x,
@@ -1130,12 +1130,12 @@ export const SessionRoutes = lazy(() =>
             }
           })()
 
-           const updated = await SessionCPD.update({
-             sessionID,
-             model: {
-               providerID: body.providerID,
-               modelID: body.modelID,
-             },
+          const updated = await SessionCPD.update({
+            sessionID,
+            model: {
+              providerID: body.providerID,
+              modelID: body.modelID,
+            },
             user: {
               sessionID,
               id: requestID,
@@ -1153,30 +1153,30 @@ export const SessionRoutes = lazy(() =>
                 rctx: session.context?.rctx === true,
               },
             },
-             reasoning,
-             existing: existing?.text,
-             delta,
-             abort,
-           }).catch((error) => {
-             const name = typeof error === "object" && error ? (error as any).name : undefined
-             if (name === "AbortError") return
-             throw error
-           })
+            reasoning,
+            existing: existing?.text,
+            delta,
+            abort,
+          }).catch((error) => {
+            const name = typeof error === "object" && error ? (error as any).name : undefined
+            if (name === "AbortError") return
+            throw error
+          })
 
-           if (!updated) {
-             return c.json(true)
-           }
+          if (!updated) {
+            return c.json(true)
+          }
 
-           if (SessionCompaction.manual(sessionID)?.requestID !== requestID) {
-             entry.abort.abort()
-             return c.json(true)
-           }
+          if (SessionCompaction.manual(sessionID)?.requestID !== requestID) {
+            entry.abort.abort()
+            return c.json(true)
+          }
 
-           // Some providers may ignore abort and return normally. Once aborted,
-           // manual summarize must not write CPD/flags.
-           if (abort.aborted) {
-             return c.json(true)
-           }
+          // Some providers may ignore abort and return normally. Once aborted,
+          // manual summarize must not write CPD/flags.
+          if (abort.aborted) {
+            return c.json(true)
+          }
 
           await SessionCPD.set(sessionID, {
             text: updated.text,

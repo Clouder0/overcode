@@ -353,18 +353,18 @@ export namespace SessionCompaction {
             description: invalid.description,
             inputSchema: jsonSchema(z.toJSONSchema(invalid.parameters) as any),
             async execute(args, options) {
-                return invalid.execute(args as any, {
-                  sessionID: input.sessionID,
-                  abort: options.abortSignal!,
-                  messageID: msg.id,
-                  callID: options.toolCallId,
-                  extra: { model },
-                  agent: agent.name,
-                  messages: input.messages,
-                  metadata: () => {},
-                  ask: async (_req) => {},
-                })
-              },
+              return invalid.execute(args as any, {
+                sessionID: input.sessionID,
+                abort: options.abortSignal!,
+                messageID: msg.id,
+                callID: options.toolCallId,
+                extra: { model },
+                agent: agent.name,
+                messages: input.messages,
+                metadata: () => {},
+                ask: async (_req) => {},
+              })
+            },
             toModelOutput(result) {
               return {
                 type: "text",
