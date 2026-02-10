@@ -356,6 +356,17 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
   )
 
   const agents = createMemo(() => (props.parts?.filter((p) => p.type === "agent") as AgentPart[]) ?? [])
+  const messages = createMemo(
+    () =>
+      (props.parts?.filter((part) => part.type === "message") as Array<
+        PartType & {
+          type: "message"
+          text: string
+          direction: "incoming" | "outgoing"
+          peerType: "agent" | "system"
+        }
+      >) ?? [],
+  )
 
   const openImagePreview = (url: string, alt?: string) => {
     dialog.show(() => <ImagePreview src={url} alt={alt} />)
@@ -440,6 +451,21 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
               />
             </Tooltip>
           </div>
+        </div>
+      </Show>
+      <Show when={messages().length > 0}>
+        <div data-slot="user-message-inbox">
+          <For each={messages()}>
+            {(part) => (
+              <div
+                data-slot="user-message-inbox-item"
+                data-direction={part.direction}
+                data-peer-type={part.peerType}
+              >
+                {part.text}
+              </div>
+            )}
+          </For>
         </div>
       </Show>
     </div>

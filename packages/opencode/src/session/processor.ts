@@ -8,7 +8,6 @@ import { SessionSummary } from "./summary"
 import { Bus } from "@/bus"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
-import { SessionMessage } from "./message-routing"
 import { Plugin } from "@/plugin"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
@@ -33,7 +32,6 @@ export namespace SessionProcessor {
     abort: AbortSignal
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
-    const waits = new Map<string, number>()
     let snapshot: string | undefined
     let blocked = false
     let attempt = 0
@@ -49,9 +47,6 @@ export namespace SessionProcessor {
       },
       partFromToolCall(toolCallID: string) {
         return toolcalls[toolCallID]
-      },
-      waitSince(toolCallID: string) {
-        return waits.get(toolCallID)
       },
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
@@ -174,10 +169,8 @@ export namespace SessionProcessor {
             let currentText: MessageV2.TextPart | undefined
             const storeReasoning = streamInput.agent.name !== "compaction"
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            let stopStream = false
 
-            // Snapshot once per stream attempt so `since=0` waits can't lose messages
-            // that arrive while the model is still generating tool calls.
-            const baseline = SessionMessage.nowSeq()
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -264,15 +257,6 @@ export namespace SessionProcessor {
 
                   toolcalls[value.id] = part as MessageV2.ToolPart
 
-                  // Tool args can stream in over time. Capture a baseline cursor for `since=0`
-                  // waits before the tool runs, even if messages arrive mid-stream.
-                  if (value.toolName === "wait_agent_message") {
-                    const current = waits.get(value.id)
-                    if (current === undefined || baseline < current) {
-                      waits.set(value.id, baseline)
-                    }
-                  }
-
                   break
                 }
 
@@ -283,13 +267,6 @@ export namespace SessionProcessor {
                   break
 
                 case "tool-call": {
-                  if (value.toolName === "wait_agent_message") {
-                    const current = waits.get(value.toolCallId)
-                    if (current === undefined || baseline < current) {
-                      waits.set(value.toolCallId, baseline)
-                    }
-                  }
-
                   if (streamInput.tools[value.toolName]) {
                     retrySafe = false
                   }
@@ -356,6 +333,16 @@ export namespace SessionProcessor {
                         attachments: value.output.attachments,
                       },
                     })
+
+                    if (match.tool === "wait_agent_message") {
+                      const meta = value.output.metadata
+                      const base = meta && typeof meta === "object" ? (meta as Record<string, unknown>) : undefined
+                      const status = base && typeof base.status === "string" ? base.status : undefined
+                      if (status === "waiting") {
+                        input.assistantMessage.finish = "tool-calls"
+                        stopStream = true
+                      }
+                    }
 
                     delete toolcalls[value.toolCallId]
                   }
@@ -510,6 +497,7 @@ export namespace SessionProcessor {
                   })
                   continue
               }
+              if (stopStream) break
               if (needsCompaction) break
             }
           } catch (e: any) {

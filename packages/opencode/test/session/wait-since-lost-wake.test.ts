@@ -1,13 +1,20 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, mock, spyOn, test } from "bun:test"
 import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
+import { Provider } from "../../src/provider/provider"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionMessage } from "../../src/session/message-routing"
+import { SessionProcessor } from "../../src/session/processor"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
 import { WaitPolicy } from "../../src/session/wait-policy"
+import { Plugin } from "../../src/plugin"
 import { tmpdir } from "../fixture/fixture"
+
+afterEach(() => {
+  mock.restore()
+})
 
 function monoNow() {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -37,7 +44,7 @@ async function seed(root: string): Promise<Seeded> {
     sessionID: session.id,
     role: "user",
     time: { created: now },
-    agent: "test",
+    agent: "build",
     model: {
       providerID: "openai",
       modelID: "gpt-4",
@@ -63,8 +70,8 @@ async function seed(root: string): Promise<Seeded> {
     parentID: userMessageID,
     modelID: "gpt-4",
     providerID: "openai",
-    mode: "default",
-    agent: "test",
+    mode: "build",
+    agent: "build",
     path: {
       cwd: root,
       root,
@@ -119,8 +126,8 @@ async function seed(root: string): Promise<Seeded> {
     parentID: userMessageID,
     modelID: "gpt-4",
     providerID: "openai",
-    mode: "default",
-    agent: "test",
+    mode: "build",
+    agent: "build",
     path: {
       cwd: root,
       root,
@@ -162,7 +169,7 @@ test("wait resolves even if message arrived and pending was drained before wait 
         allow.add(seeded.sessionID)
 
         try {
-          const since = SessionMessage.nowSeq()
+          const since = SessionMessage.nowSeq(seeded.sessionID)
 
           await SessionMessage.deliver({
             from: seeded.sourceID,
@@ -225,7 +232,407 @@ test("wait resolves even if message arrived and pending was drained before wait 
           if (tool.state.status !== "completed") return
           expect(tool.state.metadata.status).toBe("resolved")
           expect(tool.state.metadata.respondedSources).toEqual([seeded.sourceID])
+          expect(tool.state.output).toContain("Wait resolved")
+          expect(tool.state.output).toContain("responded:")
         } finally {
+          WaitPolicy.clear(seeded.sessionID)
+          WaitPolicy.clear(seeded.sourceID)
+          await Session.remove(seeded.sourceID)
+          await Session.remove(seeded.sessionID)
+        }
+      },
+    })
+  } finally {
+    if (originalAllow === undefined) {
+      delete g.__OPENCODE_TEST_ALLOW_LOOP__
+    }
+    if (originalAllow !== undefined) {
+      g.__OPENCODE_TEST_ALLOW_LOOP__ = originalAllow
+    }
+  }
+})
+
+test("wait resume includes responded message content in immediate model context", async () => {
+  const g = globalThis as any
+  const originalAllow = g.__OPENCODE_TEST_ALLOW_LOOP__
+  const allow = new Set<string>()
+  g.__OPENCODE_TEST_ALLOW_LOOP__ = allow
+
+  try {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const seeded = await seed(tmp.path)
+        allow.add(seeded.sessionID)
+
+        const existing = await Session.messages({ sessionID: seeded.sessionID })
+        const sentinel = existing.find(
+          (msg) => msg.info.role === "assistant" && (msg.info as MessageV2.Assistant).finish === "stop",
+        )
+        if (sentinel) {
+          await Session.removeMessage({ sessionID: seeded.sessionID, messageID: sentinel.info.id })
+        }
+
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+
+        let captured = ""
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            waitSince() {
+              return 0
+            },
+            partFromToolCall() {
+              return undefined
+            },
+            async process(input: any) {
+              captured = JSON.stringify(input.messages)
+              args.assistantMessage.finish = "end_turn"
+              args.assistantMessage.time.completed = Date.now()
+              await Session.updatePart({
+                id: Identifier.ascending("part"),
+                sessionID: seeded.sessionID,
+                messageID: args.assistantMessage.id,
+                type: "text",
+                text: "ok",
+              })
+              await Session.updateMessage(args.assistantMessage)
+              return "stop" as const
+            },
+          } as any
+        })
+
+        try {
+          const since = SessionMessage.nowSeq(seeded.sessionID)
+          const policy = WaitPolicy.register({
+            sessionID: seeded.sessionID,
+            messageID: seeded.waitMessageID,
+            callID: seeded.callID,
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+          })
+
+          SessionStatus.set(seeded.sessionID, {
+            type: "waiting",
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+            time: policy.time,
+          })
+
+          await SessionMessage.deliver({
+            from: seeded.sourceID,
+            to: seeded.sessionID,
+            text: "reply data",
+          })
+
+          await SessionPrompt.loop(seeded.sessionID)
+
+          for (let i = 0; i < 400; i++) {
+            if (captured.length > 0) break
+            await Bun.sleep(10)
+          }
+
+          expect(captured).toContain("reply data")
+          expect(captured).toContain(seeded.sourceID)
+        } finally {
+          providerSpy.mockRestore()
+          processorSpy.mockRestore()
+          WaitPolicy.clear(seeded.sessionID)
+          WaitPolicy.clear(seeded.sourceID)
+          await Session.remove(seeded.sourceID)
+          await Session.remove(seeded.sessionID)
+        }
+      },
+    })
+  } finally {
+    if (originalAllow === undefined) {
+      delete g.__OPENCODE_TEST_ALLOW_LOOP__
+    }
+    if (originalAllow !== undefined) {
+      g.__OPENCODE_TEST_ALLOW_LOOP__ = originalAllow
+    }
+  }
+})
+
+test("wait resume consumes queued inbound replies as one scheduling turn", async () => {
+  const g = globalThis as any
+  const originalAllow = g.__OPENCODE_TEST_ALLOW_LOOP__
+  const allow = new Set<string>()
+  g.__OPENCODE_TEST_ALLOW_LOOP__ = allow
+
+  try {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const seeded = await seed(tmp.path)
+        allow.add(seeded.sessionID)
+
+        const existing = await Session.messages({ sessionID: seeded.sessionID })
+        const sentinel = existing.find(
+          (msg) => msg.info.role === "assistant" && (msg.info as MessageV2.Assistant).finish === "stop",
+        )
+        if (sentinel) {
+          await Session.removeMessage({ sessionID: seeded.sessionID, messageID: sentinel.info.id })
+        }
+
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+
+        const parents: string[] = []
+        const payloads: string[] = []
+        const triggerSpy = spyOn(Plugin, "trigger").mockImplementation(async (name, _input, output) => {
+          if (name === "experimental.chat.messages.transform") {
+            const val = output as { messages?: unknown }
+            if (Array.isArray(val.messages)) {
+              val.messages.reverse()
+            }
+          }
+          return output
+        })
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            waitSince() {
+              return 0
+            },
+            partFromToolCall() {
+              return undefined
+            },
+            async process(input: any) {
+              parents.push(args.assistantMessage.parentID)
+              payloads.push(JSON.stringify(input.messages))
+
+              args.assistantMessage.finish = "end_turn"
+              args.assistantMessage.time.completed = Date.now()
+              await Session.updatePart({
+                id: Identifier.ascending("part"),
+                sessionID: seeded.sessionID,
+                messageID: args.assistantMessage.id,
+                type: "text",
+                text: "ok",
+              })
+              await Session.updateMessage(args.assistantMessage)
+              return "continue" as const
+            },
+          } as any
+        })
+
+        try {
+          const since = SessionMessage.nowSeq(seeded.sessionID)
+          const policy = WaitPolicy.register({
+            sessionID: seeded.sessionID,
+            messageID: seeded.waitMessageID,
+            callID: seeded.callID,
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+          })
+
+          SessionStatus.set(seeded.sessionID, {
+            type: "waiting",
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+            time: policy.time,
+          })
+
+          const first = await SessionMessage.deliver({
+            from: seeded.sourceID,
+            to: seeded.sessionID,
+            text: "reply one",
+          })
+
+          const second = await SessionMessage.deliver({
+            from: seeded.sourceID,
+            to: seeded.sessionID,
+            text: "reply two",
+          })
+
+          await SessionPrompt.loop(seeded.sessionID)
+
+          expect(parents.length).toBe(1)
+          expect(payloads[0] ?? "").toContain("reply one")
+          expect(payloads[0] ?? "").toContain("reply two")
+          const one = (payloads[0] ?? "").indexOf("reply one")
+          const two = (payloads[0] ?? "").indexOf("reply two")
+          expect(one).toBeGreaterThan(-1)
+          expect(two).toBeGreaterThan(-1)
+          expect(one < two).toBe(true)
+
+          const firstParts = await MessageV2.parts(first.id)
+          const firstMsg = firstParts.find((part): part is MessageV2.MessagePart => part.type === "message")
+          expect((firstMsg?.metadata as any)?.opencode?.consumed).toBe(true)
+
+          const secondParts = await MessageV2.parts(second.id)
+          const secondMsg = secondParts.find((part): part is MessageV2.MessagePart => part.type === "message")
+          expect((secondMsg?.metadata as any)?.opencode?.consumed).toBe(true)
+        } finally {
+          providerSpy.mockRestore()
+          processorSpy.mockRestore()
+          triggerSpy.mockRestore()
+          WaitPolicy.clear(seeded.sessionID)
+          WaitPolicy.clear(seeded.sourceID)
+          await Session.remove(seeded.sourceID)
+          await Session.remove(seeded.sessionID)
+        }
+      },
+    })
+  } finally {
+    if (originalAllow === undefined) {
+      delete g.__OPENCODE_TEST_ALLOW_LOOP__
+    }
+    if (originalAllow !== undefined) {
+      g.__OPENCODE_TEST_ALLOW_LOOP__ = originalAllow
+    }
+  }
+})
+
+test("wait resume consumes replies after non-terminal tool-calls turn", async () => {
+  const g = globalThis as any
+  const originalAllow = g.__OPENCODE_TEST_ALLOW_LOOP__
+  const allow = new Set<string>()
+  g.__OPENCODE_TEST_ALLOW_LOOP__ = allow
+
+  try {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const seeded = await seed(tmp.path)
+        allow.add(seeded.sessionID)
+
+        const existing = await Session.messages({ sessionID: seeded.sessionID })
+        const sentinel = existing.find(
+          (msg) => msg.info.role === "assistant" && (msg.info as MessageV2.Assistant).finish === "stop",
+        )
+        if (sentinel) {
+          await Session.removeMessage({ sessionID: seeded.sessionID, messageID: sentinel.info.id })
+        }
+
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+
+        const payloads: string[] = []
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            waitSince() {
+              return 0
+            },
+            partFromToolCall() {
+              return undefined
+            },
+            async process(input: any) {
+              payloads.push(JSON.stringify(input.messages))
+
+              const now = Date.now()
+              await Session.updatePart({
+                id: Identifier.ascending("part"),
+                sessionID: seeded.sessionID,
+                messageID: args.assistantMessage.id,
+                type: "tool",
+                callID: "call_nonterminal",
+                tool: "send_agent_message",
+                state: {
+                  status: "completed",
+                  input: {
+                    to: seeded.sourceID,
+                    text: "ack",
+                  },
+                  output: "ack sent",
+                  title: "sent",
+                  metadata: {},
+                  time: {
+                    start: now,
+                    end: now,
+                  },
+                },
+              })
+
+              args.assistantMessage.finish = "tool-calls"
+              args.assistantMessage.time.completed = now
+              await Session.updateMessage(args.assistantMessage)
+              return "stop" as const
+            },
+          } as any
+        })
+
+        try {
+          const since = SessionMessage.nowSeq(seeded.sessionID)
+          const policy = WaitPolicy.register({
+            sessionID: seeded.sessionID,
+            messageID: seeded.waitMessageID,
+            callID: seeded.callID,
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+          })
+
+          SessionStatus.set(seeded.sessionID, {
+            type: "waiting",
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+            time: policy.time,
+          })
+
+          const reply = await SessionMessage.deliver({
+            from: seeded.sourceID,
+            to: seeded.sessionID,
+            text: "stop now",
+          })
+
+          await SessionPrompt.loop(seeded.sessionID)
+
+          expect(payloads[0] ?? "").toContain("stop now")
+
+          const parts = await MessageV2.parts(reply.id)
+          const msg = parts.find((part): part is MessageV2.MessagePart => part.type === "message")
+          expect((msg?.metadata as any)?.opencode?.consumed).toBe(true)
+        } finally {
+          providerSpy.mockRestore()
+          processorSpy.mockRestore()
           WaitPolicy.clear(seeded.sessionID)
           WaitPolicy.clear(seeded.sourceID)
           await Session.remove(seeded.sourceID)

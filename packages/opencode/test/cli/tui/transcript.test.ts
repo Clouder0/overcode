@@ -26,6 +26,42 @@ describe("tui.transcript formatting", () => {
       expect(result).toContain("Command failed")
     })
 
+    test("formats wait tool fallback output when completed output is empty", () => {
+      const part: Part = {
+        id: "part_wait",
+        sessionID: "ses_123",
+        messageID: "msg_123",
+        type: "tool",
+        callID: "call_wait",
+        tool: "wait_agent_message",
+        state: {
+          status: "completed",
+          input: {
+            sources: ["ses_child"],
+            timeout: 1000,
+            mode: "all",
+            since: 12,
+          },
+          output: "",
+          title: "Wait resolved",
+          metadata: {
+            status: "resolved",
+            since: 12,
+            respondedSources: ["ses_child"],
+            timedOutSources: [],
+          },
+          time: { start: 1000, end: 1100 },
+        },
+      }
+
+      const result = formatPart(part, options)
+      expect(result).toContain("**Output:**")
+      expect(result).toContain("Wait resolved")
+      expect(result).toContain("status: resolved")
+      expect(result).toContain("since: 12")
+      expect(result).toContain("responded: ses_child")
+    })
+
     test("formats message part", () => {
       const part: Part = {
         id: "part_1",

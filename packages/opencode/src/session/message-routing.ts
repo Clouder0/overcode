@@ -10,10 +10,12 @@ export namespace SessionMessage {
 
   // Callback invoked when a message is delivered.
   // Set by prompt.ts to avoid circular dependency.
-  let wakeSessionFn: ((message: Message) => void) | undefined
+  let wakeSessionFn: ((message: Message) => void | Promise<void>) | undefined
 
-  export function setWakeSessionFn(fn: (message: Message) => void) {
+  export function setWakeSessionFn(fn: ((message: Message) => void | Promise<void>) | undefined) {
+    const prev = wakeSessionFn
     wakeSessionFn = fn
+    return prev
   }
 
   export const Message = z.object({
@@ -34,6 +36,15 @@ export namespace SessionMessage {
         message: Message,
       }),
     ),
+    Overflow: BusEvent.define(
+      "session.message.overflow",
+      z.object({
+        to: z.string(),
+        droppedCount: z.number().int().positive(),
+        droppedIDs: z.array(z.string()),
+        maxPending: z.number().int().positive(),
+      }),
+    ),
   }
 
   const MAX_PENDING_PER_SESSION = 200
@@ -44,12 +55,8 @@ export namespace SessionMessage {
   )
 
   const seqState = Instance.state(
-    () => {
-      return {
-        value: 0,
-      }
-    },
-    async () => {},
+    () => new Map<string, number>(),
+    async (map) => map.clear(),
   )
 
   const inboxState = Instance.state(
@@ -57,20 +64,28 @@ export namespace SessionMessage {
     async (map) => map.clear(),
   )
 
-  export function nowSeq() {
-    return seqState().value
+  const durableState = Instance.state(
+    () => new Map<string, Map<string, number>>(),
+    async (map) => map.clear(),
+  )
+
+  function sessionID(value: string) {
+    return Identifier.schema("session").safeParse(value).success
   }
 
-  export function nextSeq() {
-    const next = nowSeq() + 1
-    seqState().value = next
+  export function nowSeq(sessionID: string) {
+    return seqState().get(sessionID) ?? 0
+  }
+
+  export function nextSeq(sessionID: string) {
+    const next = nowSeq(sessionID) + 1
+    seqState().set(sessionID, next)
     return next
   }
 
-  export function resolveSince(input: number) {
-    if (input === 0) return nowSeq()
-    if (input < 0) return 0
-    return input
+  // Reserve a non-zero checkpoint in the caller session's seq space.
+  export function checkpoint(sessionID: string) {
+    return nextSeq(sessionID)
   }
 
   export function lastSeq(to: string, from: string) {
@@ -95,6 +110,7 @@ export namespace SessionMessage {
 
       const result = new Set<string>()
       for (const [from, seq] of froms.entries()) {
+        if (!sessionID(from)) continue
         if (seq > input.since) {
           result.add(from)
         }
@@ -111,15 +127,78 @@ export namespace SessionMessage {
     return result
   }
 
+  function durableSeq(to: string, from: string) {
+    return durableState().get(to)?.get(from) ?? 0
+  }
+
+  function pendingAfter(to: string, from: string, since: number) {
+    const queue = pendingState().get(to)
+    if (!queue) return false
+    for (const msg of queue) {
+      if (msg.from !== from) continue
+      if (msg.messageType === "notice") continue
+      if (msg.seq > since) return true
+    }
+    return false
+  }
+
+  export function respondedRecoverable(input: { to: string; sources: string[]; since: number }) {
+    const wildcard = input.sources.length === 1 && input.sources[0] === "*"
+
+    if (wildcard) {
+      const result = new Set<string>()
+
+      const durable = durableState().get(input.to)
+      if (durable) {
+        for (const [from, seq] of durable.entries()) {
+          if (!sessionID(from)) continue
+          if (seq > input.since) result.add(from)
+        }
+      }
+
+      const queue = pendingState().get(input.to)
+      if (!queue) return result
+
+      for (const msg of queue) {
+        if (!sessionID(msg.from)) continue
+        if (msg.messageType === "notice") continue
+        if (msg.seq <= input.since) continue
+        result.add(msg.from)
+      }
+
+      return result
+    }
+
+    const result = new Set<string>()
+    for (const from of input.sources) {
+      if (durableSeq(input.to, from) > input.since || pendingAfter(input.to, from, input.since)) {
+        result.add(from)
+      }
+    }
+    return result
+  }
+
+  export function markDurable(message: Message) {
+    if (message.messageType === "notice") return
+    const durable = durableState()
+    const byFrom = durable.get(message.to) ?? new Map<string, number>()
+    const prev = byFrom.get(message.from) ?? 0
+    if (message.seq > prev) {
+      byFrom.set(message.from, message.seq)
+    }
+    durable.set(message.to, byFrom)
+  }
+
   export async function deliver(input: {
     from: string
     to: string
     text: string
     messageType?: "normal" | "timeout" | "error" | "wait_result" | "notice"
+    awaitWake?: boolean
   }): Promise<Message> {
     const message: Message = {
       id: Identifier.ascending("message"),
-      seq: nextSeq(),
+      seq: nextSeq(input.to),
       from: input.from,
       to: input.to,
       text: input.text,
@@ -145,14 +224,35 @@ export namespace SessionMessage {
     queue.push(message)
 
     if (queue.length > MAX_PENDING_PER_SESSION) {
-      queue.splice(0, queue.length - MAX_PENDING_PER_SESSION)
+      const dropped = queue.splice(0, queue.length - MAX_PENDING_PER_SESSION)
+      log.warn("pending queue overflow", {
+        to: message.to,
+        droppedCount: dropped.length,
+        maxPending: MAX_PENDING_PER_SESSION,
+      })
+      Bus.publish(Event.Overflow, {
+        to: message.to,
+        droppedCount: dropped.length,
+        droppedIDs: dropped.map((item) => item.id),
+        maxPending: MAX_PENDING_PER_SESSION,
+      })
     }
 
     pending.set(message.to, queue)
 
     // Wake up dormant session to process the message
     if (wakeSessionFn) {
-      wakeSessionFn(message)
+      const wake = wakeSessionFn(message)
+      if (input.awaitWake === true) {
+        await wake
+      } else {
+        Promise.resolve(wake).catch((error) => {
+          log.error("failed to run wake callback", {
+            to: message.to,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+      }
     }
 
     Bus.publish(Event.Delivered, { message })
@@ -205,5 +305,21 @@ export namespace SessionMessage {
 
   export function clear(sessionID: string): void {
     pendingState().delete(sessionID)
+
+    const inbox = inboxState()
+    inbox.delete(sessionID)
+
+    for (const byFrom of inbox.values()) {
+      byFrom.delete(sessionID)
+    }
+
+    const durable = durableState()
+    durable.delete(sessionID)
+
+    seqState().delete(sessionID)
+
+    for (const byFrom of durable.values()) {
+      byFrom.delete(sessionID)
+    }
   }
 }

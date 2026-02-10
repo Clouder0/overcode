@@ -8,11 +8,13 @@ import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
 import { SessionCPD } from "../../session/cpd"
 import { SessionRevert } from "../../session/revert"
-import { isAssistantAnswered, isTextRelevant, isUserRelevant } from "../../session/relevance"
+import { isTextRelevant, isUserRelevant } from "../../session/relevance"
+import { coveredUsers, isAnswered } from "../../session/queue-batch"
 import { SessionCompaction } from "../../session/compaction"
 import { SystemPrompt } from "../../session/system"
 import { InstructionPrompt } from "@/session/instruction"
 import { SessionStatus } from "@/session/status"
+import { SessionStatusResolver } from "@/session/status-resolver"
 import { SessionMessage } from "../../session/message-routing"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "../../session/todo"
@@ -26,6 +28,8 @@ import type { ModelMessage } from "ai"
 import { Provider } from "@/provider/provider"
 import { Token } from "@/util/token"
 import { iife } from "@/util/iife"
+import { Instance } from "@/project/instance"
+import { InstanceBootstrap } from "@/project/bootstrap"
 
 const log = Log.create({ service: "server" })
 
@@ -237,7 +241,7 @@ export const SessionRoutes = lazy(() =>
         },
       }),
       async (c) => {
-        const result = SessionStatus.list()
+        const result = await SessionStatusResolver.all()
         return c.json(result)
       },
     )
@@ -402,6 +406,7 @@ export const SessionRoutes = lazy(() =>
         }
 
         const users = history.filter(isUserRelevant)
+        const covered = new Set(history.flatMap(coveredUsers))
         const byParent = new Map<string, MessageV2.WithParts[]>()
         for (const msg of history) {
           if (msg.info.role !== "assistant") continue
@@ -412,13 +417,14 @@ export const SessionRoutes = lazy(() =>
           if (!existing) byParent.set(info.parentID, [msg])
         }
 
-        const targetUser = users.find((m) => {
-          const replies = byParent.get(m.info.id) ?? []
-          return !replies.some((reply) => {
-            if (reply.info.role !== "assistant") return false
-            return isAssistantAnswered(reply.info as MessageV2.Assistant)
-          })
-        })
+        const targetUser = users.find(
+          (msg) =>
+            isAnswered({
+              userID: msg.info.id,
+              replies: byParent.get(msg.info.id) ?? [],
+              covered,
+            }) === false,
+        )
 
         const estimate = await iife(async () => {
           if (!targetUser) {
@@ -782,41 +788,50 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const force = c.req.valid("query").force
 
-        if (force) {
-          // Force-clear manual summarize state (used for wedged compactions).
-          SessionCompaction.abortManual(sessionID)
-          SessionCompaction.forceEndManual(sessionID)
-          await SessionCompaction.clearAnyMarker(sessionID)
-          await Session.update(sessionID, (draft) => {
-            draft.time.compacting = undefined
-          }).catch(() => {})
-          SessionPrompt.cancel(sessionID)
-          return c.json(true)
-        }
+        // SessionStatus/WaitPolicy are Instance-scoped (directory-scoped). Always evaluate
+        // and cancel in the session's owning directory so we don't mis-detect waiting/busy.
+        const session = await Session.get(sessionID)
+        return Instance.provide({
+          directory: session.directory,
+          init: InstanceBootstrap,
+          fn: async () => {
+            if (force) {
+              // Force-clear manual summarize state (used for wedged compactions).
+              SessionCompaction.abortManual(sessionID)
+              SessionCompaction.forceEndManual(sessionID)
+              await SessionCompaction.clearAnyMarker(sessionID)
+              await Session.update(sessionID, (draft) => {
+                draft.time.compacting = undefined
+              }).catch(() => {})
+              SessionPrompt.cancel(sessionID)
+              return c.json(true)
+            }
 
-        const status = SessionStatus.get(sessionID)
-        if (status.type === "waiting") {
-          SessionPrompt.cancel(sessionID)
-          SessionCompaction.abortManual(sessionID)
-          // Manual summarize is still in-flight (even if aborted); keep the session busy
-          // until the summarize endpoint unwinds and clears its own busy state.
-          if (SessionCompaction.manual(sessionID)) SessionStatus.set(sessionID, { type: "busy" })
-          return c.json(true)
-        }
+            const status = SessionStatus.get(sessionID)
+            if (status.type === "waiting") {
+              await SessionPrompt.cancelWait(sessionID)
+              SessionCompaction.abortManual(sessionID)
+              // Manual summarize is still in-flight (even if aborted); keep the session busy
+              // until the summarize endpoint unwinds and clears its own busy state.
+              if (SessionCompaction.manual(sessionID)) SessionStatus.set(sessionID, { type: "busy" })
+              return c.json(true)
+            }
 
-        if (status.type === "retry") {
-          SessionPrompt.cancel(sessionID)
-          SessionCompaction.abortManual(sessionID)
-          if (SessionCompaction.manual(sessionID)) SessionStatus.set(sessionID, { type: "busy" })
-          return c.json(true)
-        }
+            if (status.type === "retry") {
+              SessionPrompt.cancel(sessionID)
+              SessionCompaction.abortManual(sessionID)
+              if (SessionCompaction.manual(sessionID)) SessionStatus.set(sessionID, { type: "busy" })
+              return c.json(true)
+            }
 
-        // Avoid clearing SessionStatus to idle when there is no prompt loop state.
-        // This prevents reopening the session while manual compaction is still in-flight.
-        SessionCompaction.abortManual(sessionID)
-        SessionPrompt.cancel(sessionID, { force: false })
-        if (SessionCompaction.manual(sessionID)) SessionStatus.set(sessionID, { type: "busy" })
-        return c.json(true)
+            // Avoid clearing SessionStatus to idle when there is no prompt loop state.
+            // This prevents reopening the session while manual compaction is still in-flight.
+            SessionCompaction.abortManual(sessionID)
+            SessionPrompt.cancel(sessionID, { force: false })
+            if (SessionCompaction.manual(sessionID)) SessionStatus.set(sessionID, { type: "busy" })
+            return c.json(true)
+          },
+        })
       },
     )
     .post(
@@ -1005,14 +1020,15 @@ export const SessionRoutes = lazy(() =>
           }
 
           const users = msgs.filter(isUserRelevant)
-          const target = users.find((msg) => {
-            const user = msg.info as MessageV2.User
-            const replies = byParent.get(user.id) ?? []
-            return !replies.some((m) => {
-              if (m.info.role !== "assistant") return false
-              return isAssistantAnswered(m.info as MessageV2.Assistant)
-            })
-          })
+          const covered = new Set(msgs.flatMap(coveredUsers))
+          const target = users.find(
+            (msg) =>
+              isAnswered({
+                userID: msg.info.id,
+                replies: byParent.get(msg.info.id) ?? [],
+                covered,
+              }) === false,
+          )
 
           const uptoUser = (() => {
             if (target) {

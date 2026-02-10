@@ -946,6 +946,16 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     setStore("popover", null)
   }
 
+  // Avoid abort/prompt races: if the user aborts and immediately submits, ensure the abort
+  // request finishes before starting a fresh prompt.
+  const [aborting, setAborting] = createSignal<
+    | {
+        sessionID: string
+        promise: Promise<void>
+      }
+    | undefined
+  >(undefined)
+
   const abort = async () => {
     const sessionID = params.id
     if (!sessionID) return Promise.resolve()
@@ -956,11 +966,21 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       pending.delete(sessionID)
       return Promise.resolve()
     }
-    return sdk.client.session
+
+    const promise = sdk.client.session
       .abort({
         sessionID,
       })
-      .catch(() => {})
+      .then(() => undefined)
+      .catch(() => undefined)
+    setAborting({ sessionID, promise })
+    void promise.finally(() => {
+      const current = aborting()
+      if (!current) return
+      if (current.promise !== promise) return
+      setAborting(undefined)
+    })
+    return promise
   }
 
   const addToHistory = (prompt: Prompt, mode: "normal" | "shell") => {
@@ -1257,6 +1277,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       if (session) navigate(`/${base64Encode(sessionDirectory)}/session/${session.id}`)
     }
     if (!session) return
+
+    const inflightAbort = aborting()
+    if (inflightAbort && inflightAbort.sessionID === session.id) {
+      await inflightAbort.promise
+    }
 
     props.onSubmit?.()
 

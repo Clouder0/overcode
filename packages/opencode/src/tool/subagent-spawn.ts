@@ -88,7 +88,7 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         .describe("Agents to spawn with their task prompts"),
     }),
     async execute(params: { agents: Array<{ agent: string; prompt: string }> }, ctx) {
-      const seq = SessionMessage.nowSeq()
+      const seq = SessionMessage.checkpoint(ctx.sessionID)
       const spawned: Array<{ session_id: string; agent: string }> = []
 
       const caller = await Agent.get(ctx.agent).catch(() => undefined)
@@ -272,7 +272,11 @@ export const SubagentSpawnTool = Tool.define("subagent_spawn", async (init) => {
         })
       }
 
-      const lines = [`Spawned ${spawned.length} agent(s):`, ...spawned.map((s) => `- ${s.session_id} (${s.agent})`)]
+      const lines = [
+        `Spawned ${spawned.length} agent(s):`,
+        `checkpoint_seq: ${seq}`,
+        ...spawned.map((s) => `- ${s.session_id} (${s.agent})`),
+      ]
       return {
         title: `Spawned ${spawned.length} agent(s)`,
         metadata: {

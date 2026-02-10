@@ -202,7 +202,7 @@ await wait_agent_message({
   sources: ["ses_specialist_id"],
   timeout: 300000, // 5 minutes
   mode: "all",
-  since: 0, // -1 = from session start, 0 = from now, N = seq checkpoint
+  since: checkpointSeq, // from send_agent_message seq or subagent_spawn metadata.seq
 })
 ```
 

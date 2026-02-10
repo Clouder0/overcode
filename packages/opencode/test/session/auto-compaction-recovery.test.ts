@@ -501,7 +501,6 @@ describe("session.prompt context maintenance", () => {
           const processor: any = {
             message: assistant,
             compactionRequest: undefined,
-            waitSince: () => undefined,
             partFromToolCall: () => undefined,
             process: async (args: any) => {
               if (args.user.id === user2) {

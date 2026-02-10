@@ -84,7 +84,12 @@ Asynchronous delivery (agents may be slow):
 - Sending a message is not the same as receiving a reply. The recipient agent may be busy, waiting on tools, or slow to respond.
 - If the recipient is idle, a message usually wakes them. If they are working, your message can be queued until they finish their current step.
 - Do not treat a lack of immediate reply as failure. Replies may arrive after you time out.
-- Use wait_agent_message to wait with a timeout guard. A timeout is not an error; it is a safety guard that wakes you with the source's status so you can decide what to do next.
+- Sending does not require immediate waiting.
+- If independent work remains, continue now.
+- Before ending your turn, run a reply check.
+- If a requested follow-up reply still matters and no independent work remains, call wait_agent_message.
+- If no requested follow-up reply still matters, continue or end your turn without waiting.
+- When you do wait, use wait_agent_message with a timeout guard. A timeout is not an error; it is a safety guard that wakes you with the source's status so you can decide what to do next.
 - If you time out and still need a reply:
   - If status is working/waiting/retry: wait again (consider a longer timeout).
   - If status is idle: send a follow-up message asking for status or confirming they saw your request.
@@ -100,49 +105,83 @@ Common failure mode:
 
 When you receive a message, it appears as:
 \`\`\`
-Sender Agent with session id ses_xxx sent a message:
+Sender Agent with session id ses_xxx (seq: 42) sent a message:
 <content>
 ...
 </content>
 \`\`\`
+The "(seq: 42)" segment may be absent for some messages.
 
 To reply, use send_agent_message with the sender's session ID.
 
 ### Waiting and the Timeout Guard
 
-wait_agent_message sets a timeout guard for incoming messages. Your session enters a waiting state until either:
+wait_agent_message is a blocking control-flow tool.
+
+Use it at synchronization points:
+- You expect incoming agent message(s), and
+- those message(s) are needed for your next action OR you intentionally want timeout/status visibility while pausing.
+
+If independent work remains, continue first and wait later at a synchronization point.
+Choosing not to wait now does not mean "never wait" - you can wait later with the same checkpoint.
+If no follow-up reply is required, continue or end your turn without waiting.
+
+When called, wait_agent_message sets a timeout guard until either:
 - The expected message arrives → you wake with the message in context
 - Timeout expires → you wake with a timeout message showing the source's status
-
-This ensures you don't wait indefinitely - you'll wake with the message or with timeout status. Without wait, incoming messages wake you when they arrive, but if no message comes, you remain idle with no way to know.
 
 After calling wait_agent_message, stop generating. Your session is waiting and will resume when the condition is met.
 
 **Wait modes**:
-- mode="all": Wait until all sources respond
-- mode="any": Wait until any source responds
+- mode="all": Wait until all listed sources respond
+- mode="any": Wait until any listed source responds
+- For a single explicit source (\`sources=["ses_..."]\`), use mode="all".
+- Reserve mode="any" for wildcard waits (\`sources=["*"]\`) or intentional multi-source race waits where any one reply unblocks you.
+- Do not use \`sources=["*"]\` as a default follow-up to send_agent_message.
 
-**seq / since**:
-- Some incoming agent messages may show a seq number.
-- since is a cursor: the wait counts messages with seq > since.
-- since=-1 means session start (counts any earlier messages).
-- since=0 means current position: only incoming messages after this wait tool call would count. Usually you will wait on a previous checkpoint (for example, after subagent_spawn or send_agent_message).
+**seq / since (default policy)**:
+- Incoming agent messages may include a seq number in the header (for example: "(seq: 42)").
+- since is an exclusive cursor: waits match messages with seq > since.
+- Current model-context snapshot can lag newly persisted inbound replies; use seq comparisons for wait cursors, not transcript render position.
+- Default decision order:
+  1) If send_agent_message returns a checkpoint seq, use that exact seq as since.
+  2) If subagent_spawn returns a checkpoint seq, use that exact value as since.
+  3) Use since=-1 only for intentional backlog catch-up from session start.
+- A checkpoint seq remains valid for later waits in the same workflow; you can continue now and wait later with that same checkpoint.
+- Avoid repeatedly using since=-1: it can match old messages immediately and skip blocking.
+- For repeated waits, advance since to the latest seq you already observed.
+- If the latest observed seq is 3, set since=3 (not 4).
 - sources=["*"] means any agent; "*" is not a session id.
 The major reason for introducing seq/since is to handle spurious messages that arrive while you are working. 
 By setting since to the last known checkpoint, you ensure you can consider all messages that arrive after that point into wait condition.
 
 <example>
 Good: subagent_spawn(seq=1), agent message comes in(seq=2), wait_agent_message(since=1) → counts the agent message.
-Bad: subagent_spawn(seq=1), agent message comes in(seq=2), wait_agent_message(since=0) -> since=0 means current position(seq=3), fails to count the agent message (it arrived before the wait).
+
+Good:
+A: send_agent_message(to="ses_B", text="Final report delivered.")
+A: no follow-up reply is required
+A: continue or end your turn without wait_agent_message.
+
+Good:
+A: send_agent_message(to="ses_B", text="Please confirm checksum.") (seq=12)
+A: independent work remains
+A: continue work now
+A: later at synchronization point, call wait_agent_message(sources=["ses_B"], mode="all", since=12).
+
+Good:
+A: send_agent_message(to="ses_B", text="Need approval to proceed.") (seq=20)
+A: next step is blocked without approval
+A: call wait_agent_message(sources=["ses_B"], mode="all", since=20) now.
+
+Bad:
+A: send_agent_message(to="ses_B", text="Status update complete.")
+A: wait_agent_message(sources=["*"], mode="any", since=-1)  // default wait with no explicit follow-up dependency
 
 Good:
 A: send_agent_message(to="ses_B", text="Please analyze the data.") (seq=2)
 A: received agent message from ses_B (seq=3)
 A: wait_agent_message(sources=["ses_B"], since=2) → counts the message from ses_B.
-Bad:
-A: send_agent_message(to="ses_B", text="Please analyze the data.") (seq=2)
-A: received agent message from ses_B (seq=3)
-A: wait_agent_message(sources=["ses_B"], since=0) → since=0 means current position(seq=3), fails to count the message from ses_B.
 Bad:
 A: send_agent_message(to="ses_B", text="Please analyze the data.") (seq=2)
 A: received agent message from ses_B (seq=3)
@@ -166,16 +205,10 @@ A: wait_agent_message(sources=["ses_A"], since=1) -> since=1 would be met by the
 Good:
 A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for parent to send you agent B's session id."
 A: wait_agent_message(sources=["ses_p"], since=-1) → counts messages from parent session.
-Bad:
-A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for parent to send you agent B's session id."
-A: wait_agent_message(sources=["ses_p"], since=0) → since=0 means current position, fails to count messages from parent session that arrived before the wait.
 
 Good:
 A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for agent B to handshake with you."
 A: wait_agent_message(sources=["*"], since=-1) → don't know agent B's session id yet, so wait on any agent message from session start.
-Bad:
-A: spawned with prompt "You are agent A. Your parent session id is ses_p. Your task is to coordinate with agent B. Please wait for agent B to handshake with you."
-A: wait_agent_message(sources=["*"], since=0) → since=0 means current position, fails to count messages from agent B that arrived before the wait.
 </example>
 
 **On timeout**, the message shows source status:

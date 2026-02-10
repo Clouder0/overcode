@@ -21,6 +21,32 @@ function isBootstrapText(part: MessageV2.TextPart) {
   return meta["bootstrap"] === true
 }
 
+function isConsumedMessage(part: MessageV2.MessagePart) {
+  const meta = opencodeMeta(part.metadata)
+  if (!meta) return false
+  return meta["consumed"] === true
+}
+
+function inboundMessageType(part: MessageV2.MessagePart) {
+  const meta = opencodeMeta(part.metadata)
+  if (!meta) return
+  const value = meta["messageType"]
+  if (typeof value !== "string") return
+  return value
+}
+
+export function isRelevantInboundMessage(part: MessageV2.MessagePart) {
+  if (part.direction !== "incoming") return false
+  if (isConsumedMessage(part)) return false
+  if (part.peerType === "system") {
+    const type = inboundMessageType(part)
+    if (type === "notice") return true
+    if (type === "wait_result") return true
+    return false
+  }
+  return true
+}
+
 export function isTextRelevant(part: MessageV2.TextPart) {
   if (part.ignored) return false
   if (part.synthetic !== true) return true
@@ -36,7 +62,7 @@ export function isUserRelevant(msg: MessageV2.WithParts) {
     if (part.type === "file") return true
     if (part.type === "subtask") return true
     if (part.type === "agent") return true
-    if (part.type === "message") return true
+    if (part.type === "message") return isRelevantInboundMessage(part)
     return false
   })
 }

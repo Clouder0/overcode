@@ -60,7 +60,6 @@ describe("subagent bootstrap", () => {
             message: args.assistantMessage,
             compactionRequest: undefined,
             partFromToolCall: () => undefined,
-            waitSince: () => undefined,
             async process() {
               return "stop"
             },

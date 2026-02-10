@@ -544,6 +544,22 @@ export namespace MessageV2 {
       return { type: "json", value: output as never }
     }
 
+    const partSeq = (part: MessagePart) => {
+      const meta = part.metadata
+      const opencode = meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
+      if (!opencode || typeof opencode !== "object") return
+      const value = (opencode as { seq?: unknown }).seq
+      if (typeof value !== "number") return
+      if (!Number.isInteger(value) || value <= 0) return
+      return value
+    }
+
+    const systemMessageText = (part: MessagePart) => {
+      const seq = partSeq(part)
+      const head = typeof seq === "number" ? `${part.peer} (seq: ${seq}):` : `${part.peer}:`
+      return [head, "<content>", part.text, "</content>"].join("\n")
+    }
+
     for (const msg of input) {
       if (msg.parts.length === 0) continue
 
@@ -580,20 +596,11 @@ export namespace MessageV2 {
 
             const text = (() => {
               if (part.direction === "incoming" && part.peerType === "system") {
-                return [`${part.peer}:`, "<content>", part.text, "</content>"].join("\n")
+                return systemMessageText(part)
               }
 
               if (part.direction === "incoming" && part.peerType === "agent") {
-                const seq = (() => {
-                  const meta = part.metadata
-                  const opencode =
-                    meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
-                  if (!opencode || typeof opencode !== "object") return
-                  const value = (opencode as { seq?: unknown }).seq
-                  if (typeof value !== "number") return
-                  if (!Number.isInteger(value) || value <= 0) return
-                  return value
-                })()
+                const seq = partSeq(part)
 
                 return MessageParser.formatInbox([
                   {
@@ -657,20 +664,11 @@ export namespace MessageV2 {
 
             const text = (() => {
               if (part.direction === "incoming" && part.peerType === "system") {
-                return [`${part.peer}:`, "<content>", part.text, "</content>"].join("\n")
+                return systemMessageText(part)
               }
 
               if (part.direction === "incoming" && part.peerType === "agent") {
-                const seq = (() => {
-                  const meta = part.metadata
-                  const opencode =
-                    meta && typeof meta === "object" ? (meta as { opencode?: unknown }).opencode : undefined
-                  if (!opencode || typeof opencode !== "object") return
-                  const value = (opencode as { seq?: unknown }).seq
-                  if (typeof value !== "number") return
-                  if (!Number.isInteger(value) || value <= 0) return
-                  return value
-                })()
+                const seq = partSeq(part)
 
                 return MessageParser.formatInbox([
                   {

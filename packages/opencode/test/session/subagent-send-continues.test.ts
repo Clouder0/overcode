@@ -96,7 +96,6 @@ test("subagent loop continues after send_agent_message", async () => {
             message: args.assistantMessage,
             compactionRequest: undefined,
             partFromToolCall: () => undefined,
-            waitSince: () => undefined,
             async process(input: any) {
               calls.count += 1
 

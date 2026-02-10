@@ -52,7 +52,9 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
       }
     }
 
-    const delivered = await Instance.provide({
+    const checkpoint = SessionMessage.checkpoint(ctx.sessionID)
+
+    const sent = await Instance.provide({
       directory: session.directory,
       init: InstanceBootstrap,
       fn: () =>
@@ -60,8 +62,25 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
           from: ctx.sessionID,
           to: target,
           text: params.text,
+          awaitWake: true,
         }),
     })
+      .then((value) => ({ ok: true as const, value }))
+      .catch((error) => ({ ok: false as const, error }))
+
+    if (!sent.ok) {
+      const reason = sent.error instanceof Error ? sent.error.message : String(sent.error)
+      const meta: SendMessageMetadata = {
+        ok: false,
+        target,
+        error: `Delivery failed: ${reason}`,
+      }
+      return {
+        title: "send_agent_message blocked",
+        output: JSON.stringify(meta, null, 2),
+        metadata: meta,
+      }
+    }
 
     const part: MessageV2.MessagePart = {
       id: Identifier.ascending("part"),
@@ -77,7 +96,7 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
       },
       metadata: {
         opencode: {
-          seq: delivered.seq,
+          seq: checkpoint,
         },
       },
     }
@@ -87,12 +106,20 @@ export const SendAgentMessageTool = Tool.define("send_agent_message", {
     const meta: SendMessageMetadata = {
       ok: true,
       target,
-      seq: delivered.seq,
+      seq: checkpoint,
     }
 
     return {
       title: `Sent to ${target}`,
-      output: `Message delivered to ${target}.\nReminder: wait_agent_message can set a timeout - if the expected reply doesn't arrive in time, you wake with timeout status.`,
+      output:
+        `Message delivered to ${target}.\n` +
+        `checkpoint seq: ${checkpoint}\n` +
+        `Checkpoint seq is your sender-side wait cursor. Incoming replies may not appear in the current model-context snapshot immediately.\n` +
+        `Use since=${checkpoint} if you later wait for a reply to this message (use this exact seq, do not add 1).\n` +
+        `Sending does not require immediate waiting.\n` +
+        `If independent work remains, continue now.\n` +
+        `Before ending your turn, if this reply is still required, call wait_agent_message with since=${checkpoint}.\n` +
+        `If no follow-up reply is required, continue or end your turn without waiting.`,
       metadata: meta,
     }
   },

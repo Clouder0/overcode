@@ -15,6 +15,7 @@ beforeEach(async () => {
   await withinInstance(() => {
     WaitPolicy.clear("wait_all")
     WaitPolicy.clear("wait_any")
+    WaitPolicy.clear("wait_single")
     WaitPolicy.clear("wait_timeout")
   })
 })
@@ -28,7 +29,7 @@ test("evaluate() all mode requires all sources", async () => {
       sources: ["a", "b"],
       timeout: 0,
       mode: "all",
-      since: 0,
+      since: 1,
     })
 
     const partial = WaitPolicy.evaluate({
@@ -58,7 +59,7 @@ test("evaluate() any mode resolves immediately on first response", async () => {
       sources: ["a", "b"],
       timeout: 0,
       mode: "any",
-      since: 0,
+      since: 1,
     })
 
     const result = WaitPolicy.evaluate({
@@ -71,6 +72,22 @@ test("evaluate() any mode resolves immediately on first response", async () => {
     expect(result.timedOut).toBe(false)
     expect(result.respondedSources).toEqual(["a"])
     expect(result.missingSources).toEqual(["b"])
+  })
+})
+
+test("register() normalizes single-source any mode to all", async () => {
+  await withinInstance(() => {
+    const policy = WaitPolicy.register({
+      sessionID: "wait_single",
+      messageID: "msg",
+      callID: "call",
+      sources: ["a"],
+      timeout: 0,
+      mode: "any",
+      since: 1,
+    })
+
+    expect(policy.mode).toBe("all")
   })
 })
 
@@ -89,7 +106,7 @@ test("register() timeout wakes via callback", async () => {
         sources: ["a"],
         timeout: 30,
         mode: "all",
-        since: 0,
+        since: 1,
       })
 
       await Bun.sleep(60)
@@ -98,5 +115,16 @@ test("register() timeout wakes via callback", async () => {
       WaitPolicy.setWakeFn(prev)
       WaitPolicy.clear("wait_timeout")
     }
+  })
+})
+
+test('normalizeMode() enforces wildcard as "any"', async () => {
+  await withinInstance(() => {
+    const mode = WaitPolicy.normalizeMode({
+      sources: ["*"],
+      mode: "all",
+    })
+
+    expect(mode).toBe("any")
   })
 })

@@ -708,6 +708,44 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("includes seq for incoming system message parts", () => {
+    const messageID = "m-user"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          {
+            ...basePart(messageID, "p1"),
+            type: "message",
+            direction: "incoming",
+            peer: "Wait result",
+            peerType: "system",
+            text: "Wait resolved",
+            time: { created: 0 },
+            metadata: {
+              opencode: {
+                seq: 42,
+              },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Wait result (seq: 42):\n<content>\nWait resolved\n</content>",
+          },
+        ],
+      },
+    ])
+  })
+
   test("avoids duplicating legacy inbox synthetic text", () => {
     const messageID = "m-user"
 

@@ -67,6 +67,42 @@ export function formatAssistantHeader(msg: AssistantMessage, includeMetadata: bo
   return `## Assistant (${Locale.titlecase(msg.agent)} · ${msg.modelID}${duration ? ` · ${duration}` : ""})\n\n`
 }
 
+function waitFallback(meta: unknown, title?: string): string | undefined {
+  const data = meta && typeof meta === "object" ? (meta as Record<string, unknown>) : undefined
+  const status = typeof data?.status === "string" ? data.status : undefined
+  const since = typeof data?.since === "number" ? data.since : undefined
+  const responded = Array.isArray(data?.respondedSources)
+    ? data.respondedSources.filter((source): source is string => typeof source === "string")
+    : []
+  const timedOut = Array.isArray(data?.timedOutSources)
+    ? data.timedOutSources.filter((source): source is string => typeof source === "string")
+    : []
+
+  const lines = [title, status ? `status: ${status}` : undefined, since !== undefined ? `since: ${since}` : undefined]
+
+  if (responded.length > 0) {
+    lines.push(`responded: ${responded.join(", ")}`)
+  }
+
+  if (timedOut.length > 0) {
+    lines.push(`timed_out: ${timedOut.join(", ")}`)
+  }
+
+  const result = lines.filter((line): line is string => typeof line === "string" && line.length > 0)
+  if (result.length === 0) return
+  return result.join("\n")
+}
+
+function toolFallback(part: Part): string | undefined {
+  if (part.type !== "tool") return
+  if (part.state.status !== "completed") return
+  if (part.tool === "wait_agent_message") {
+    return waitFallback(part.state.metadata, part.state.title)
+  }
+  if (typeof part.state.title !== "string" || part.state.title.length === 0) return
+  return part.state.title
+}
+
 export function formatPart(part: Part, options: TranscriptOptions): string {
   if (part.type === "text" && !part.synthetic) {
     return `${part.text}\n\n`
@@ -96,6 +132,12 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
     }
     if (options.toolDetails && part.state.status === "completed" && part.state.output) {
       result += `\n**Output:**\n\`\`\`\n${part.state.output}\n\`\`\``
+    }
+    if (options.toolDetails && part.state.status === "completed" && !part.state.output) {
+      const fallback = toolFallback(part)
+      if (fallback) {
+        result += `\n**Output:**\n\`\`\`\n${fallback}\n\`\`\``
+      }
     }
     if (options.toolDetails && part.state.status === "error" && part.state.error) {
       result += `\n**Error:**\n\`\`\`\n${part.state.error}\n\`\`\``

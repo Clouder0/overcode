@@ -58,10 +58,11 @@ describe("Agent Communication - Smoke Tests", () => {
         expect(sendResult.metadata.seq).toBeDefined()
         const seq = sendResult.metadata.seq!
         expect(seq > 0).toBe(true)
+        expect((sendResult.metadata as { deliverySeq?: number }).deliverySeq).toBeUndefined()
 
         // Verify message was delivered
         const lastSeq = SessionMessage.lastSeq(receiver.id, sender.id)
-        expect(lastSeq).toBe(seq)
+        expect(lastSeq).toBeGreaterThan(0)
       },
     })
   })
@@ -83,6 +84,7 @@ describe("Agent Communication - Smoke Tests", () => {
 
         // Now wait with since=-1 (should see message)
         const waitTool = await WaitAgentMessageTool.init()
+        const seq = SessionMessage.lastSeq(receiver.id, sender.id)
         const waitResult = await waitTool.execute(
           {
             sources: [sender.id],
@@ -95,39 +97,27 @@ describe("Agent Communication - Smoke Tests", () => {
             messageID: "msg2",
             callID: "call2",
             sessionID: receiver.id,
+            extra: {
+              waitContext: {
+                maxSeqBySource: {
+                  [sender.id]: seq,
+                },
+              },
+            },
           },
         )
 
         expect(waitResult.metadata.ok).toBe(true)
-        expect(waitResult.metadata.status).toBe("waiting")
+        expect(waitResult.metadata.status).toBe("resolved")
+        expect(waitResult.metadata.respondedSources).toEqual([sender.id])
 
-        // Verify wait policy was registered
         const policy = WaitPolicy.get(receiver.id)
-        expect(policy).toBeDefined()
-        expect(policy?.sources).toEqual([sender.id])
-        expect(policy?.since).toBe(0) // since=-1 resolves to 0
-
-        // Evaluate if wait is ready (should be, because message arrived)
-        const responded = SessionMessage.responded({
-          to: receiver.id,
-          sources: [sender.id],
-          since: policy!.since,
-        })
-
-        expect(responded.has(sender.id)).toBe(true)
-
-        const evaluated = WaitPolicy.evaluate({
-          policy: policy!,
-          respondedFromSources: responded,
-        })
-
-        expect(evaluated.ready).toBe(true)
-        expect(evaluated.respondedSources).toEqual([sender.id])
+        expect(policy).toBeUndefined()
       },
     })
   })
 
-  test("Test 3: Wait with since=0 (only future messages)", async () => {
+  test("Test 3: Wait with checkpoint (only future messages)", async () => {
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
@@ -143,7 +133,7 @@ describe("Agent Communication - Smoke Tests", () => {
         )
 
         // Get current seq position
-        const currentSeq = SessionMessage.nowSeq()
+        const currentSeq = SessionMessage.nowSeq(receiver.id)
 
         // Wait with since=currentSeq (should NOT see old message)
         const waitTool = await WaitAgentMessageTool.init()
@@ -210,6 +200,7 @@ describe("Agent Communication - Smoke Tests", () => {
 
         // Wait with wildcard
         const waitTool = await WaitAgentMessageTool.init()
+        const seq = SessionMessage.lastSeq(waiter.id, source1.id)
         const waitResult = await waitTool.execute(
           {
             sources: ["*"],
@@ -222,23 +213,23 @@ describe("Agent Communication - Smoke Tests", () => {
             messageID: "msg2",
             callID: "call2",
             sessionID: waiter.id,
+            extra: {
+              waitContext: {
+                maxSeqBySource: {
+                  [source1.id]: seq,
+                },
+              },
+            },
           },
         )
 
         expect(waitResult.metadata.ok).toBe(true)
+        expect(waitResult.metadata.status).toBe("resolved")
+        expect(waitResult.metadata.respondedSources).toContain(source1.id)
+        expect(waitResult.metadata.respondedSources).not.toContain(source2.id)
 
         const policy = WaitPolicy.get(waiter.id)
-        expect(policy?.sources).toEqual(["*"])
-
-        // Check if wildcard wait sees message
-        const responded = SessionMessage.responded({
-          to: waiter.id,
-          sources: ["*"],
-          since: policy!.since,
-        })
-
-        expect(responded.has(source1.id)).toBe(true)
-        expect(responded.has(source2.id)).toBe(false)
+        expect(policy).toBeUndefined()
       },
     })
   })
@@ -357,7 +348,10 @@ describe("Agent Communication - Complex Tests", () => {
 
         // Wait for all workers
         const waitTool = await WaitAgentMessageTool.init()
-        await waitTool.execute(
+        const maxSeqBySource = Object.fromEntries(
+          workers.map((worker) => [worker.id, SessionMessage.lastSeq(coordinator.id, worker.id)]),
+        )
+        const waitResult = await waitTool.execute(
           {
             sources: workers.map((w) => w.id),
             timeout: 5000,
@@ -369,23 +363,20 @@ describe("Agent Communication - Complex Tests", () => {
             messageID: "msg_wait",
             callID: "call_wait",
             sessionID: coordinator.id,
+            extra: {
+              waitContext: {
+                maxSeqBySource,
+              },
+            },
           },
         )
 
+        expect(waitResult.metadata.ok).toBe(true)
+        expect(waitResult.metadata.status).toBe("resolved")
+        expect(waitResult.metadata.respondedSources).toHaveLength(3)
+
         const policy = WaitPolicy.get(coordinator.id)
-        const responded = SessionMessage.responded({
-          to: coordinator.id,
-          sources: workers.map((w) => w.id),
-          since: policy!.since,
-        })
-
-        const evaluated = WaitPolicy.evaluate({
-          policy: policy!,
-          respondedFromSources: responded,
-        })
-
-        expect(evaluated.ready).toBe(true)
-        expect(evaluated.respondedSources).toHaveLength(3)
+        expect(policy).toBeUndefined()
       },
     })
   })
@@ -408,6 +399,7 @@ describe("Agent Communication - Complex Tests", () => {
             { ...ctxBase, messageID: `msg${i}`, callID: `call${i}`, sessionID: sender.id },
           )
           results.push(result.metadata.seq!)
+          expect((result.metadata as { deliverySeq?: number }).deliverySeq).toBeUndefined()
         }
 
         // Verify seq numbers are increasing
@@ -415,9 +407,9 @@ describe("Agent Communication - Complex Tests", () => {
           expect(results[i]).toBeGreaterThan(results[i - 1])
         }
 
-        // Last seq should be last message
+        // Receiver seq tracks the five delivered messages.
         const lastSeq = SessionMessage.lastSeq(receiver.id, sender.id)
-        expect(lastSeq).toBe(results[results.length - 1])
+        expect(lastSeq).toBe(5)
       },
     })
   })
@@ -439,7 +431,7 @@ describe("Agent Communication - Complex Tests", () => {
             sources: [slowSource.id],
             timeout: shortTimeout,
             mode: "any",
-            since: 0,
+            since: SessionMessage.checkpoint(waiter.id),
           },
           {
             ...ctxBase,

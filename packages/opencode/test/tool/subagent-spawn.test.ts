@@ -6,6 +6,7 @@ import { Agent } from "../../src/agent/agent"
 import { Config } from "../../src/config/config"
 import { Session } from "../../src/session"
 import { LLMConcurrencyMachine } from "../../src/session/llm-concurrency-machine"
+import { SessionMessage } from "../../src/session/message-routing"
 import { SubagentSpawnTool } from "../../src/tool/subagent-spawn"
 
 const ctxBase = {
@@ -203,6 +204,9 @@ describe("tool.subagent_spawn fine-grained permissions", () => {
         )
 
         expect(result.metadata.spawned).toHaveLength(2)
+        expect(typeof result.metadata.seq).toBe("number")
+        expect(result.metadata.seq).toBeGreaterThanOrEqual(1)
+        expect(result.output).toContain("checkpoint_seq:")
 
         const next = await Session.get(parent.id)
         expect(next.childrenIDs).toHaveLength(2)
@@ -210,6 +214,55 @@ describe("tool.subagent_spawn fine-grained permissions", () => {
         for (const item of result.metadata.spawned) {
           await Session.remove(item.session_id)
         }
+        await Session.remove(parent.id)
+      },
+    })
+  })
+
+  test("checkpoint seq precedes first inbound message after spawn", async () => {
+    await using tmp = await tmpdir({
+      config: {
+        agent: {
+          build: {
+            permission: {
+              subagent_spawn_agent: {
+                "*": "deny",
+                explore: "allow",
+              },
+            },
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const parent = await Session.create({})
+        const tool = await SubagentSpawnTool.init()
+        const result = await tool.execute(
+          {
+            agents: [{ agent: "explore", prompt: "allowed" }],
+          },
+          {
+            ...ctxBase,
+            sessionID: parent.id,
+          },
+        )
+
+        const child = result.metadata.spawned[0]?.session_id
+        expect(typeof child).toBe("string")
+        expect(result.metadata.seq).toBeGreaterThanOrEqual(1)
+
+        const delivered = await SessionMessage.deliver({
+          from: child!,
+          to: parent.id,
+          text: "hello",
+        })
+
+        expect(delivered.seq).toBeGreaterThan(result.metadata.seq)
+
+        await Session.remove(child!)
         await Session.remove(parent.id)
       },
     })

@@ -34,7 +34,7 @@ await wait_agent_message({
   sources: ["ses_abc123", "ses_def456"], // Sessions to wait for
   timeout: 300000, // 5 minutes
   mode: "all", // "all" or "any"
-  since: 0, // -1 = from session start, 0 = from now, N = seq checkpoint
+  since: 42, // -1 = from session start, N (>0) = seq checkpoint
 })
 ```
 
@@ -47,9 +47,15 @@ The `mode` parameter controls when the wait completes:
 
 Overcode assigns each delivered agent message a monotonic `seq` number. `wait_agent_message` uses `since` as a cursor so you can avoid accidentally matching old messages.
 
-- `since: -1` — from session start (includes any past messages)
-- `since: 0` — from now (recommended for most waits)
-- `since: <seq>` — from a known checkpoint (advanced)
+- `since: <seq>` — from a known checkpoint (default when available)
+- `since: -1` — from session start (backlog catch-up only)
+
+Checkpoint source matters:
+
+- `send_agent_message` returns a checkpoint `seq`; use that exact value as `since` (do not add 1).
+- `subagent_spawn` returns a checkpoint `seq`; use that exact value as `since`.
+
+Avoid using `since: -1` repeatedly in a loop; it may immediately satisfy from historical messages.
 
 Delivered messages are rendered with `(seq: N)` in the header, so you can keep checkpoints when coordinating complex workflows.
 
@@ -131,7 +137,7 @@ The simplest pattern for coordinated work:
 
 ```typescript
 // 1. Spawn agents
-await subagent_spawn({
+const spawned = await subagent_spawn({
   agents: [{ agent: "explore", prompt: "Analyze the codebase." }],
 })
 
@@ -140,7 +146,7 @@ await wait_agent_message({
   sources: ["ses_explorer_id"],
   mode: "all",
   timeout: 600000,
-  since: 0,
+  since: spawned.metadata.seq,
 })
 ```
 
@@ -149,7 +155,7 @@ await wait_agent_message({
 Collect results from multiple agents:
 
 ```typescript
-await subagent_spawn({
+const spawned = await subagent_spawn({
   agents: [
     { agent: "explore", prompt: "Find all API endpoints." },
     { agent: "test", prompt: "Review test coverage." },
@@ -161,7 +167,7 @@ await wait_agent_message({
   sources: ["ses_1", "ses_2", "ses_3"],
   mode: "all",
   timeout: 600000,
-  since: 0,
+  since: spawned.metadata.seq,
 })
 ```
 

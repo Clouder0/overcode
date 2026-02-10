@@ -126,4 +126,103 @@ describe("session.context", () => {
       },
     })
   })
+
+  test("treats batch-covered users as answered", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const modelSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 4096, output: 512 },
+        } as any)
+
+        const app = Server.App()
+        const session = await Session.create({})
+
+        const now = Date.now()
+        const u1 = await Session.updateMessage({
+          id: Identifier.ascending("message"),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: u1.id,
+          type: "text",
+          text: "u1",
+        })
+
+        const u2 = await Session.updateMessage({
+          id: Identifier.ascending("message"),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now + 1 },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: u2.id,
+          type: "text",
+          text: "u2",
+        })
+
+        const a1 = await Session.updateMessage({
+          id: Identifier.ascending("message"),
+          role: "assistant",
+          sessionID: session.id,
+          parentID: u1.id,
+          modelID: "dummy",
+          providerID: "dummy",
+          mode: "build",
+          agent: "build",
+          path: { cwd: projectRoot, root: projectRoot },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: now + 2, completed: now + 2 },
+          finish: "end_turn",
+        })
+
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: a1.id,
+          type: "text",
+          synthetic: true,
+          ignored: true,
+          text: "",
+          metadata: {
+            opencode: {
+              batch: {
+                users: [u1.id, u2.id],
+                anchor: u1.id,
+              },
+            },
+          },
+        })
+
+        const response = await app.request(`/session/${session.id}/context`)
+        expect(response.status).toBe(200)
+
+        const body = (await response.json()) as any
+        expect(body.estimate.target).toBeNull()
+        expect(body.estimate.total).toBe(0)
+        expect(modelSpy).toHaveBeenCalledTimes(0)
+
+        await Session.remove(session.id)
+        modelSpy.mockRestore()
+      },
+    })
+  })
 })

@@ -322,6 +322,16 @@ export function Prompt(props: PromptProps) {
     interrupt: 0,
   })
 
+  // Avoid abort/prompt races: when users interrupt and immediately submit, a late abort can
+  // cancel the newly started prompt loop. Track abort in-flight and await it in submit().
+  const [aborting, setAborting] = createSignal<
+    | {
+        sessionID: string
+        promise: Promise<void>
+      }
+    | undefined
+  >(undefined)
+
   const exitWindow = 1000
   const [armed, setArmed] = createSignal(0)
   const arm = (now: number) => {
@@ -447,8 +457,18 @@ export function Prompt(props: PromptProps) {
           }, 5000)
 
           if (store.interrupt >= 2) {
-            sdk.client.session.abort({
-              sessionID: props.sessionID,
+            const promise = sdk.client.session
+              .abort({
+                sessionID: props.sessionID,
+              })
+              .then(() => undefined)
+              .catch(() => undefined)
+            setAborting({ sessionID: props.sessionID, promise })
+            void promise.finally(() => {
+              const current = aborting()
+              if (!current) return
+              if (current.promise !== promise) return
+              setAborting(undefined)
             })
             setStore("interrupt", 0)
           }
@@ -868,6 +888,11 @@ export function Prompt(props: PromptProps) {
           sync.session.add(newSession)
           return newSession.id
         })()
+
+    const inflight = aborting()
+    if (inflight && inflight.sessionID === sessionID) {
+      await inflight.promise
+    }
     let inputText = textWithExpandedPastes()
 
     // Filter out text parts (pasted content) since they're now expanded inline

@@ -4,12 +4,11 @@ import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
-import { SessionMessage } from "../../src/session/message-routing"
 import { SessionProcessor } from "../../src/session/processor"
 import { LLM } from "../../src/session/llm"
 import { tmpdir } from "../fixture/fixture"
 
-test("wait since=0 baseline is captured without tool-input-start", async () => {
+test("processor stops stream after wait_agent_message returns waiting", async () => {
   await using tmp = await tmpdir({ git: true })
 
   await Instance.provide({
@@ -69,12 +68,10 @@ test("wait since=0 baseline is captured without tool-input-start", async () => {
       })
 
       const callID = "call_wait"
-      const baseline = SessionMessage.nowSeq()
-
       const llmSpy = spyOn(LLM, "stream").mockImplementation(async () => {
         async function* fullStream() {
           yield { type: "start" }
-          await SessionMessage.deliver({ from: source.id, to: session.id, text: "early reply" })
+          yield { type: "tool-input-start", id: callID, toolName: "wait_agent_message" }
           yield {
             type: "tool-call",
             toolCallId: callID,
@@ -86,8 +83,39 @@ test("wait since=0 baseline is captured without tool-input-start", async () => {
               since: 0,
             },
           }
+          yield {
+            type: "tool-result",
+            toolCallId: callID,
+            input: {
+              sources: [source.id],
+              timeout: 250,
+              mode: "all",
+              since: 0,
+            },
+            output: {
+              title: "Wait registered",
+              output: "Wait registered. Stop generating.",
+              metadata: {
+                ok: true,
+                status: "waiting",
+                sources: [source.id],
+                respondedSources: [],
+                timedOutSources: [],
+                timeout: 250,
+                mode: "all",
+                allReceived: false,
+                since: 0,
+              },
+              attachments: [],
+            },
+          }
+
+          yield { type: "text-start" }
+          yield { type: "text-delta", text: "should not persist" }
+          yield { type: "text-end" }
           yield { type: "finish" }
         }
+
         return { fullStream: fullStream() } as any
       })
 
@@ -106,7 +134,9 @@ test("wait since=0 baseline is captured without tool-input-start", async () => {
         llmSpy.mockRestore()
       }
 
-      expect(processor.waitSince(callID)).toBe(baseline)
+      const parts = await MessageV2.parts(assistantID)
+      const text = parts.filter((p): p is MessageV2.TextPart => p.type === "text").map((p) => p.text)
+      expect(text.some((value) => value.includes("should not persist"))).toBe(false)
     },
   })
 })

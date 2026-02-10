@@ -4,6 +4,7 @@ import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionMessage } from "../../src/session/message-routing"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
 import { WaitPolicy } from "../../src/session/wait-policy"
@@ -160,12 +161,24 @@ test("human prompt interrupts active wait_agent_message", async () => {
         const parts = await MessageV2.parts(seeded.waitMessageID)
         const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === seeded.callID)
         expect(tool).toBeDefined()
+        expect(tool?.state.status).toBe("completed")
+        if (tool?.state.status !== "completed") return
 
-        const meta = (tool!.state as any).metadata as any
+        const meta = (tool.state as any).metadata as any
         expect(meta?.status).toBe("interrupted")
         expect(meta?.interruptedBy).toBe("prompt")
         expect(typeof meta?.interruptedAt).toBe("number")
         expect(meta?.interruptedAt).toBeGreaterThanOrEqual(meta?.createdAt ?? 0)
+        expect(tool.state.output).toContain("Wait interrupted (prompt)")
+        expect(tool.state.output).toContain("since:")
+
+        const waitMsg = await MessageV2.get({
+          sessionID: seeded.sessionID,
+          messageID: seeded.waitMessageID,
+        })
+        expect(waitMsg.info.role).toBe("assistant")
+        const assistant = waitMsg.info as MessageV2.Assistant
+        expect(assistant.error?.name).toBe("MessageAbortedError")
       } finally {
         WaitPolicy.clear(seeded.sessionID)
         WaitPolicy.clear(seeded.sourceID)
@@ -190,11 +203,23 @@ test("human abort interrupts active wait_agent_message", async () => {
         expect(WaitPolicy.isWaiting(seeded.sessionID)).toBe(false)
 
         let meta: any
+        let aborted = false
+        let output = ""
         for (let i = 0; i < 100; i++) {
           const parts = await MessageV2.parts(seeded.waitMessageID)
           const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === seeded.callID)
           meta = (tool?.state as any)?.metadata
-          if (meta?.status === "interrupted") break
+          output = tool?.state.status === "completed" ? tool.state.output : output
+
+          const waitMsg = await MessageV2.get({
+            sessionID: seeded.sessionID,
+            messageID: seeded.waitMessageID,
+          }).catch(() => undefined)
+          aborted =
+            waitMsg?.info.role === "assistant" &&
+            (waitMsg.info as MessageV2.Assistant).error?.name === "MessageAbortedError"
+
+          if (meta?.status === "interrupted" && aborted) break
           await Bun.sleep(10)
         }
 
@@ -202,6 +227,56 @@ test("human abort interrupts active wait_agent_message", async () => {
         expect(meta?.interruptedBy).toBe("abort")
         expect(typeof meta?.interruptedAt).toBe("number")
         expect(meta?.interruptedAt).toBeGreaterThanOrEqual(meta?.createdAt ?? 0)
+        expect(output).toContain("Wait interrupted (abort)")
+        expect(output).toContain("since:")
+
+        expect(aborted).toBe(true)
+      } finally {
+        WaitPolicy.clear(seeded.sessionID)
+        WaitPolicy.clear(seeded.sourceID)
+        await Session.remove(seeded.sourceID)
+        await Session.remove(seeded.sessionID)
+      }
+    },
+  })
+})
+
+test("incoming human message interrupts active wait_agent_message", async () => {
+  await using tmp = await tmpdir({ git: true })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const seeded = await seedWait(tmp.path)
+
+      try {
+        await SessionMessage.deliver({
+          from: "human",
+          to: seeded.sessionID,
+          text: "new human prompt",
+        })
+
+        for (let i = 0; i < 100; i++) {
+          if (!WaitPolicy.isWaiting(seeded.sessionID)) break
+          await Bun.sleep(10)
+        }
+
+        expect(WaitPolicy.isWaiting(seeded.sessionID)).toBe(false)
+
+        let meta: any
+        let output = ""
+        for (let i = 0; i < 100; i++) {
+          const parts = await MessageV2.parts(seeded.waitMessageID)
+          const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === seeded.callID)
+          meta = (tool?.state as any)?.metadata
+          output = tool?.state.status === "completed" ? tool.state.output : output
+          if (meta?.status === "interrupted") break
+          await Bun.sleep(10)
+        }
+
+        expect(meta?.status).toBe("interrupted")
+        expect(meta?.interruptedBy).toBe("prompt")
+        expect(output).toContain("Wait interrupted (prompt)")
       } finally {
         WaitPolicy.clear(seeded.sessionID)
         WaitPolicy.clear(seeded.sourceID)

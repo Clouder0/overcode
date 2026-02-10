@@ -58,6 +58,20 @@ export namespace WaitPolicy {
     return Date.now()
   }
 
+  function wildcard(sources: string[]) {
+    return sources.length === 1 && sources[0] === "*"
+  }
+
+  function single(sources: string[]) {
+    return sources.length === 1 && sources[0] !== "*"
+  }
+
+  export function normalizeMode(input: { sources: string[]; mode: Mode }): Mode {
+    if (wildcard(input.sources)) return "any"
+    if (single(input.sources)) return "all"
+    return input.mode
+  }
+
   let wakeFn: ((sessionID: string) => void) | undefined
 
   export function setWakeFn(fn: ((sessionID: string) => void) | undefined) {
@@ -80,8 +94,7 @@ export namespace WaitPolicy {
     if (existing.timeoutTimer) clearTimeout(existing.timeoutTimer)
 
     const policy = existing.policy
-    const wildcard = policy.sources.length === 1 && policy.sources[0] === "*"
-    if (!wildcard) {
+    if (!wildcard(policy.sources)) {
       const lookup = waitersBySource()
       for (const source of policy.sources) {
         const waiters = lookup.get(source)
@@ -111,6 +124,7 @@ export namespace WaitPolicy {
     const createdMono = nowMono()
     const deadline = input.timeout > 0 ? now + input.timeout : undefined
     const deadlineMono = input.timeout > 0 ? createdMono + input.timeout : undefined
+    const mode = normalizeMode({ sources: input.sources, mode: input.mode })
 
     const policy: Policy = {
       sessionID: input.sessionID,
@@ -118,7 +132,7 @@ export namespace WaitPolicy {
       callID: input.callID,
       sources: input.sources,
       timeout: input.timeout,
-      mode: input.mode,
+      mode,
       since: input.since,
       time: {
         created: now,
@@ -147,8 +161,7 @@ export namespace WaitPolicy {
       }, input.timeout)
     }
 
-    const wildcard = policy.sources.length === 1 && policy.sources[0] === "*"
-    if (!wildcard) {
+    if (!wildcard(policy.sources)) {
       const lookup = waitersBySource()
       for (const source of policy.sources) {
         const waiters = lookup.get(source) ?? new Set<string>()
@@ -180,14 +193,21 @@ export namespace WaitPolicy {
     return true
   }
 
-  export function evaluate(input: { policy: Policy; now?: number; respondedFromSources: Set<string> }): EvaluateResult {
-    const wildcard = input.policy.sources.length === 1 && input.policy.sources[0] === "*"
+  export function noticed(input: { waiter: string; callID: string; source: string }) {
+    const current = state().get(input.waiter)
+    if (!current) return false
+    if (current.policy.callID !== input.callID) return false
+    return current.noticed.has(input.source)
+  }
 
-    const respondedSources = wildcard
+  export function evaluate(input: { policy: Policy; now?: number; respondedFromSources: Set<string> }): EvaluateResult {
+    const wild = wildcard(input.policy.sources)
+
+    const respondedSources = wild
       ? Array.from(input.respondedFromSources)
       : input.policy.sources.filter((s) => input.respondedFromSources.has(s))
 
-    const missingSources = wildcard ? [] : input.policy.sources.filter((s) => !input.respondedFromSources.has(s))
+    const missingSources = wild ? [] : input.policy.sources.filter((s) => !input.respondedFromSources.has(s))
 
     const ready = input.policy.mode === "any" ? respondedSources.length > 0 : missingSources.length === 0
 
