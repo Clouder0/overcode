@@ -59,6 +59,7 @@ import { WaitPolicy } from "./wait-policy"
 import { MessageParser } from "./message-parser"
 import { Truncate } from "@/tool/truncation"
 import { Token } from "@/util/token"
+import { SkillProjection } from "@/util/skill-projection"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -581,10 +582,7 @@ export namespace SessionPrompt {
     })
   }
 
-  function normalizeContextMessages(input: {
-    messages: MessageV2.WithParts[]
-    reference: MessageV2.WithParts[]
-  }) {
+  function normalizeContextMessages(input: { messages: MessageV2.WithParts[]; reference: MessageV2.WithParts[] }) {
     const rank = new Map(input.reference.map((msg, index) => [msg.info.id, index]))
     const seen = new Set<string>()
     const known = [] as MessageV2.WithParts[]
@@ -607,7 +605,9 @@ export namespace SessionPrompt {
       unknown.push(value)
     }
 
-    known.sort((a, b) => (rank.get(a.info.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.info.id) ?? Number.MAX_SAFE_INTEGER))
+    known.sort(
+      (a, b) => (rank.get(a.info.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.info.id) ?? Number.MAX_SAFE_INTEGER),
+    )
     unknown.sort((a, b) => (a.info.id > b.info.id ? 1 : -1))
     return [...known, ...unknown]
   }
@@ -1263,7 +1263,10 @@ export namespace SessionPrompt {
     return msgs.findLast((msg) => assistantTargetsUser({ assistant: msg, targetUserID: input.targetUserID }))
   }
 
-  async function waitForTargetAssistant(input: { sessionID: string; targetUserID: string }): Promise<MessageV2.WithParts> {
+  async function waitForTargetAssistant(input: {
+    sessionID: string
+    targetUserID: string
+  }): Promise<MessageV2.WithParts> {
     const seen = new Set<string>()
 
     for (let attempts = 0; attempts < 32; attempts++) {
@@ -1902,7 +1905,9 @@ export namespace SessionPrompt {
             agents[id] = name
           })
 
-          const statusMap = wildcard ? ({} as Record<string, SessionStatus.Info | undefined>) : await SessionStatusResolver.many(timedOutSources)
+          const statusMap = wildcard
+            ? ({} as Record<string, SessionStatus.Info | undefined>)
+            : await SessionStatusResolver.many(timedOutSources)
 
           const snapshots = wildcard
             ? ([] as MessageParser.TimeoutSnapshot[])
@@ -2734,8 +2739,16 @@ export namespace SessionPrompt {
           }
 
           const prefixMsgs = pivot <= 0 ? [] : sessionMessages.slice(0, pivot)
+          const visiblePrefixMsgs = prefixMsgs.filter((message) => MessageV2.modelVisible(message))
+          const projection = SkillProjection.project(
+            visiblePrefixMsgs.map((msg) => ({
+              id: msg.info.id,
+              role: msg.info.role,
+              parts: msg.parts,
+            })),
+          )
 
-          const delta = prefixMsgs
+          const delta = visiblePrefixMsgs
             .map((m) => {
               const role = m.info.role === "user" ? "User" : "Assistant"
               const texts = m.parts
@@ -2755,7 +2768,15 @@ export namespace SessionPrompt {
               const tools = m.parts
                 .filter((p): p is MessageV2.ToolPart => p.type === "tool")
                 .flatMap((p) => {
+                  if (m.info.role !== "assistant") return []
                   if (p.state.status !== "completed") return []
+                  if (p.tool === "skill" && projection.supersededPartIDs.has(p.id)) return []
+                  if (p.tool === "skill") {
+                    const meta = p.state.metadata
+                    if (meta && typeof meta === "object" && (meta as { applied?: unknown }).applied === false) {
+                      return []
+                    }
+                  }
 
                   const raw = p.state.output
                   const excerpt = MessageV2.excerpt(raw, 4000)
@@ -2766,9 +2787,18 @@ export namespace SessionPrompt {
 
                   return [[`Tool ${p.tool}:`, `Input: ${JSON.stringify(p.state.input)}`, `Output:\n${body}`].join("\n")]
                 })
-              const blocks = [texts.join("\n"), files.join("\n"), msgs.join("\n\n"), tools.join("\n\n")].filter(
-                (x) => x,
-              )
+              const markers = iife(() => {
+                const names = projection.supersededNamesByMessageID.get(m.info.id)
+                if (!names || names.length === 0) return ""
+                return `Context note: superseded skill loads omitted: ${names.join(", ")}. Newer successful loads are authoritative.`
+              })
+              const blocks = [
+                texts.join("\n"),
+                files.join("\n"),
+                msgs.join("\n\n"),
+                tools.join("\n\n"),
+                markers,
+              ].filter((x) => x)
               if (blocks.length === 0) return ""
               return [`[${role}]`, ...blocks].join("\n")
             })
@@ -3070,6 +3100,11 @@ export namespace SessionPrompt {
           }
           const live = await Session.get(sessionID)
           const wc = waitContext(sessionMessages)
+          const visibleSkillMessages = sessionMessages.filter((message) => MessageV2.modelVisible(message))
+          const skillContext = {
+            messageIDs: Array.from(new Set(visibleSkillMessages.map((message) => message.info.id))),
+            messages: visibleSkillMessages,
+          }
           const tools = await resolveTools({
             agent,
             session: live,
@@ -3077,6 +3112,7 @@ export namespace SessionPrompt {
             tools: lastUser.tools,
             processor,
             messages: msgs,
+            skillContext,
             waitContext: wc,
           })
 
@@ -3223,10 +3259,7 @@ export namespace SessionPrompt {
       }
 
       if (processed && !processed.error) {
-        const target = [
-          ...(inboxMessage(pending) ? queued : []),
-          ...resumeTail,
-        ]
+        const target = [...(inboxMessage(pending) ? queued : []), ...resumeTail]
         const consumed = Array.from(new Map(target.map((msg) => [msg.info.id, msg])).values())
         if (consumed.length > 0) {
           await consumeInboxMessages({
@@ -3327,6 +3360,10 @@ export namespace SessionPrompt {
     tools?: Record<string, boolean>
     processor: SessionProcessor.Info
     messages: MessageV2.WithParts[]
+    skillContext?: {
+      messageIDs: string[]
+      messages: MessageV2.WithParts[]
+    }
     waitContext?: {
       maxSeqBySource: Record<string, number>
     }
@@ -3350,6 +3387,7 @@ export namespace SessionPrompt {
         extra: {
           model: input.model,
           session: input.session,
+          skillContext: input.skillContext,
           waitContext: input.waitContext,
         },
         agent: input.agent.name,

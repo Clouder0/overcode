@@ -89,6 +89,9 @@ import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
 import { formatTranscript } from "../../util/transcript"
+import { SkillProjection } from "@/util/skill-projection"
+import { resolveSkillStatus } from "./skill-status"
+import { projectSkillProjection } from "./skill-projection"
 
 addDefaultParsers(parsers.parsers)
 
@@ -110,6 +113,7 @@ const context = createContext<{
   showTimestamps: () => boolean
   showDetails: () => boolean
   diffWrapMode: () => "word" | "none"
+  skillProjection: () => SkillProjection.Result
   sync: ReturnType<typeof useSync>
 }>()
 
@@ -136,6 +140,16 @@ export function Session() {
   )
 
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  const skillProjection = createMemo(() =>
+    projectSkillProjection({
+      messages: messages().map((msg) => ({
+        id: msg.id,
+        role: msg.role,
+        error: "error" in msg ? msg.error : undefined,
+      })),
+      partsByMessageID: sync.data.part,
+    }),
+  )
   const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
   const questions = createMemo(() => sync.data.question[route.sessionID] ?? [])
 
@@ -1169,6 +1183,7 @@ export function Session() {
         showTimestamps,
         showDetails,
         diffWrapMode,
+        skillProjection,
         sync,
       }}
     >
@@ -1971,6 +1986,7 @@ function ToolPart(props: { last: boolean; part: ToolPartType; message: Assistant
 
     if (ctx.showDetails()) return false
     if (part.tool === "wait_agent_message") return false
+    if (part.tool === "skill") return false
     if (state.status !== "completed") return false
 
     const permissions = sync.data.permission[props.message.sessionID] ?? []
@@ -2054,6 +2070,9 @@ function ToolPart(props: { last: boolean; part: ToolPartType; message: Assistant
         <Match when={reactivePart().tool === "question"}>
           <Question {...toolprops} />
         </Match>
+        <Match when={reactivePart().tool === "skill"}>
+          <Skill {...toolprops} />
+        </Match>
         <Match when={true}>
           <GenericTool {...toolprops} />
         </Match>
@@ -2075,6 +2094,85 @@ function GenericTool(props: ToolProps<any>) {
     <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
       {props.tool} {input(props.input)}
     </InlineTool>
+  )
+}
+
+function Skill(props: ToolProps<any>) {
+  const { theme } = useTheme()
+  const ctx = use()
+
+  const name = createMemo(() => {
+    const meta = props.metadata as Record<string, unknown> | undefined
+    const metaName = meta?.name
+    if (typeof metaName === "string" && metaName.trim().length > 0) return metaName.trim()
+
+    const inputData = props.input as Record<string, unknown> | undefined
+    const inputName = inputData?.name
+    if (typeof inputName === "string" && inputName.trim().length > 0) return inputName.trim()
+
+    return "unknown"
+  })
+
+  const status = createMemo(() => {
+    const meta = props.metadata as Record<string, unknown> | undefined
+    return resolveSkillStatus({
+      status: props.part.state.status,
+      applied: meta?.applied,
+      superseded: ctx.skillProjection().supersededPartIDs.has(props.part.id),
+    })
+  })
+
+  const icon = createMemo(() => {
+    if (status() === "failed") return "✗"
+    if (status() === "loading") return "◐"
+    if (status() === "noop") return "○"
+    if (status() === "superseded") return "◇"
+    return "◆"
+  })
+
+  const iconColor = createMemo(() => {
+    if (status() === "failed") return theme.error
+    if (status() === "noop") return theme.textMuted
+    if (status() === "superseded") return theme.textMuted
+    if (status() === "loading") return theme.warning
+    return theme.secondary
+  })
+
+  const complete = createMemo(() => status() !== "loading")
+
+  const title = createMemo(() => {
+    if (status() === "failed") return `Skill ${name()} (failed)`
+    if (status() === "noop") return `Skill ${name()} (up-to-date)`
+    if (status() === "superseded") return `Skill ${name()} (superseded)`
+    return `Skill ${name()} (active)`
+  })
+
+  return (
+    <>
+      <InlineTool
+        icon={icon()}
+        iconColor={iconColor()}
+        pending={`Loading skill ${name()}...`}
+        complete={complete()}
+        part={props.part}
+      >
+        {title()}
+      </InlineTool>
+      <Show when={status() === "superseded"}>
+        <box paddingLeft={3}>
+          <text paddingLeft={3} fg={theme.textMuted}>
+            ↳ Superseded by newer load in this session
+          </text>
+        </box>
+      </Show>
+      <Show when={status() === "noop"}>
+        <box paddingLeft={3}>
+          <text paddingLeft={3} fg={theme.textMuted}>
+            ↳ Reused existing active skill load
+          </text>
+        </box>
+      </Show>
+    </>
   )
 }
 

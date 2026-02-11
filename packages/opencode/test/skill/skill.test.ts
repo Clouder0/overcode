@@ -1,7 +1,10 @@
 import { test, expect } from "bun:test"
 import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
+import { Identifier } from "../../src/id/id"
 import { Skill } from "../../src/skill"
+import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
 import { SystemPrompt } from "../../src/session/system"
 import { SessionToolOverrides } from "../../src/session/tool-overrides"
 import { ToolRegistry } from "../../src/tool/registry"
@@ -26,6 +29,75 @@ description: A global skill from ~/.claude/skills for testing.
 This skill is loaded from the global home directory.
 `,
   )
+}
+
+function priorSkillPart(input: { id: string; name: string; metadata: Record<string, unknown>; compacted?: boolean }) {
+  return {
+    id: input.id,
+    type: "tool",
+    tool: "skill",
+    callID: `call-${input.id}`,
+    state: {
+      status: "completed",
+      input: { name: input.name },
+      output: "prior",
+      title: `Loaded skill: ${input.name}`,
+      metadata: input.metadata,
+      time: {
+        start: 1,
+        end: 2,
+        ...(input.compacted ? { compacted: 3 } : {}),
+      },
+    },
+  }
+}
+
+function assistantHistory(id: string, parts: any[]) {
+  return {
+    info: { id, role: "assistant" },
+    parts,
+  }
+}
+
+function erroredAssistantHistory(id: string, parts: any[]) {
+  return {
+    info: {
+      id,
+      role: "assistant",
+      error: new MessageV2.APIError({ message: "boom", isRetryable: true }).toObject(),
+    },
+    parts,
+  }
+}
+
+function userHistory(id: string, text = "hello") {
+  return {
+    info: { id, role: "user" },
+    parts: [{ id: `${id}-p`, type: "text", text }],
+  }
+}
+
+function markerHistory(id: string, kind: "trim" | "think" | "rctx") {
+  return {
+    info: { id, role: "assistant" },
+    parts: [
+      {
+        id: `${id}-p`,
+        type: "text",
+        text: kind,
+        synthetic: true,
+        ignored: true,
+        metadata: {
+          opencode: {
+            marker: {
+              kind,
+              at: Date.now(),
+            },
+          },
+        },
+      },
+    ],
+  }
 }
 
 test("discovers skills from .opencode/skill/ directory", async () => {
@@ -270,6 +342,911 @@ Use the heavy tool.
       expect(Wildcard.all("heavy", persisted)).toBe(true)
 
       await SessionToolOverrides.clear(sessionID)
+    },
+  })
+})
+
+test("identical skill reload no-ops within one relevant user turn", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_noop_one_turn"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), userHistory("u1")],
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(false)
+      expect((second.metadata as any).status).toBe("noop")
+      expect((second.metadata as any).reason).toBe("near_context")
+    },
+  })
+})
+
+test("same-message duplicate skill call no-ops even without persisted context", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_duplicate_in_turn"
+      const messageID = "msg-duplicate"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      expect((first.metadata as any).applied).toBe(true)
+      expect((first.metadata as any).reason).toBe("applied")
+      expect((second.metadata as any).applied).toBe(false)
+      expect((second.metadata as any).status).toBe("noop")
+      expect((second.metadata as any).reason).toBe("duplicate_in_turn")
+    },
+  })
+})
+
+test("skill reload applies again after two relevant user turns", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_apply_two_turns"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), userHistory("u1"), userHistory("u2")],
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+    },
+  })
+})
+
+test("skill reload ignores user-message skill parts when selecting prior anchor", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_ignore_user_skill_parts"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const injected = priorSkillPart({
+        id: "p-user",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [
+          assistantHistory("a1", [prior]),
+          userHistory("u1"),
+          userHistory("u2"),
+          {
+            info: { id: "u3", role: "user" },
+            parts: [{ id: "u3-p", type: "text", text: "third user turn" }, injected],
+          },
+        ],
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+      expect((second.metadata as any).reason).toBe("applied")
+      expect((second.metadata as any).turns).toBe(3)
+    },
+  })
+})
+
+test("skill reload applies again when maintenance marker exists after anchor", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_apply_marker"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), markerHistory("a2", "trim"), userHistory("u1")],
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+    },
+  })
+})
+
+test("skill reload applies when content hash changes", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_apply_content_change"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      await Bun.write(
+        path.join(tmp.path, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step two.
+`,
+      )
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), userHistory("u1")],
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+      expect((second.metadata as any).hash).not.toBe((first.metadata as any).hash)
+    },
+  })
+})
+
+test("noop reload still applies tool enablement semantics", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "opencode.json"),
+        JSON.stringify(
+          {
+            tools: {
+              heavy: false,
+            },
+          },
+          null,
+          2,
+        ),
+      )
+
+      await Bun.write(
+        path.join(dir, ".opencode", "tool", "heavy.ts"),
+        `export default {
+  description: "A heavy tool used for tests",
+  args: {},
+  async execute() {
+    return "ok"
+  },
+}
+`,
+      )
+
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "webdev", "SKILL.md"),
+        `---
+name: webdev
+description: Enables heavy tools
+tools:
+  - heavy
+---
+
+Use the heavy tool.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_noop_enablement"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "webdev" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      await SessionToolOverrides.clear(sessionID)
+
+      const before = {
+        ...(await ToolRegistry.enabled(agent)),
+        ...(await SessionToolOverrides.get(sessionID)),
+      }
+      expect(Wildcard.all("heavy", before)).toBe(false)
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "webdev",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "webdev" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), userHistory("u1")],
+      } as any)
+
+      const after = {
+        ...(await ToolRegistry.enabled(agent)),
+        ...(await SessionToolOverrides.get(sessionID)),
+      }
+
+      expect((second.metadata as any).applied).toBe(false)
+      expect((second.metadata as any).status).toBe("noop")
+      expect((second.metadata as any).reason).toBe("near_context")
+      expect(Wildcard.all("heavy", after)).toBe(true)
+      await SessionToolOverrides.clear(sessionID)
+    },
+  })
+})
+
+test("reload applies when prior load is not in visible context", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = "session_visible_context"
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), userHistory("u1")],
+        extra: {
+          skillContext: {
+            messageIDs: ["u1"],
+          },
+        },
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+    },
+  })
+})
+
+test("reload applies when transformed skill context contains marker omitted from raw history", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = Identifier.ascending("session")
+      const previousID = Identifier.ascending("message")
+      const currentID = Identifier.ascending("message")
+      const userID = Identifier.ascending("message")
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: previousID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: Identifier.ascending("part"),
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const marker = markerHistory("m1", "trim").parts[0]
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: currentID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory(previousID, [prior]), userHistory(userID)],
+        extra: {
+          skillContext: {
+            messageIDs: [previousID, userID],
+            messages: [assistantHistory(previousID, [prior, marker]), userHistory(userID)],
+          },
+        },
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+      expect((second.metadata as any).reason).toBe("applied")
+    },
+  })
+})
+
+test("reload applies when prior load is only in non-abort errored assistant message", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = Identifier.ascending("session")
+      const previousID = Identifier.ascending("message")
+      const currentID = Identifier.ascending("message")
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: previousID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: Identifier.ascending("part"),
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const userID = Identifier.ascending("message")
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: currentID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [erroredAssistantHistory(previousID, [prior]), userHistory(userID)],
+        extra: {
+          skillContext: {
+            messageIDs: [previousID, userID],
+          },
+        },
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+      expect((second.metadata as any).reason).toBe("applied")
+    },
+  })
+})
+
+test("reload applies when same skill content comes from a different base directory", async () => {
+  let prior: any
+
+  await using first = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: first.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const skillTool = await SkillTool.init({ agent })
+      const loaded = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_hash_dir_1",
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: loaded.metadata as any,
+      })
+    },
+  })
+
+  await using second = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: second.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const skillTool = await SkillTool.init({ agent })
+
+      const loaded = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_hash_dir_2",
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), userHistory("u1")],
+      } as any)
+
+      expect((loaded.metadata as any).applied).toBe(true)
+      expect((loaded.metadata as any).status).toBe("applied")
+    },
+  })
+})
+
+test("identical reload no-ops when prior load exists only on current message", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = Identifier.ascending("session")
+      const previousID = Identifier.ascending("message")
+      const currentID = Identifier.ascending("message")
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: previousID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: Identifier.ascending("part"),
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      await Session.updatePart({
+        ...prior,
+        sessionID,
+        messageID: currentID,
+      } as any)
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: currentID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [userHistory("u1")],
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(false)
+      expect((second.metadata as any).status).toBe("noop")
+      expect((second.metadata as any).reason).toBe("near_context")
+    },
+  })
+})
+
+test("reload applies when current-message marker appears after historical anchor", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = Identifier.ascending("session")
+      const previousID = Identifier.ascending("message")
+      const currentID = Identifier.ascending("message")
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: previousID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+      } as any)
+
+      const prior = priorSkillPart({
+        id: Identifier.ascending("part"),
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const markerID = Identifier.ascending("part")
+      await Session.updatePart({
+        id: markerID,
+        sessionID,
+        messageID: currentID,
+        type: "text",
+        text: "trim",
+        synthetic: true,
+        ignored: true,
+        metadata: {
+          opencode: {
+            marker: {
+              kind: "trim",
+              at: Date.now(),
+            },
+          },
+        },
+      } as any)
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: currentID,
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), userHistory("u1")],
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
     },
   })
 })

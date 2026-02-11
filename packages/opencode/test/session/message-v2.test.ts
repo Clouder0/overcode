@@ -103,6 +103,52 @@ function basePart(messageID: string, id: string) {
 }
 
 describe("session.message-v2.toModelMessage", () => {
+  test("modelVisible excludes assistant messages with non-abort errors", () => {
+    const msg: MessageV2.WithParts = {
+      info: assistantInfo(
+        "m-assistant",
+        "m-parent",
+        new MessageV2.APIError({ message: "boom", isRetryable: true }).toObject() as MessageV2.APIError,
+      ),
+      parts: [
+        {
+          ...basePart("m-assistant", "a1"),
+          type: "tool",
+          callID: "call-1",
+          tool: "skill",
+          metadata: {},
+          state: {
+            status: "completed",
+            input: { name: "brainstorming" },
+            output: "skill-old",
+            title: "Loaded skill: brainstorming",
+            metadata: { name: "brainstorming", applied: true },
+            time: { start: 0, end: 1 },
+          },
+        },
+      ] as MessageV2.Part[],
+    }
+
+    expect(MessageV2.modelVisible(msg)).toBe(false)
+  })
+
+  test("modelVisible keeps aborted assistant messages with non-reasoning content", () => {
+    const aborted = new MessageV2.AbortedError({ message: "aborted" }).toObject() as MessageV2.Assistant["error"]
+
+    const msg: MessageV2.WithParts = {
+      info: assistantInfo("m-assistant", "m-parent", aborted),
+      parts: [
+        {
+          ...basePart("m-assistant", "a1"),
+          type: "text",
+          text: "partial",
+        },
+      ] as MessageV2.Part[],
+    }
+
+    expect(MessageV2.modelVisible(msg)).toBe(true)
+  })
+
   test("filters out messages with no parts", () => {
     const input: MessageV2.WithParts[] = [
       {
@@ -985,6 +1031,545 @@ describe("session.message-v2.toModelMessage", () => {
             output: { type: "error-text", value: "[Tool execution was interrupted]" },
           },
         ],
+      },
+    ])
+  })
+
+  test("keeps latest successful skill load per name and adds superseded marker", () => {
+    const userID1 = "m-user-1"
+    const userID2 = "m-user-2"
+    const userID3 = "m-user-3"
+    const assistantID1 = "m-assistant-1"
+    const assistantID2 = "m-assistant-2"
+    const assistantID3 = "m-assistant-3"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID1),
+        parts: [
+          {
+            ...basePart(userID1, "u1"),
+            type: "text",
+            text: "load brainstorming",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID1, userID1),
+        parts: [
+          {
+            ...basePart(assistantID1, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "skill-old",
+              title: "Loaded skill: brainstorming",
+              metadata: { name: "brainstorming" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(userID2),
+        parts: [
+          {
+            ...basePart(userID2, "u2"),
+            type: "text",
+            text: "load formatter",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID2, userID2),
+        parts: [
+          {
+            ...basePart(assistantID2, "a2"),
+            type: "tool",
+            callID: "call-2",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "user-output-format" },
+              output: "skill-b",
+              title: "Loaded skill: user-output-format",
+              metadata: { name: "user-output-format" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(userID3),
+        parts: [
+          {
+            ...basePart(userID3, "u3"),
+            type: "text",
+            text: "reload brainstorming",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID3, userID3),
+        parts: [
+          {
+            ...basePart(assistantID3, "a3"),
+            type: "tool",
+            callID: "call-3",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "skill-new",
+              title: "Loaded skill: brainstorming",
+              metadata: { name: "brainstorming" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "load brainstorming" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Context note: superseded skill loads omitted: brainstorming. Newer successful loads are authoritative.",
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "load formatter" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-2",
+            toolName: "skill",
+            input: { name: "user-output-format" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-2",
+            toolName: "skill",
+            output: { type: "text", value: "skill-b" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "reload brainstorming" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-3",
+            toolName: "skill",
+            input: { name: "brainstorming" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-3",
+            toolName: "skill",
+            output: { type: "text", value: "skill-new" },
+          },
+        ],
+      },
+    ])
+  })
+
+  test("does not supersede visible skill load with hidden errored assistant reload", () => {
+    const userID1 = "m-user-1"
+    const userID2 = "m-user-2"
+    const assistantID1 = "m-assistant-1"
+    const assistantID2 = "m-assistant-2"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID1),
+        parts: [
+          {
+            ...basePart(userID1, "u1"),
+            type: "text",
+            text: "load brainstorming",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID1, userID1),
+        parts: [
+          {
+            ...basePart(assistantID1, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "skill-old",
+              title: "Loaded skill: brainstorming",
+              metadata: { name: "brainstorming" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(userID2),
+        parts: [
+          {
+            ...basePart(userID2, "u2"),
+            type: "text",
+            text: "reload brainstorming",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(
+          assistantID2,
+          userID2,
+          new MessageV2.APIError({ message: "boom", isRetryable: true }).toObject() as MessageV2.APIError,
+        ),
+        parts: [
+          {
+            ...basePart(assistantID2, "a2"),
+            type: "tool",
+            callID: "call-2",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "skill-hidden",
+              title: "Loaded skill: brainstorming",
+              metadata: { name: "brainstorming" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "load brainstorming" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "skill",
+            input: { name: "brainstorming" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "skill",
+            output: { type: "text", value: "skill-old" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "reload brainstorming" }],
+      },
+    ])
+  })
+
+  test("ignores user-message skill parts when resolving authoritative skill loads", () => {
+    const userID1 = "m-user-1"
+    const userID2 = "m-user-2"
+    const assistantID1 = "m-assistant-1"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID1),
+        parts: [
+          {
+            ...basePart(userID1, "u1"),
+            type: "text",
+            text: "load brainstorming",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID1, userID1),
+        parts: [
+          {
+            ...basePart(assistantID1, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "skill-old",
+              title: "Loaded skill: brainstorming",
+              metadata: { name: "brainstorming", applied: true },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(userID2),
+        parts: [
+          {
+            ...basePart(userID2, "u2"),
+            type: "text",
+            text: "continue",
+          },
+          {
+            ...basePart(userID2, "u2-skill"),
+            type: "tool",
+            callID: "call-user",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "skill-user",
+              title: "Loaded skill: brainstorming",
+              metadata: { name: "brainstorming", applied: true },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "load brainstorming" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "skill",
+            input: { name: "brainstorming" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "skill",
+            output: { type: "text", value: "skill-old" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "continue" }],
+      },
+    ])
+  })
+
+  test("does not supersede successful skill load with failed reload", () => {
+    const userID1 = "m-user-1"
+    const userID2 = "m-user-2"
+    const assistantID1 = "m-assistant-1"
+    const assistantID2 = "m-assistant-2"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID1),
+        parts: [
+          {
+            ...basePart(userID1, "u1"),
+            type: "text",
+            text: "load brainstorming",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID1, userID1),
+        parts: [
+          {
+            ...basePart(assistantID1, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "skill-old",
+              title: "Loaded skill: brainstorming",
+              metadata: { name: "brainstorming" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(userID2),
+        parts: [
+          {
+            ...basePart(userID2, "u2"),
+            type: "text",
+            text: "reload brainstorming",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID2, userID2),
+        parts: [
+          {
+            ...basePart(assistantID2, "a2"),
+            type: "tool",
+            callID: "call-2",
+            tool: "skill",
+            state: {
+              status: "error",
+              input: { name: "brainstorming" },
+              error: "failed to load",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "load brainstorming" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "skill",
+            input: { name: "brainstorming" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "skill",
+            output: { type: "text", value: "skill-old" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "reload brainstorming" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-2",
+            toolName: "skill",
+            input: { name: "brainstorming" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-2",
+            toolName: "skill",
+            output: { type: "error-text", value: "failed to load" },
+          },
+        ],
+      },
+    ])
+  })
+
+  test("omits no-op skill reload output from model context", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "reload skill",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "NOOP_SKILL_OUTPUT",
+              title: "Skill already loaded",
+              metadata: { name: "brainstorming", applied: false, status: "noop" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "reload skill" }],
       },
     ])
   })

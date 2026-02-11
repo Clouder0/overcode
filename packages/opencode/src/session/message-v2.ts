@@ -18,6 +18,8 @@ import { Storage } from "@/storage/storage"
 import { ProviderTransform } from "@/provider/transform"
 import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
+import { SkillProjection } from "@/util/skill-projection"
+import { modelVisibleMessage } from "@/util/model-visible"
 import { type SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { MessageParser } from "./message-parser"
@@ -507,9 +509,31 @@ export namespace MessageV2 {
   })
   export type WithParts = z.infer<typeof WithParts>
 
+  export function modelVisible(msg: WithParts) {
+    return modelVisibleMessage({
+      message: msg.info,
+      parts: msg.parts,
+      aborted(error) {
+        return MessageV2.AbortedError.isInstance(error)
+      },
+    })
+  }
+
   export function toModelMessages(input: WithParts[], model: Provider.Model): ModelMessage[] {
     const result: UIMessage[] = []
     const toolNames = new Set<string>()
+    const visible = input.filter((msg) => modelVisible(msg))
+    const projection = SkillProjection.project(
+      visible.map((msg) => ({
+        id: msg.info.id,
+        role: msg.info.role,
+        parts: msg.parts,
+      })),
+    )
+
+    const skillMarker = (names: string[]) => {
+      return `Context note: superseded skill loads omitted: ${names.join(", ")}. Newer successful loads are authoritative.`
+    }
 
     const toModelOutput = (output: unknown) => {
       if (typeof output === "string") {
@@ -560,9 +584,7 @@ export namespace MessageV2 {
       return [head, "<content>", part.text, "</content>"].join("\n")
     }
 
-    for (const msg of input) {
-      if (msg.parts.length === 0) continue
-
+    for (const msg of visible) {
       if (msg.info.role === "user") {
         const userMessage: UIMessage = {
           id: msg.info.id,
@@ -637,19 +659,17 @@ export namespace MessageV2 {
       if (msg.info.role === "assistant") {
         const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.providerID}/${msg.info.modelID}`
 
-        if (
-          msg.info.error &&
-          !(
-            MessageV2.AbortedError.isInstance(msg.info.error) &&
-            msg.parts.some((part) => part.type !== "step-start" && part.type !== "reasoning")
-          )
-        ) {
-          continue
-        }
         const assistantMessage: UIMessage = {
           id: msg.info.id,
           role: "assistant",
           parts: [],
+        }
+        const superseded = projection.supersededNamesByMessageID.get(msg.info.id)
+        if (superseded && superseded.length > 0) {
+          assistantMessage.parts.push({
+            type: "text",
+            text: skillMarker(superseded),
+          })
         }
         for (const part of msg.parts) {
           if (part.type === "text" && !part.ignored)
@@ -696,6 +716,23 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
+            const noOpSkill =
+              part.tool === "skill" &&
+              part.state.status === "completed" &&
+              (() => {
+                const meta = part.state.metadata
+                if (!meta || typeof meta !== "object") return false
+                return (meta as { applied?: unknown }).applied === false
+              })()
+
+            if (
+              part.tool === "skill" &&
+              part.state.status === "completed" &&
+              (projection.supersededPartIDs.has(part.id) || noOpSkill)
+            ) {
+              continue
+            }
+
             toolNames.add(part.tool)
             if (part.state.status === "completed") {
               const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
