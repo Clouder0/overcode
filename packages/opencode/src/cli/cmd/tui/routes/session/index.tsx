@@ -2118,9 +2118,12 @@ function Skill(props: ToolProps<any>) {
     return resolveSkillStatus({
       status: props.part.state.status,
       applied: meta?.applied,
+      reason: meta?.reason,
       superseded: ctx.skillProjection().supersededPartIDs.has(props.part.id),
     })
   })
+
+  if (status() === "hidden") return null
 
   const icon = createMemo(() => {
     if (status() === "failed") return "✗"

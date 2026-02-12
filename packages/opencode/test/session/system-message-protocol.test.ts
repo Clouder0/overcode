@@ -21,7 +21,9 @@ describe("session.system message protocol", () => {
     expect(protocol).toContain("Sending does not require immediate waiting.")
     expect(protocol).toContain("If independent work remains, continue now.")
     expect(protocol).toContain("Before ending your turn, run a reply check.")
-    expect(protocol).toContain("If no requested follow-up reply still matters, continue or end your turn without waiting.")
+    expect(protocol).toContain(
+      "If no requested follow-up reply still matters, continue or end your turn without waiting.",
+    )
   })
 
   test("documents optional seq in inbox message format", () => {
@@ -40,5 +42,12 @@ describe("session.system message protocol", () => {
     )
     expect(protocol).toContain('Do not use `sources=["*"]` as a default follow-up to send_agent_message.')
     expect(protocol).toContain('A: wait_agent_message(sources=["ses_B"], since=2) → counts the message from ses_B.')
+  })
+
+  test("documents that no-op skill loads satisfy requirement", () => {
+    const protocol = SystemPrompt.messageProtocol("primary", "ses_test").join("\n")
+
+    expect(protocol).toContain("If a skill call reports up-to-date/no-op, treat the skill requirement as satisfied")
+    expect(protocol).toContain("do not call the same skill again in that response")
   })
 })

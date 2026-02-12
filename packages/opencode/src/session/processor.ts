@@ -286,19 +286,26 @@ export namespace SessionProcessor {
                     })
                     toolcalls[value.toolCallId] = part as MessageV2.ToolPart
 
-                    const parts = await MessageV2.parts(input.assistantMessage.id)
-                    const lastThree = parts.slice(-DOOM_LOOP_THRESHOLD)
-
-                    if (
+                    const recent = (await Session.messages({ sessionID: input.assistantMessage.sessionID }))
+                      .filter((msg) => {
+                        if (msg.info.role !== "assistant") return false
+                        const assistant = msg.info as MessageV2.Assistant
+                        return assistant.parentID === streamInput.user.id
+                      })
+                      .flatMap((msg) => msg.parts)
+                      .filter((p): p is MessageV2.ToolPart => p.type === "tool")
+                    const lastThree = recent.slice(-DOOM_LOOP_THRESHOLD)
+                    const call = JSON.stringify(value.input)
+                    const doomed =
                       lastThree.length === DOOM_LOOP_THRESHOLD &&
                       lastThree.every(
                         (p) =>
-                          p.type === "tool" &&
                           p.tool === value.toolName &&
                           p.state.status !== "pending" &&
-                          JSON.stringify(p.state.input) === JSON.stringify(value.input),
+                          JSON.stringify(p.state.input) === call,
                       )
-                    ) {
+
+                    if (doomed) {
                       const agent = await Agent.get(input.assistantMessage.agent)
                       await PermissionNext.ask({
                         permission: "doom_loop",

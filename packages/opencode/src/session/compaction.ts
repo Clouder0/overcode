@@ -9,7 +9,6 @@ import { jsonSchema, stepCountIs, tool } from "ai"
 import z from "zod"
 import { InvalidTool } from "@/tool/invalid"
 import { SessionPrompt } from "./prompt"
-import { Token } from "../util/token"
 import { Log } from "../util/log"
 import { SessionProcessor } from "./processor"
 import { fn } from "@/util/fn"
@@ -18,6 +17,7 @@ import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { Storage } from "@/storage/storage"
 import { SessionCPD } from "./cpd"
+import { defer } from "@/util/defer"
 
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
@@ -68,6 +68,13 @@ export namespace SessionCompaction {
         item.abort.abort()
       }
       map.clear()
+    },
+  )
+
+  const pruning = Instance.state(
+    () => new Set<string>(),
+    async (set) => {
+      set.clear()
     },
   )
 
@@ -206,6 +213,14 @@ export namespace SessionCompaction {
   export async function prune(input: { sessionID: string }) {
     const config = await Config.get()
     if (config.compaction?.prune === false) return
+
+    const run = pruning()
+    if (run.has(input.sessionID)) return
+    run.add(input.sessionID)
+    using _ = defer(() => {
+      run.delete(input.sessionID)
+    })
+
     log.info("pruning")
     const msgs = await Session.messages({ sessionID: input.sessionID })
     let total = 0
@@ -227,8 +242,8 @@ export namespace SessionCompaction {
           if (part.state.status === "completed") {
             if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
 
-            if (part.state.time.compacted) break loop
-            const estimate = Token.estimate(part.state.output)
+            if (part.state.time.compacted) continue
+            const estimate = MessageV2.toolOutputTokens(part)
             total += estimate
             if (total > PRUNE_PROTECT) {
               pruned += estimate

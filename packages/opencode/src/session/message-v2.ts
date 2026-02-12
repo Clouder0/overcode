@@ -23,6 +23,7 @@ import { modelVisibleMessage } from "@/util/model-visible"
 import { type SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { MessageParser } from "./message-parser"
+import { Token } from "@/util/token"
 
 export namespace MessageV2 {
   export const OutputLengthError = NamedError.create("MessageOutputLengthError", z.object({}))
@@ -181,6 +182,24 @@ export namespace MessageV2 {
   export function excerpt(value: string, max: number) {
     if (value.length <= max) return value
     return value.slice(0, max) + `\n...[${value.length - max} chars omitted]...`
+  }
+
+  function inlineData(url: string) {
+    if (!url.startsWith("data:")) return
+    const i = url.indexOf(",")
+    if (i === -1) return
+    return url.slice(i + 1)
+  }
+
+  export function toolOutputTokens(part: MessageV2.ToolPart) {
+    if (part.state.status !== "completed") return 0
+    const text = Token.estimate(part.state.output)
+    const files = (part.state.attachments ?? []).reduce((sum, file) => {
+      const payload = inlineData(file.url)
+      if (!payload) return sum
+      return sum + Token.estimate(payload)
+    }, 0)
+    return text + files
   }
 
   export const AgentPart = PartBase.extend({
@@ -519,6 +538,17 @@ export namespace MessageV2 {
     })
   }
 
+  function skillNoopReason(reason?: string) {
+    if (reason === "duplicate_in_turn") return "already active in this assistant message"
+    if (reason === "same_turn") return "already loaded for this unresolved user turn"
+    if (reason === "near_context") return "already loaded and context is still near"
+    return "already active in context"
+  }
+
+  export function skillNoopMarker(input: { name: string; reason?: string }) {
+    return `Context note: skill "${input.name}" load was a no-op (${skillNoopReason(input.reason)}). Treat the skill as loaded and continue without reloading.`
+  }
+
   export function toModelMessages(input: WithParts[], model: Provider.Model): ModelMessage[] {
     const result: UIMessage[] = []
     const toolNames = new Set<string>()
@@ -664,6 +694,7 @@ export namespace MessageV2 {
           role: "assistant",
           parts: [],
         }
+        const noops = new Set<string>()
         const superseded = projection.supersededNamesByMessageID.get(msg.info.id)
         if (superseded && superseded.length > 0) {
           assistantMessage.parts.push({
@@ -728,8 +759,32 @@ export namespace MessageV2 {
             if (
               part.tool === "skill" &&
               part.state.status === "completed" &&
-              (projection.supersededPartIDs.has(part.id) || noOpSkill)
+              projection.supersededPartIDs.has(part.id)
             ) {
+              continue
+            }
+
+            if (part.tool === "skill" && part.state.status === "completed" && noOpSkill) {
+              const meta = part.state.metadata
+              const data = meta && typeof meta === "object" ? (meta as { name?: unknown; reason?: unknown }) : {}
+              const inputName =
+                part.state.input && typeof part.state.input === "object"
+                  ? (part.state.input as { name?: unknown }).name
+                  : undefined
+              const name =
+                typeof data.name === "string" ? data.name : typeof inputName === "string" ? inputName : "unknown"
+              const reason = typeof data.reason === "string" ? data.reason : undefined
+              const key = `${name}:${reason ?? ""}`
+              if (!noops.has(key)) {
+                noops.add(key)
+                assistantMessage.parts.push({
+                  type: "text",
+                  text: skillNoopMarker({
+                    name,
+                    reason,
+                  }),
+                })
+              }
               continue
             }
 

@@ -1250,3 +1250,72 @@ Step one.
     },
   })
 })
+
+test("same-turn dedup no-ops despite marker boundaries when anchor matches", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const sessionID = Identifier.ascending("session")
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+        extra: {
+          turnContext: {
+            anchorUserID: "u1",
+          },
+        },
+      } as any)
+
+      const prior = priorSkillPart({
+        id: "p1",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID,
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [prior]), markerHistory("m1", "trim"), userHistory("u1")],
+        extra: {
+          turnContext: {
+            anchorUserID: "u1",
+          },
+        },
+      } as any)
+
+      expect((second.metadata as any).applied).toBe(false)
+      expect((second.metadata as any).status).toBe("noop")
+      expect((second.metadata as any).reason).toBe("same_turn")
+    },
+  })
+})

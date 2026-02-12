@@ -102,6 +102,64 @@ function basePart(messageID: string, id: string) {
   }
 }
 
+describe("session.message-v2.toolOutputTokens", () => {
+  test("counts output text and inline attachment payloads", () => {
+    const tool: MessageV2.ToolPart = {
+      ...basePart("m-assistant", "t1"),
+      type: "tool",
+      callID: "call-1",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "ls" },
+        output: "abcd",
+        title: "Bash",
+        metadata: {},
+        time: { start: 0, end: 1 },
+        attachments: [
+          {
+            ...basePart("m-assistant", "f1"),
+            type: "file",
+            mime: "image/png",
+            url: "data:image/png;base64,abcdefgh",
+            filename: "img.png",
+          },
+        ],
+      },
+    }
+
+    expect(MessageV2.toolOutputTokens(tool)).toBe(3)
+  })
+
+  test("ignores non-inline attachment urls", () => {
+    const tool: MessageV2.ToolPart = {
+      ...basePart("m-assistant", "t2"),
+      type: "tool",
+      callID: "call-2",
+      tool: "bash",
+      state: {
+        status: "completed",
+        input: { command: "ls" },
+        output: "abcd",
+        title: "Bash",
+        metadata: {},
+        time: { start: 0, end: 1 },
+        attachments: [
+          {
+            ...basePart("m-assistant", "f2"),
+            type: "file",
+            mime: "image/png",
+            url: "https://example.com/img.png",
+            filename: "img.png",
+          },
+        ],
+      },
+    }
+
+    expect(MessageV2.toolOutputTokens(tool)).toBe(1)
+  })
+})
+
 describe("session.message-v2.toModelMessage", () => {
   test("modelVisible excludes assistant messages with non-abort errors", () => {
     const msg: MessageV2.WithParts = {
@@ -1530,7 +1588,7 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("omits no-op skill reload output from model context", () => {
+  test("replaces no-op skill reload output with context marker", () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
 
@@ -1570,6 +1628,68 @@ describe("session.message-v2.toModelMessage", () => {
       {
         role: "user",
         content: [{ type: "text", text: "reload skill" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: 'Context note: skill "brainstorming" load was a no-op (already active in context). Treat the skill as loaded and continue without reloading.',
+          },
+        ],
+      },
+    ])
+  })
+
+  test("uses same-turn reason in no-op skill context marker", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "reload skill",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "skill",
+            state: {
+              status: "completed",
+              input: { name: "brainstorming" },
+              output: "NOOP_SKILL_OUTPUT",
+              title: "Skill up-to-date: brainstorming",
+              metadata: { name: "brainstorming", applied: false, status: "noop", reason: "same_turn" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "reload skill" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: 'Context note: skill "brainstorming" load was a no-op (already loaded for this unresolved user turn). Treat the skill as loaded and continue without reloading.',
+          },
+        ],
       },
     ])
   })

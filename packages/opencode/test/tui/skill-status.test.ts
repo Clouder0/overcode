@@ -22,6 +22,39 @@ describe("skill status", () => {
     expect(out).toBe("loading")
   })
 
+  test("hides duplicate no-op entries from same assistant turn", () => {
+    const out = resolveSkillStatus({
+      status: "completed",
+      applied: false,
+      reason: "duplicate_in_turn",
+      superseded: false,
+    })
+
+    expect(out).toBe("hidden")
+  })
+
+  test("hides near-context no-op entries to reduce transcript spam", () => {
+    const out = resolveSkillStatus({
+      status: "completed",
+      applied: false,
+      reason: "near_context",
+      superseded: false,
+    })
+
+    expect(out).toBe("hidden")
+  })
+
+  test("hides same-turn no-op entries to reduce transcript spam", () => {
+    const out = resolveSkillStatus({
+      status: "completed",
+      applied: false,
+      reason: "same_turn",
+      superseded: false,
+    })
+
+    expect(out).toBe("hidden")
+  })
+
   test("prefers noop over superseded for completed no-op loads", () => {
     const out = resolveSkillStatus({
       status: "completed",

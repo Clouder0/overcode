@@ -70,6 +70,9 @@ Before writing any assistant text that is meant to communicate information (repo
 - If the recipient includes any agent session(s) → use send_agent_message(to="ses_...", text="...").
 Never assume that writing assistant text will reach another agent.
 
+Skill invocation rule:
+- If a skill call reports up-to-date/no-op, treat the skill requirement as satisfied and do not call the same skill again in that response.
+
 How to choose the recipient session ID:
 - If you are replying to an agent message, use the sender session id shown in the message header.
 - If the instruction/task names a session id like ses_..., use that.

@@ -1806,7 +1806,7 @@ export namespace SessionPrompt {
 
     let step = 0
     let pendingPersistFailures = 0
-    const overflow = { min: undefined as number | undefined }
+    const overflow = { debt: 0, streak: 0, user: undefined as string | undefined }
     let resume: WaitResume | undefined
     while (true) {
       log.info("loop", { step, sessionID })
@@ -2162,6 +2162,13 @@ export namespace SessionPrompt {
       if (!pending) {
         log.info("exiting loop", { sessionID })
         break
+      }
+
+      const pendingID = pending.info.id
+      if (overflow.user !== pendingID) {
+        overflow.user = pendingID
+        overflow.debt = 0
+        overflow.streak = 0
       }
 
       const pendingIndex = users.findIndex((msg) => msg.info.id === pending.info.id)
@@ -2620,10 +2627,14 @@ export namespace SessionPrompt {
         const enabled = pipelineEnabled(cfg) && usable > 0
         if (!enabled) return { ok: true, markers }
 
-        const target = input.forced ? stricterBudget : budget
-        const snapshot = await estimateCurrent()
         const signal = typeof input.min === "number" && input.min > 0 ? input.min : 0
-        const needs = input.forced === true || snapshot.estimate > target || signal > 0
+        const recovering = input.cause === "overflow" && signal > 0
+        const highTarget = input.forced ? stricterBudget : budget
+        const band = recovering ? Math.min(25_000, Math.max(3_000, Math.floor(usable * 0.08))) : 0
+        const target = recovering ? Math.max(0, highTarget - band) : highTarget
+        const snapshot = await estimateCurrent()
+        const over = snapshot.estimate - target
+        const needs = input.forced === true || over > 0
         if (!needs) return { ok: true, markers }
 
         const allowed = input.allowed ?? (await allowMaintenance({ sessionID, cause: input.cause }))
@@ -2670,9 +2681,13 @@ export namespace SessionPrompt {
         const rawExcess = basis.estimate - target
         // Keep a minimum reduction target when the caller provides one.
         const base = rawExcess > 0 ? rawExcess : 0
-        const forcedMin = input.forced ? Math.max(500, Math.floor(target * 0.05)) : 0
+        const forcedMin = input.forced ? Math.max(500, Math.floor(highTarget * 0.05)) : 0
         const baseline = input.forced ? Math.max(base, forcedMin) : base
-        const excess = Math.max(baseline, signal)
+        const floor =
+          recovering && base > 0
+            ? Math.min(30_000, Math.max(2_000, Math.floor(usable * (input.aggressive === true ? 0.08 : 0.04))))
+            : 0
+        const excess = Math.max(baseline, signal, floor)
 
         // 1) Trim tool outputs first
         const toolsToTrim = sessionMessages
@@ -2686,7 +2701,7 @@ export namespace SessionPrompt {
           if (freed >= excess) break
           if (part.state.status !== "completed") continue
           if (part.state.time.compacted) continue
-          freed += Token.estimate(part.state.output)
+          freed += MessageV2.toolOutputTokens(part)
           trimmedCount += 1
           part.state.time.compacted = started
           await Session.updatePart(part)
@@ -2721,7 +2736,15 @@ export namespace SessionPrompt {
           return nextIndex > currentIndex
         })()
 
-        const shouldUpdateCPD = afterTrim.estimate > target || (input.forced === true && canAdvanceCPD)
+        const shouldUpdateCPD = (() => {
+          if (!canAdvanceCPD) return false
+          if (input.forced === true) return true
+          if (afterTrim.estimate <= highTarget) return false
+          if (!recovering) return true
+          if (!trimmed) return true
+          if (input.aggressive === true) return true
+          return false
+        })()
 
         const cpdAdvanced = await iife(async () => {
           if (!shouldUpdateCPD) return false
@@ -2774,7 +2797,19 @@ export namespace SessionPrompt {
                   if (p.tool === "skill") {
                     const meta = p.state.metadata
                     if (meta && typeof meta === "object" && (meta as { applied?: unknown }).applied === false) {
-                      return []
+                      const data = meta as { name?: unknown; reason?: unknown }
+                      const inputName =
+                        p.state.input && typeof p.state.input === "object"
+                          ? (p.state.input as { name?: unknown }).name
+                          : undefined
+                      const name =
+                        typeof data.name === "string"
+                          ? data.name
+                          : typeof inputName === "string"
+                            ? inputName
+                            : "unknown"
+                      const reason = typeof data.reason === "string" ? data.reason : undefined
+                      return [MessageV2.skillNoopMarker({ name, reason })]
                     }
                   }
 
@@ -2909,7 +2944,7 @@ export namespace SessionPrompt {
         const afterCPD = await estimateCurrent()
         const forcedFallback = input.forced === true && !trimmed && !cpdAdvanced
         const needed = (() => {
-          const raw = afterCPD.estimate - target
+          const raw = afterCPD.estimate - highTarget
           const overflow = raw > 0 ? raw : 0
           if (input.aggressive === true) return Math.max(overflow, excess)
           if (forcedFallback) return Math.max(overflow, excess)
@@ -2992,7 +3027,7 @@ export namespace SessionPrompt {
         }
 
         const final = await estimateCurrent()
-        if (final.estimate > target) {
+        if (final.estimate > highTarget) {
           return {
             ok: false,
             message:
@@ -3008,10 +3043,19 @@ export namespace SessionPrompt {
 
       const preflight = await applyMaintenance({
         cause: "overflow",
-        min: overflow.min,
-        aggressive: overflow.min !== undefined,
+        min: overflow.debt > 0 ? overflow.debt : undefined,
+        aggressive: overflow.streak > 1,
       })
-      overflow.min = undefined
+      const reduced = preflight.markers.reduce((sum, marker) => sum + (marker.tokens ?? 0), 0)
+      if (overflow.debt > 0) {
+        overflow.debt = Math.max(0, overflow.debt - reduced)
+      }
+      if (overflow.debt > 0 && reduced === 0 && preflight.ok) {
+        overflow.debt = 0
+      }
+      if (overflow.debt === 0) {
+        overflow.streak = 0
+      }
       pendingMarkers.push(...preflight.markers)
       if (!preflight.ok) {
         const error = new NamedError.Unknown({ message: preflight.message }).toObject()
@@ -3100,10 +3144,14 @@ export namespace SessionPrompt {
           }
           const live = await Session.get(sessionID)
           const wc = waitContext(sessionMessages)
-          const visibleSkillMessages = sessionMessages.filter((message) => MessageV2.modelVisible(message))
+          const skillMessages = await Session.messages({ sessionID })
+          const visibleSkillMessages = skillMessages.filter((message) => MessageV2.modelVisible(message))
           const skillContext = {
             messageIDs: Array.from(new Set(visibleSkillMessages.map((message) => message.info.id))),
             messages: visibleSkillMessages,
+          }
+          const turnContext = {
+            anchorUserID: lastUser.id,
           }
           const tools = await resolveTools({
             agent,
@@ -3113,6 +3161,7 @@ export namespace SessionPrompt {
             processor,
             messages: msgs,
             skillContext,
+            turnContext,
             waitContext: wc,
           })
 
@@ -3145,12 +3194,18 @@ export namespace SessionPrompt {
 
           const request = processor.compactionRequest
           if (request?.reason !== "context_length") {
-            const tokens = processor.message.tokens
-            const used = tokens.input + tokens.cache.read + tokens.output
-            const over = used - usable
+            const estimate = await estimateCurrent()
+            const attempt = await MessageV2.get({
+              sessionID,
+              messageID: processor.message.id,
+            }).catch(() => undefined)
+            const added = attempt ? estimateModel(MessageV2.toModelMessages([attempt], model)) : 0
+            const over = estimate.estimate + added - budget
             const bump = over > 0 ? over : 0
-            const min = Math.min(20_000, Math.max(500, bump + 500))
-            overflow.min = min
+            const relief = Math.min(12_000, Math.max(1_500, Math.floor(usable * 0.03)))
+            const add = Math.min(30_000, Math.max(2_000, bump + relief))
+            overflow.debt = Math.min(60_000, overflow.debt + add)
+            overflow.streak = Math.min(8, overflow.streak + 1)
 
             // Overflow is handled by the next preflight; don't retry a completed call.
             processed = processor.message
@@ -3364,6 +3419,9 @@ export namespace SessionPrompt {
       messageIDs: string[]
       messages: MessageV2.WithParts[]
     }
+    turnContext?: {
+      anchorUserID: string
+    }
     waitContext?: {
       maxSeqBySource: Record<string, number>
     }
@@ -3388,6 +3446,7 @@ export namespace SessionPrompt {
           model: input.model,
           session: input.session,
           skillContext: input.skillContext,
+          turnContext: input.turnContext,
           waitContext: input.waitContext,
         },
         agent: input.agent.name,

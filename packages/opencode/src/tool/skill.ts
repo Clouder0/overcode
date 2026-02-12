@@ -131,6 +131,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
       }
 
       const skillContext = (ctx.extra as { skillContext?: unknown } | undefined)?.skillContext
+      const turnContext = (ctx.extra as { turnContext?: unknown } | undefined)?.turnContext
       const skillData =
         skillContext && typeof skillContext === "object"
           ? (skillContext as {
@@ -138,6 +139,16 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
               visibleMessageIDs?: unknown
               messages?: MessageV2.WithParts[]
             })
+          : undefined
+      const turnData =
+        turnContext && typeof turnContext === "object"
+          ? (turnContext as {
+              anchorUserID?: unknown
+            })
+          : undefined
+      const anchorUserID =
+        typeof turnData?.anchorUserID === "string" && turnData.anchorUserID.length > 0
+          ? turnData.anchorUserID
           : undefined
       const history = Array.isArray(skillData?.messages)
         ? skillData.messages
@@ -230,8 +241,10 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         return meta as Record<string, unknown>
       })()
       const priorHash = typeof priorMeta?.hash === "string" ? priorMeta.hash : undefined
+      const priorAnchor = typeof priorMeta?.anchorUserID === "string" ? priorMeta.anchorUserID : undefined
       const sameHash = priorHash === hash
       const compacted = !!priorState?.time.compacted
+      const sameTurn = !!prior && !!priorState && !!anchorUserID && sameHash && priorAnchor === anchorUserID
 
       const sincePrior = prior
         ? [
@@ -267,8 +280,8 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         return {
           title: `Skill up-to-date: ${skill.name}`,
           output: [
-            `Skill "${skill.name}" has already been loaded in this assistant message.`,
-            "Skipped duplicate call.",
+            `Skill "${skill.name}" is already active in this assistant message.`,
+            "Do not call the skill tool again in this response; continue with the task directly.",
           ].join("\n"),
           metadata: {
             name: skill.name,
@@ -280,6 +293,29 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
             turns: 0,
             maxTurns: 1,
             reason: "duplicate_in_turn",
+            ...(anchorUserID ? { anchorUserID } : {}),
+          },
+        }
+      }
+
+      if (sameTurn) {
+        return {
+          title: `Skill up-to-date: ${skill.name}`,
+          output: [
+            `Skill "${skill.name}" is already loaded for this unresolved user turn.`,
+            "Skipped duplicate reload.",
+          ].join("\n"),
+          metadata: {
+            name: skill.name,
+            dir,
+            enabledTools,
+            applied: false,
+            status: "noop",
+            hash,
+            turns,
+            maxTurns: 1,
+            reason: "same_turn",
+            ...(anchorUserID ? { anchorUserID } : {}),
           },
         }
       }
@@ -301,6 +337,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
             turns,
             maxTurns: 1,
             reason: "near_context",
+            ...(anchorUserID ? { anchorUserID } : {}),
           },
         }
       }
@@ -327,6 +364,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
           turns,
           maxTurns: 1,
           reason: "applied",
+          ...(anchorUserID ? { anchorUserID } : {}),
         },
       }
     },

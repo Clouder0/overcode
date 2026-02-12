@@ -982,6 +982,9 @@ describe("session.prompt CPD delta tool output", () => {
 
         expect(capturedDelta).toBeDefined()
         expect(capturedDelta).not.toContain("NOOP_SKILL_OUTPUT")
+        expect(capturedDelta).toContain(
+          'Context note: skill "brainstorming" load was a no-op (already active in context). Treat the skill as loaded and continue without reloading.',
+        )
       },
     })
   })
