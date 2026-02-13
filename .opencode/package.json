@@ -1,6 +1,6 @@
 {
   "dependencies": {
     "@octokit/rest": "^22.0.1",
-    "@opencode-ai/plugin": "1.1.60"
+    "@opencode-ai/plugin": "1.1.65"
   }
 }

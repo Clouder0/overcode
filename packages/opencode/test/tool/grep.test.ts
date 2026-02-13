@@ -83,6 +83,34 @@ describe("tool.grep", () => {
       },
     })
   })
+
+  test("applies transport truncation even when grep metadata has truncated=false", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const line = "prefix " + "x".repeat(3000)
+        const content = Array.from({ length: 30 }, () => line).join("\n")
+        await Bun.write(path.join(dir, "big.txt"), content)
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const grep = await GrepTool.init()
+        const result = await grep.execute(
+          {
+            pattern: "prefix",
+            path: tmp.path,
+          },
+          ctx,
+        )
+
+        expect(result.metadata.matches).toBeGreaterThan(0)
+        expect(result.output).toContain("The tool call succeeded but the output was truncated")
+        expect((result.metadata as any).outputPath).toBeTruthy()
+      },
+    })
+  })
 })
 
 describe("CRLF regex handling", () => {

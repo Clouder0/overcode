@@ -51,10 +51,10 @@ export namespace Tool {
   ): Info<Parameters, Result> {
     return {
       id,
-      init: async (ctx) => {
-        const toolInfo = init instanceof Function ? await init(ctx) : init
+      init: async (initCtx) => {
+        const toolInfo = init instanceof Function ? await init(initCtx) : init
         const execute = toolInfo.execute
-        toolInfo.execute = async (args, ctx) => {
+        toolInfo.execute = async (args, runCtx) => {
           let parsed: any
           try {
             parsed = toolInfo.parameters.parse(args)
@@ -68,18 +68,19 @@ export namespace Tool {
             )
           }
 
-          const result = await execute(parsed, ctx)
-          if ((result.metadata as any)?.truncated !== undefined) {
-            return result
-          }
-
-          const truncated = await Truncate.output(result.output, {}, ctx.extra?.agent)
+          const result = await execute(parsed, runCtx)
+          const source = result.metadata as { truncated?: unknown } | undefined
+          const resultTruncated = typeof source?.truncated === "boolean" ? source.truncated : undefined
+          const truncated = await Truncate.output(result.output, {}, runCtx.extra?.agent ?? initCtx?.agent)
+          const merged = truncated.truncated || resultTruncated === true
           return {
             ...result,
             output: truncated.content,
             metadata: {
               ...result.metadata,
-              truncated: truncated.truncated,
+              ...(resultTruncated !== undefined && { resultTruncated }),
+              truncated: merged,
+              transportTruncated: truncated.truncated,
               ...(truncated.truncated && { outputPath: truncated.outputPath }),
             },
           }

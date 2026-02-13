@@ -2698,6 +2698,7 @@ export namespace SessionPrompt {
 
         let freed = 0
         let trimmedCount = 0
+        const touched = [] as MessageV2.ToolPart[]
         for (const part of toolsToTrim) {
           if (freed >= excess) break
           if (part.state.status !== "completed") continue
@@ -2706,17 +2707,30 @@ export namespace SessionPrompt {
           trimmedCount += 1
           part.state.time.compacted = started
           await Session.updatePart(part)
+          touched.push(part)
         }
 
         // 2) Compact only the prefix before the anchor user into CPD
         const afterTrim = await estimateCurrent()
         const estimateBefore = basis.estimate
-        const estimateAfterTrim = afterTrim.estimate
-        const freedActual = Math.max(0, estimateBefore - estimateAfterTrim)
+        const freedActual = Math.max(0, estimateBefore - afterTrim.estimate)
         const trimmed = trimmedCount > 0 && freedActual > 0
+        const estimateAfterTrim = await iife(async () => {
+          if (trimmed) return afterTrim.estimate
+          if (touched.length === 0) return afterTrim.estimate
+          for (const part of touched) {
+            if (part.state.status !== "completed") continue
+            if (part.state.time.compacted !== started) continue
+            part.state.time.compacted = undefined
+            await Session.updatePart(part)
+          }
+          return (await estimateCurrent()).estimate
+        })
 
         if (trimmed) {
           await SessionCPD.flag(sessionID, { trim: true })
+          const overage = Math.max(0, estimateBefore - target)
+          const headroom = Math.max(0, excess - overage)
           markers.push({
             kind: "trim",
             at: started,
@@ -2731,8 +2745,8 @@ export namespace SessionPrompt {
             aggressive: input.aggressive === true,
             estimateBefore,
             estimateAfterTrim,
-            overage: Math.max(0, estimateBefore - target),
-            headroom: Math.max(0, target - estimateBefore),
+            overage,
+            headroom,
             excessTarget: excess,
             trimmedCount,
             freedEstimate: freed,
@@ -2757,7 +2771,7 @@ export namespace SessionPrompt {
         const shouldUpdateCPD = (() => {
           if (!canAdvanceCPD) return false
           if (input.forced === true) return true
-          if (afterTrim.estimate <= highTarget) return false
+          if (estimateAfterTrim <= highTarget) return false
           if (!recovering) return true
           if (!trimmed) return true
           if (input.aggressive === true) return true
@@ -3632,10 +3646,15 @@ export namespace SessionPrompt {
           }
         }
 
+        const source = result.metadata as { truncated?: unknown } | undefined
+        const resultTruncated = typeof source?.truncated === "boolean" ? source.truncated : undefined
         const truncated = await Truncate.output(textParts.join("\n\n"), {}, input.agent)
+        const mergedTruncated = truncated.truncated || resultTruncated === true
         const metadata = {
           ...(result.metadata ?? {}),
-          truncated: truncated.truncated,
+          ...(resultTruncated !== undefined && { resultTruncated }),
+          truncated: mergedTruncated,
+          transportTruncated: truncated.truncated,
           ...(truncated.truncated && { outputPath: truncated.outputPath }),
         }
 
