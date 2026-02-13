@@ -1,8 +1,6 @@
-import path from "path"
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { appendFile, writeFile } from "fs/promises"
-import { Global } from "@/global"
 import { Identifier } from "@/id/id"
 import { createSimpleContext } from "../../context/helper"
 import { useSDK } from "@tui/context/sdk"
@@ -10,6 +8,7 @@ import { useSync } from "@tui/context/sync"
 import { useToast } from "../../ui/toast"
 import { usePromptStash } from "./stash"
 import type { PromptInfo } from "./history"
+import { promptQueueFilePath } from "./queue-file"
 
 type QueueItem = {
   id: string
@@ -77,7 +76,7 @@ export const { use: usePromptQueue, provider: PromptQueueProvider } = createSimp
     const sync = useSync()
     const stash = usePromptStash()
 
-    const file = Bun.file(path.join(Global.Path.state, "prompt-queue.jsonl"))
+    const file = Bun.file(promptQueueFilePath())
     const [store, setStore] = createStore<{ items: QueueItem[] }>({ items: [] })
 
     const [flushing, setFlushing] = createSignal(false)

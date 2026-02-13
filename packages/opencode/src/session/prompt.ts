@@ -61,6 +61,7 @@ import { MessageParser } from "./message-parser"
 import { Truncate } from "@/tool/truncation"
 import { Token } from "@/util/token"
 import { SkillProjection } from "@/util/skill-projection"
+import { SessionLease } from "./lease"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1198,6 +1199,14 @@ export namespace SessionPrompt {
       if (SessionCompaction.manual(input.sessionID)) {
         throw new Session.BusyError({ sessionID: input.sessionID })
       }
+
+      const lease = await SessionLease.acquire(input.sessionID)
+      if (!lease) {
+        throw new Session.BusyError({ sessionID: input.sessionID })
+      }
+      using _lease = defer(() => {
+        void lease.release()
+      })
 
       // Human input cancels waiting.
       if (WaitPolicy.isWaiting(input.sessionID)) {

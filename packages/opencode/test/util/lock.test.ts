@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { createHash } from "crypto"
+import fs from "fs/promises"
+import path from "path"
 import { Lock } from "../../src/util/lock"
+import { Global } from "../../src/global"
 
 function tick() {
   return new Promise<void>((r) => queueMicrotask(r))
@@ -10,6 +14,29 @@ async function flush(n = 5) {
 }
 
 describe("util.lock", () => {
+  test("recovers orphaned cross-process lock quickly", async () => {
+    const key = "lock:orphan:" + Math.random().toString(36).slice(2)
+    const hash = createHash("sha256").update(key).digest("hex")
+    const file = path.join(Global.Path.state, "lock", hash + ".lock")
+
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await Bun.write(
+      file,
+      JSON.stringify({
+        token: "orphan",
+        pid: 999999,
+        time: Date.now(),
+      }),
+    )
+
+    const started = Date.now()
+    const lock = await Lock.write(key)
+    const elapsed = Date.now() - started
+    lock[Symbol.dispose]()
+
+    expect(elapsed < 1000).toBeTrue()
+  })
+
   test("writer exclusivity: blocks reads and other writes while held", async () => {
     const key = "lock:" + Math.random().toString(36).slice(2)
 
