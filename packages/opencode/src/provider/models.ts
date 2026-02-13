@@ -110,23 +110,48 @@ export namespace ModelsDev {
         "User-Agent": Installation.USER_AGENT,
       },
       signal: AbortSignal.timeout(10 * 1000),
-    }).catch((e) => {
+    }).catch((error) => {
       log.error("Failed to fetch models.dev", {
-        error: e,
+        error,
       })
+      return undefined
     })
-    if (result && result.ok) {
-      await Bun.write(file, await result.text())
-      ModelsDev.Data.reset()
-    }
+    if (!result) return
+    if (!result.ok) return
+
+    const json = await result.text().catch((error) => {
+      log.error("Failed to read models.dev response", {
+        error,
+      })
+      return undefined
+    })
+    if (json === undefined) return
+
+    const written = await Bun.write(file, json).catch((error) => {
+      log.error("Failed to write models.dev cache", {
+        error,
+      })
+      return undefined
+    })
+    if (written === undefined) return
+
+    ModelsDev.Data.reset()
   }
 }
 
+function refresh() {
+  return ModelsDev.refresh().catch((error) => {
+    Log.Default.error("models refresh failed", {
+      error,
+    })
+  })
+}
+
 if (!Flag.OPENCODE_DISABLE_MODELS_FETCH) {
-  ModelsDev.refresh()
+  void refresh()
   setInterval(
-    async () => {
-      await ModelsDev.refresh()
+    () => {
+      void refresh()
     },
     60 * 1000 * 60,
   ).unref()
