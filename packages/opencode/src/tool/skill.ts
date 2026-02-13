@@ -223,10 +223,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         if (item.part.tool !== "skill") return false
         if (item.part.state.status !== "completed") return false
         if (nameForPart(item.part) !== skill.name) return false
-
-        const meta = item.part.state.metadata
-        if (!meta || typeof meta !== "object") return true
-        return (meta as { applied?: unknown }).applied !== false
+        return true
       })
 
       const priorState =

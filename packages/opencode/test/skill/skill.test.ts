@@ -1319,3 +1319,94 @@ Step one.
     },
   })
 })
+
+test("promotes repeated near-context no-op to same-turn on next attempt", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_promote_same_turn",
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+        extra: {
+          turnContext: {
+            anchorUserID: "u0",
+          },
+        },
+      } as any)
+
+      const applied = priorSkillPart({
+        id: "p-applied",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_promote_same_turn",
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [applied]), userHistory("u1")],
+        extra: {
+          turnContext: {
+            anchorUserID: "u1",
+          },
+        },
+      } as any)
+
+      expect((second.metadata as any).reason).toBe("near_context")
+
+      const near = priorSkillPart({
+        id: "p-near",
+        name: "brainstorming",
+        metadata: second.metadata as any,
+      })
+
+      const third = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_promote_same_turn",
+        messageID: "msg-3",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [applied]), assistantHistory("a2", [near]), userHistory("u1")],
+        extra: {
+          turnContext: {
+            anchorUserID: "u1",
+          },
+        },
+      } as any)
+
+      expect((third.metadata as any).applied).toBe(false)
+      expect((third.metadata as any).status).toBe("noop")
+      expect((third.metadata as any).reason).toBe("same_turn")
+    },
+  })
+})
