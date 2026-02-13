@@ -14,6 +14,7 @@ import { Provider } from "../provider/provider"
 import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, type ModelMessage } from "ai"
 import { SessionCompaction } from "./compaction"
 import { SessionCPD } from "./cpd"
+import { computeTrimExcess } from "./maintenance"
 import { SessionRetry } from "./retry"
 import { Instance } from "../project/instance"
 import { InstanceBootstrap } from "../project/bootstrap"
@@ -2678,19 +2679,19 @@ export namespace SessionPrompt {
         )
 
         const basis = await estimateCurrent()
-        const rawExcess = basis.estimate - target
-        // Keep a minimum reduction target when the caller provides one.
-        const base = rawExcess > 0 ? rawExcess : 0
-        const forcedMin = input.forced ? Math.max(500, Math.floor(highTarget * 0.05)) : 0
-        const baseline = input.forced ? Math.max(base, forcedMin) : base
-        const floor =
-          recovering && base > 0
-            ? Math.min(30_000, Math.max(2_000, Math.floor(usable * (input.aggressive === true ? 0.08 : 0.04))))
-            : 0
-        const excess = Math.max(baseline, signal, floor)
+        const excess = computeTrimExcess({
+          usable,
+          estimate: basis.estimate,
+          target,
+          forced: input.forced === true,
+          recovering,
+          aggressive: input.aggressive === true,
+          min: signal,
+        })
 
         // 1) Trim tool outputs first
         const toolsToTrim = sessionMessages
+          .filter((message) => MessageV2.modelVisible(message))
           .flatMap((m) => m.parts)
           .filter((p): p is MessageV2.ToolPart => p.type === "tool")
           .filter((p) => p.tool !== "skill")
@@ -2707,20 +2708,37 @@ export namespace SessionPrompt {
           await Session.updatePart(part)
         }
 
-        if (freed > 0) {
+        // 2) Compact only the prefix before the anchor user into CPD
+        const afterTrim = await estimateCurrent()
+        const estimateBefore = basis.estimate
+        const estimateAfterTrim = afterTrim.estimate
+        const freedActual = Math.max(0, estimateBefore - estimateAfterTrim)
+        const trimmed = trimmedCount > 0 && freedActual > 0
+
+        if (trimmed) {
           await SessionCPD.flag(sessionID, { trim: true })
           markers.push({
             kind: "trim",
             at: started,
             count: trimmedCount,
-            tokens: freed,
+            tokens: freedActual,
+          })
+
+          log.debug("tool outputs trimmed", {
+            cause: input.cause,
+            forced: input.forced === true,
+            recovering,
+            aggressive: input.aggressive === true,
+            estimateBefore,
+            estimateAfterTrim,
+            overage: Math.max(0, estimateBefore - target),
+            headroom: Math.max(0, target - estimateBefore),
+            excessTarget: excess,
+            trimmedCount,
+            freedEstimate: freed,
+            freedActual,
           })
         }
-
-        const trimmed = freed > 0
-
-        // 2) Compact only the prefix before the anchor user into CPD
-        const afterTrim = await estimateCurrent()
         const prefixUsers = users.slice(startIndex, pendingIndex)
         const uptoUser = prefixUsers.at(-1)?.info.id
         const canAdvanceCPD = (() => {
