@@ -1278,16 +1278,17 @@ export namespace SessionPrompt {
     targetUserID: string
   }): Promise<MessageV2.WithParts> {
     const seen = new Set<string>()
+    const deadline = Date.now() + 120_000
 
-    for (let attempts = 0; attempts < 32; attempts++) {
-      const result = await runLoop(input.sessionID)
-      if (assistantTargetsUser({ assistant: result, targetUserID: input.targetUserID })) return result
-
+    while (Date.now() < deadline) {
       const match = await findTargetAssistant({
         sessionID: input.sessionID,
         targetUserID: input.targetUserID,
       })
       if (match) return match
+
+      const result = await runLoop(input.sessionID)
+      if (assistantTargetsUser({ assistant: result, targetUserID: input.targetUserID })) return result
 
       const key = result.info.id
       if (seen.has(key)) {
@@ -1296,7 +1297,7 @@ export namespace SessionPrompt {
       seen.add(key)
     }
 
-    throw new Error(`Target assistant resolution exceeded retry budget for user ${input.targetUserID}`)
+    throw new Error(`Target assistant resolution timed out for user ${input.targetUserID}`)
   }
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
@@ -1379,6 +1380,50 @@ export namespace SessionPrompt {
     return controller.signal
   }
 
+  function releaseLocal(sessionID: string) {
+    const s = state()
+    const match = s[sessionID]
+    if (!match) return
+
+    match.doneResolve()
+    delete s[sessionID]
+
+    const status = SessionStatus.get(sessionID)
+    if (status.type !== "waiting") {
+      SessionStatus.set(sessionID, { type: "idle" })
+    }
+
+    if (!wakeAfter().has(sessionID)) return
+    wakeAfter().delete(sessionID)
+
+    const hasPending = SessionMessage.hasPending(sessionID)
+    const hasWait = WaitPolicy.isWaiting(sessionID)
+    if (!hasPending && !hasWait) return
+
+    if (status.type === "waiting") {
+      const policy = WaitPolicy.get(sessionID)
+      if (!policy) {
+        SessionStatus.set(sessionID, { type: "idle" })
+        wake(sessionID)
+        return
+      }
+
+      const respondedFromSources = SessionMessage.respondedRecoverable({
+        to: sessionID,
+        sources: policy.sources,
+        since: policy.since,
+      })
+
+      const result = WaitPolicy.evaluate({ policy, respondedFromSources })
+      if (!result.ready) return
+
+      wake(sessionID)
+      return
+    }
+
+    wake(sessionID)
+  }
+
   function cancelLocal(sessionID: string, input?: { force?: boolean }) {
     log.info("cancel", { sessionID })
     const s = state()
@@ -1433,44 +1478,8 @@ export namespace SessionPrompt {
       return
     }
 
-    match.doneResolve()
-    delete s[sessionID]
-
-    const status = SessionStatus.get(sessionID)
-    if (status.type !== "waiting") {
-      SessionStatus.set(sessionID, { type: "idle" })
-    }
-
-    if (!wakeAfter().has(sessionID)) return
-    wakeAfter().delete(sessionID)
-
-    const hasPending = SessionMessage.hasPending(sessionID)
-    const hasWait = WaitPolicy.isWaiting(sessionID)
-    if (!hasPending && !hasWait) return
-
-    if (status.type === "waiting") {
-      const policy = WaitPolicy.get(sessionID)
-      if (!policy) {
-        SessionStatus.set(sessionID, { type: "idle" })
-        wake(sessionID)
-        return
-      }
-
-      const respondedFromSources = SessionMessage.respondedRecoverable({
-        to: sessionID,
-        sources: policy.sources,
-        since: policy.since,
-      })
-
-      const result = WaitPolicy.evaluate({ policy, respondedFromSources })
-
-      if (!result.ready) return
-
-      wake(sessionID)
-      return
-    }
-
-    wake(sessionID)
+    // Soft cancel only requests abort. The active loop keeps ownership until
+    // unwind so a second loop cannot start concurrently.
   }
 
   export function cancel(sessionID: string, input?: { force?: boolean }) {
@@ -1811,7 +1820,7 @@ export namespace SessionPrompt {
       })
     }
 
-    using _ = defer(() => cancelLocal(sessionID, { force: false }))
+    using _ = defer(() => releaseLocal(sessionID))
     overflowNotice()
 
     let step = 0
@@ -3377,8 +3386,9 @@ export namespace SessionPrompt {
     SessionCompaction.prune({ sessionID }).catch((error) => {
       log.error("failed to prune session", { sessionID, error: error?.message })
     })
-    for await (const item of MessageV2.stream(sessionID)) {
-      if (item.info.role === "user") continue
+    const msgs = await Session.messages({ sessionID })
+    const item = msgs.findLast((msg) => msg.info.role !== "user") ?? msgs.at(-1)
+    if (item) {
       const active = state()[sessionID]
       const queued = active?.callbacks ?? []
       if (active) {
@@ -3397,6 +3407,7 @@ export namespace SessionPrompt {
       }
       return item
     }
+
     throw new Error("Impossible")
   }
 
@@ -4266,7 +4277,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     if (!abort) {
       throw new Session.BusyError({ sessionID: input.sessionID })
     }
-    using _ = defer(() => cancel(input.sessionID, { force: false }))
+    using _ = defer(() => releaseLocal(input.sessionID))
 
     const session = await Session.get(input.sessionID)
     if (session.revert) {
