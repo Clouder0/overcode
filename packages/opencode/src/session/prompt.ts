@@ -653,6 +653,42 @@ export namespace SessionPrompt {
     return end
   }
 
+  function isParked(msg: MessageV2.WithParts | undefined) {
+    if (!msg) return false
+    if (msg.info.role !== "assistant") return false
+    const info = msg.info as MessageV2.Assistant
+    if (!info.finish) return false
+    if (isAssistantAnswered(info)) return false
+    if (info.finish === "tool-calls") return true
+    if (info.finish === "unknown") return true
+    return false
+  }
+
+  function selectPending(input: {
+    users: MessageV2.WithParts[]
+    isUnanswered: (msg: MessageV2.WithParts) => boolean
+    byParent: Map<string, MessageV2.WithParts[]>
+  }) {
+    const base = input.users.find(input.isUnanswered)
+    if (!base) return
+    if (inboxMessage(base)) return base
+
+    const replies = input.byParent.get(base.info.id) ?? []
+    const latest = replies.at(-1)
+    if (!isParked(latest)) return base
+
+    const start = input.users.findIndex((msg) => msg.info.id === base.info.id)
+    if (start === -1) return base
+
+    const inbox = input.users.slice(start + 1).find((msg) => {
+      if (!input.isUnanswered(msg)) return false
+      return inboxMessage(msg)
+    })
+
+    if (!inbox) return base
+    return inbox
+  }
+
   function waitMatchesSource(input: { message: SessionMessage.Message; sources: string[] }) {
     if (input.message.messageType === "notice") return false
     if (input.message.messageType === "wait_result") return false
@@ -2176,7 +2212,11 @@ export namespace SessionPrompt {
         })
       }
 
-      const pending = users.find(unanswered)
+      const pending = selectPending({
+        users,
+        isUnanswered: unanswered,
+        byParent,
+      })
 
       if (!pending) {
         log.info("exiting loop", { sessionID })

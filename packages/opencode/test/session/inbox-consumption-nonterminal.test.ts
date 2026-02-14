@@ -265,3 +265,140 @@ test("human-anchored turn does not consume inbound message until inbox turn", as
     }
   }
 })
+
+test("incoming inbox preempts parked nonterminal task turn", async () => {
+  const g = globalThis as any
+  const prev = g.__OPENCODE_TEST_ALLOW_LOOP__
+  const allow = new Set<string>()
+  g.__OPENCODE_TEST_ALLOW_LOOP__ = allow
+
+  try {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const source = await Session.create({})
+
+        allow.add(session.id)
+
+        await using _cleanup = {
+          [Symbol.asyncDispose]: async () => {
+            await Session.remove(source.id)
+            await Session.remove(session.id)
+          },
+        }
+
+        const now = Date.now()
+        const seedID = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: seedID,
+          sessionID: session.id,
+          role: "user",
+          time: { created: now - 1000 },
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-4",
+          },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: seedID,
+          type: "text",
+          text: "seed",
+        })
+
+        await Session.updateMessage({
+          id: Identifier.ascending("message"),
+          sessionID: session.id,
+          role: "assistant",
+          parentID: seedID,
+          mode: "build",
+          agent: "build",
+          path: { cwd: tmp.path, root: tmp.path },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          providerID: "dummy",
+          modelID: "dummy",
+          time: { created: now - 900, completed: now - 900 },
+          finish: "tool-calls",
+        } satisfies MessageV2.Assistant)
+
+        const delivered = await SessionMessage.deliver({
+          from: source.id,
+          to: session.id,
+          text: "agent update",
+        })
+
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+
+        const seen = {
+          calls: 0,
+          anchor: "",
+          hasIncoming: false,
+        }
+
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            partFromToolCall: () => undefined,
+            async process(input: any) {
+              seen.calls += 1
+              seen.anchor = input.user.id
+              seen.hasIncoming = JSON.stringify(input.messages ?? []).includes("agent update")
+              args.assistantMessage.finish = "stop"
+              args.assistantMessage.time.completed = Date.now()
+              await Session.updateMessage(args.assistantMessage)
+              return "stop"
+            },
+          } as any
+        })
+
+        await using _restore = {
+          [Symbol.asyncDispose]: async () => {
+            providerSpy.mockRestore()
+            processorSpy.mockRestore()
+          },
+        }
+
+        await SessionPrompt.loop(session.id)
+
+        expect(seen.calls).toBe(1)
+        expect(seen.anchor).toBe(delivered.id)
+        expect(seen.hasIncoming).toBe(true)
+
+        const message = await MessageV2.get({
+          sessionID: session.id,
+          messageID: delivered.id,
+        })
+
+        const inbound = message.parts.find((part): part is MessageV2.MessagePart => {
+          if (part.type !== "message") return false
+          return part.direction === "incoming"
+        })
+
+        expect((inbound?.metadata as any)?.opencode?.consumed).toBe(true)
+      },
+    })
+  } finally {
+    if (prev === undefined) {
+      delete g.__OPENCODE_TEST_ALLOW_LOOP__
+    }
+    if (prev !== undefined) {
+      g.__OPENCODE_TEST_ALLOW_LOOP__ = prev
+    }
+  }
+})
