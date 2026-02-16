@@ -1634,7 +1634,7 @@ describe("session.message-v2.toModelMessage", () => {
         content: [
           {
             type: "text",
-            text: 'Context note: skill "brainstorming" load was a no-op (already active in context). Treat the skill as loaded and continue without reloading.',
+            text: 'Context note: skill "brainstorming" load was a no-op (already active in context). Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly.',
           },
         ],
       },
@@ -1687,7 +1687,7 @@ describe("session.message-v2.toModelMessage", () => {
         content: [
           {
             type: "text",
-            text: 'Context note: skill "brainstorming" load was a no-op (already loaded for this unresolved user turn). Treat the skill as loaded and continue without reloading.',
+            text: 'Context note: skill "brainstorming" load was a no-op (already loaded for this unresolved user turn). Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly.',
           },
         ],
       },

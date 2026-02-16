@@ -401,6 +401,7 @@ Step one.
       expect((second.metadata as any).applied).toBe(false)
       expect((second.metadata as any).status).toBe("noop")
       expect((second.metadata as any).reason).toBe("near_context")
+      expect(second.output).toContain("Do not call the skill tool again for this unresolved user turn.")
     },
   })
 })
@@ -457,6 +458,7 @@ Step one.
       expect((second.metadata as any).applied).toBe(false)
       expect((second.metadata as any).status).toBe("noop")
       expect((second.metadata as any).reason).toBe("duplicate_in_turn")
+      expect(second.output).toContain("Do not call the skill tool again for this unresolved user turn.")
     },
   })
 })
@@ -1316,6 +1318,7 @@ Step one.
       expect((second.metadata as any).applied).toBe(false)
       expect((second.metadata as any).status).toBe("noop")
       expect((second.metadata as any).reason).toBe("same_turn")
+      expect(second.output).toContain("Do not call the skill tool again for this unresolved user turn.")
     },
   })
 })

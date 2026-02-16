@@ -47,7 +47,9 @@ describe("session.system message protocol", () => {
   test("documents that no-op skill loads satisfy requirement", () => {
     const protocol = SystemPrompt.messageProtocol("primary", "ses_test").join("\n")
 
-    expect(protocol).toContain("If a skill call reports up-to-date/no-op, treat the skill requirement as satisfied")
-    expect(protocol).toContain("do not call the same skill again in that response")
+    expect(protocol).toContain(
+      "If a skill call reports up-to-date/no-op for any reason (duplicate_in_turn, same_turn, near_context), treat the skill requirement as satisfied",
+    )
+    expect(protocol).toContain("do not call the same skill again for this unresolved user turn")
   })
 })

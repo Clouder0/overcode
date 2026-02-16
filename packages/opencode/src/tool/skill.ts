@@ -273,13 +273,13 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         return false
       })()
 
+      const noReload =
+        "Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly."
+
       if (duplicate) {
         return {
           title: `Skill up-to-date: ${skill.name}`,
-          output: [
-            `Skill "${skill.name}" is already active in this assistant message.`,
-            "Do not call the skill tool again in this response; continue with the task directly.",
-          ].join("\n"),
+          output: [`Skill "${skill.name}" is already active in this assistant message.`, noReload].join("\n"),
           metadata: {
             name: skill.name,
             dir,
@@ -298,10 +298,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
       if (sameTurn) {
         return {
           title: `Skill up-to-date: ${skill.name}`,
-          output: [
-            `Skill "${skill.name}" is already loaded for this unresolved user turn.`,
-            "Skipped duplicate reload.",
-          ].join("\n"),
+          output: [`Skill "${skill.name}" is already loaded for this unresolved user turn.`, noReload].join("\n"),
           metadata: {
             name: skill.name,
             dir,
@@ -320,10 +317,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
       if (near) {
         return {
           title: `Skill already loaded: ${skill.name}`,
-          output: [
-            `Skill "${skill.name}" is already loaded and context is still near.`,
-            "Skipped duplicate reload.",
-          ].join("\n"),
+          output: [`Skill "${skill.name}" is already loaded and context is still near.`, noReload].join("\n"),
           metadata: {
             name: skill.name,
             dir,

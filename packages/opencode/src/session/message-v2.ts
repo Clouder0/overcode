@@ -546,7 +546,7 @@ export namespace MessageV2 {
   }
 
   export function skillNoopMarker(input: { name: string; reason?: string }) {
-    return `Context note: skill "${input.name}" load was a no-op (${skillNoopReason(input.reason)}). Treat the skill as loaded and continue without reloading.`
+    return `Context note: skill "${input.name}" load was a no-op (${skillNoopReason(input.reason)}). Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly.`
   }
 
   export function toModelMessages(input: WithParts[], model: Provider.Model): ModelMessage[] {

@@ -3235,7 +3235,17 @@ export namespace SessionPrompt {
           const live = await Session.get(sessionID)
           const wc = waitContext(sessionMessages)
           const skillMessages = await Session.messages({ sessionID })
-          const visibleSkillMessages = skillMessages.filter((message) => MessageV2.modelVisible(message))
+          const scopedSkillMessages = sessionMessages.filter((message) => MessageV2.modelVisible(message))
+          const scopedSkillIDs = new Set(scopedSkillMessages.map((message) => message.info.id))
+          const carrySkillMessages = skillMessages.filter((message) => {
+            if (!MessageV2.modelVisible(message)) return false
+            if (scopedSkillIDs.has(message.info.id)) return false
+            if (message.info.role !== "assistant") return false
+            const assistant = message.info as MessageV2.Assistant
+            if (!assistant.parentID) return false
+            return assistant.parentID === lastUser.id
+          })
+          const visibleSkillMessages = [...scopedSkillMessages, ...carrySkillMessages]
           const skillContext = {
             messageIDs: Array.from(new Set(visibleSkillMessages.map((message) => message.info.id))),
             messages: visibleSkillMessages,
