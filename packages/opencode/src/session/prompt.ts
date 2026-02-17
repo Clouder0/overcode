@@ -668,7 +668,13 @@ export namespace SessionPrompt {
     users: MessageV2.WithParts[]
     isUnanswered: (msg: MessageV2.WithParts) => boolean
     byParent: Map<string, MessageV2.WithParts[]>
+    preferredUserID?: string
   }) {
+    if (input.preferredUserID) {
+      const preferred = input.users.find((msg) => msg.info.id === input.preferredUserID)
+      if (preferred && input.isUnanswered(preferred)) return preferred
+    }
+
     const base = input.users.find(input.isUnanswered)
     if (!base) return
     if (inboxMessage(base)) return base
@@ -1313,7 +1319,7 @@ export namespace SessionPrompt {
     sessionID: string
     targetUserID: string
   }): Promise<MessageV2.WithParts> {
-    const seen = new Set<string>()
+    const stalled = new Map<string, number>()
     const deadline = Date.now() + 120_000
 
     while (Date.now() < deadline) {
@@ -1323,14 +1329,17 @@ export namespace SessionPrompt {
       })
       if (match) return match
 
-      const result = await runLoop(input.sessionID)
+      const result = await runLoop(input.sessionID, {
+        preferredUserID: input.targetUserID,
+      })
       if (assistantTargetsUser({ assistant: result, targetUserID: input.targetUserID })) return result
 
       const key = result.info.id
-      if (seen.has(key)) {
-        throw new Error(`Could not resolve target assistant for user ${input.targetUserID}`)
+      const repeats = (stalled.get(key) ?? 0) + 1
+      stalled.set(key, repeats)
+      if (repeats >= 4) {
+        throw new Error(`Could not resolve target assistant for user ${input.targetUserID}: stalled on ${key}`)
       }
-      seen.add(key)
     }
 
     throw new Error(`Target assistant resolution timed out for user ${input.targetUserID}`)
@@ -1821,7 +1830,7 @@ export namespace SessionPrompt {
     return capContextLengthMessage(trimmed)
   }
 
-  async function runLoop(sessionID: string): Promise<MessageV2.WithParts> {
+  async function runLoop(sessionID: string, opts?: { preferredUserID?: string }): Promise<MessageV2.WithParts> {
     // Manual compaction (server summarize) runs outside the prompt-loop state.
     // Do not start a concurrent loop while it is in-flight.
     if (!state()[sessionID] && SessionCompaction.manual(sessionID)) {
@@ -1832,12 +1841,12 @@ export namespace SessionPrompt {
     if (!abort) {
       const active = state()[sessionID]
       if (!active) {
-        return runLoop(sessionID)
+        return runLoop(sessionID, opts)
       }
 
       if (active.abort.signal.aborted) {
         await active.done
-        return runLoop(sessionID)
+        return runLoop(sessionID, opts)
       }
 
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
@@ -1852,7 +1861,7 @@ export namespace SessionPrompt {
           active.callbacks.splice(idx, 1)
         }
 
-        resolve(runLoop(sessionID))
+        resolve(runLoop(sessionID, opts))
       })
     }
 
@@ -2212,11 +2221,18 @@ export namespace SessionPrompt {
         })
       }
 
-      const pending = selectPending({
-        users,
-        isUnanswered: unanswered,
-        byParent,
-      })
+      const resumed = resume
+      const resumedPending =
+        resumed === undefined ? undefined : users.find((msg) => unanswered(msg) && waitReply({ msg, resume: resumed }))
+
+      const pending =
+        resumedPending ??
+        selectPending({
+          users,
+          isUnanswered: unanswered,
+          byParent,
+          preferredUserID: opts?.preferredUserID,
+        })
 
       if (!pending) {
         log.info("exiting loop", { sessionID })
@@ -2224,6 +2240,7 @@ export namespace SessionPrompt {
       }
 
       const pendingID = pending.info.id
+      const resumedTurn = resumedPending?.info.id === pendingID
       if (overflow.user !== pendingID) {
         overflow.user = pendingID
         overflow.debt = 0
@@ -2574,7 +2591,6 @@ export namespace SessionPrompt {
       const startIndex = baseIndex > pendingIndex ? pendingIndex : baseIndex
 
       const slice = users.slice(startIndex, endIndex + 1)
-      const resumed = resume
       const forwardTail =
         resumed === undefined ? [] : users.slice(pendingIndex + 1).filter((msg) => waitReply({ msg, resume: resumed }))
       const fallbackTail = resumed === undefined ? [] : users.filter((msg) => waitReply({ msg, resume: resumed }))
@@ -3427,6 +3443,7 @@ export namespace SessionPrompt {
       // Agent↔agent messaging and waiting are handled via tools (send_agent_message / wait_agent_message).
       // Note: send_agent_message is just a side-effect; it should not implicitly end the loop.
 
+      if (resumedTurn) break
       if (outcome === "stop") break
       continue
     }

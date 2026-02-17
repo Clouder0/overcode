@@ -238,3 +238,142 @@ test("prompt resolves target assistant even with backlog beyond 32 entries", asy
     },
   })
 }, 20_000)
+
+test("prompt target resolution prioritizes the requested user over parked backlog", async () => {
+  await using tmp = await tmpdir({ git: true })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const session = await Session.create({})
+
+      await using _cleanup = {
+        [Symbol.asyncDispose]: async () => {
+          await Session.remove(session.id).catch(() => {})
+        },
+      }
+
+      const now = Date.now()
+      const oldUser = Identifier.ascending("message")
+      await Session.updateMessage({
+        id: oldUser,
+        sessionID: session.id,
+        role: "user",
+        agent: "build",
+        model: {
+          providerID: "dummy",
+          modelID: "dummy",
+        },
+        variant: "old",
+        time: { created: now },
+      })
+      await Session.updatePart({
+        id: Identifier.ascending("part"),
+        sessionID: session.id,
+        messageID: oldUser,
+        type: "text",
+        text: "old",
+      })
+
+      const parked = Identifier.ascending("message")
+      await Session.updateMessage({
+        id: parked,
+        sessionID: session.id,
+        role: "assistant",
+        parentID: oldUser,
+        modelID: "dummy",
+        providerID: "dummy",
+        mode: "build",
+        agent: "build",
+        path: {
+          cwd: tmp.path,
+          root: tmp.path,
+        },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: {
+            read: 0,
+            write: 0,
+          },
+        },
+        time: {
+          created: now + 1,
+          completed: now + 1,
+        },
+        finish: "tool-calls",
+      })
+
+      const modelSpy = spyOn(Provider, "getModel").mockResolvedValue({
+        id: "dummy",
+        providerID: "dummy",
+        modelID: "dummy",
+        api: {
+          id: "dummy",
+          url: "",
+          npm: "@ai-sdk/openai-compatible",
+        },
+        limit: { context: 8192, output: 2048 },
+      } as any)
+
+      const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+        return {
+          message: args.assistantMessage,
+          compactionRequest: undefined,
+          waitSince() {
+            return 0
+          },
+          partFromToolCall() {
+            return undefined
+          },
+          async process() {
+            const message = args.assistantMessage
+            const msgs = await Session.messages({ sessionID: session.id })
+            const parent = msgs.find((msg) => msg.info.id === message.parentID)
+            if (!parent || parent.info.role !== "user") {
+              throw new Error("unexpected-non-user-selection")
+            }
+            if ((parent.info as MessageV2.User).variant !== "target") {
+              throw new Error("unexpected-backlog-selection")
+            }
+            message.finish = "end_turn"
+            message.time.completed = Date.now()
+            await Session.updatePart({
+              id: Identifier.ascending("part"),
+              sessionID: session.id,
+              messageID: message.id,
+              type: "text",
+              text: "target reply",
+            })
+            await Session.updateMessage(message)
+            return "stop"
+          },
+        } as any
+      })
+
+      await using _restore = {
+        [Symbol.asyncDispose]: async () => {
+          modelSpy.mockRestore()
+          processorSpy.mockRestore()
+        },
+      }
+
+      const result = await SessionPrompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        model: { providerID: "dummy", modelID: "dummy" },
+        variant: "target",
+        parts: [{ type: "text", text: "target" }],
+      })
+
+      expect(result.info.role).toBe("assistant")
+      const parent = (await Session.messages({ sessionID: session.id })).find(
+        (msg) => msg.info.id === (result.info as MessageV2.Assistant).parentID,
+      )
+      expect(parent?.info.role).toBe("user")
+      expect((parent?.info as MessageV2.User | undefined)?.variant).toBe("target")
+    },
+  })
+}, 20_000)

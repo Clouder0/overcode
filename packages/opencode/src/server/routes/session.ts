@@ -1469,19 +1469,24 @@ export const SessionRoutes = lazy(() =>
       validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
 
         if (SessionCompaction.manual(sessionID)) {
           throw new Session.BusyError({ sessionID })
         }
 
-        c.status(204)
-        c.header("Content-Type", "application/json")
-        return stream(c, async () => {
-          const body = c.req.valid("json")
-          SessionPrompt.prompt({ ...body, sessionID }).catch((error) => {
-            log.error("prompt_async failed", { sessionID, error: error?.message })
-          })
+        await SessionPrompt.prompt({
+          ...body,
+          sessionID,
+          noReply: true,
         })
+
+        const work = SessionPrompt.loop(sessionID).catch((error) => {
+          log.error("prompt_async failed", { sessionID, error: error?.message })
+        })
+
+        void work
+        return c.body(null, 204)
       },
     )
     .post(
