@@ -2123,8 +2123,6 @@ function Skill(props: ToolProps<any>) {
     })
   })
 
-  if (status() === "hidden") return null
-
   const icon = createMemo(() => {
     if (status() === "failed") return "✗"
     if (status() === "loading") return "◐"
@@ -2151,31 +2149,33 @@ function Skill(props: ToolProps<any>) {
   })
 
   return (
-    <>
-      <InlineTool
-        icon={icon()}
-        iconColor={iconColor()}
-        pending={`Loading skill ${name()}...`}
-        complete={complete()}
-        part={props.part}
-      >
-        {title()}
-      </InlineTool>
-      <Show when={status() === "superseded"}>
-        <box paddingLeft={3}>
-          <text paddingLeft={3} fg={theme.textMuted}>
-            ↳ Superseded by newer load in this session
-          </text>
-        </box>
-      </Show>
-      <Show when={status() === "noop"}>
-        <box paddingLeft={3}>
-          <text paddingLeft={3} fg={theme.textMuted}>
-            ↳ Reused existing active skill load
-          </text>
-        </box>
-      </Show>
-    </>
+    <Show when={status() !== "hidden"}>
+      <>
+        <InlineTool
+          icon={icon()}
+          iconColor={iconColor()}
+          pending={`Loading skill ${name()}...`}
+          complete={complete()}
+          part={props.part}
+        >
+          {title()}
+        </InlineTool>
+        <Show when={status() === "superseded"}>
+          <box paddingLeft={3}>
+            <text paddingLeft={3} fg={theme.textMuted}>
+              ↳ Superseded by newer load in this session
+            </text>
+          </box>
+        </Show>
+        <Show when={status() === "noop"}>
+          <box paddingLeft={3}>
+            <text paddingLeft={3} fg={theme.textMuted}>
+              ↳ Reused existing active skill load
+            </text>
+          </box>
+        </Show>
+      </>
+    </Show>
   )
 }
 

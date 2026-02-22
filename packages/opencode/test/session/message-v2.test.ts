@@ -1588,7 +1588,7 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("replaces no-op skill reload output with context marker", () => {
+  test("preserves no-op skill reload as tool_use/tool_result pair", () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
 
@@ -1624,7 +1624,8 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+    const result = MessageV2.toModelMessages(input, model)
+    expect(result).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "reload skill" }],
@@ -1633,15 +1634,29 @@ describe("session.message-v2.toModelMessage", () => {
         role: "assistant",
         content: [
           {
-            type: "text",
-            text: 'Context note: skill "brainstorming" load was a no-op (already active in context). Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly.',
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "skill",
+            input: { name: "brainstorming" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "skill",
+            output: { type: "text", value: "NOOP_SKILL_OUTPUT" },
           },
         ],
       },
     ])
   })
 
-  test("uses same-turn reason in no-op skill context marker", () => {
+  test("preserves no-op skill with same-turn reason as tool_use/tool_result pair", () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
 
@@ -1677,7 +1692,8 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+    const result = MessageV2.toModelMessages(input, model)
+    expect(result).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "reload skill" }],
@@ -1686,8 +1702,22 @@ describe("session.message-v2.toModelMessage", () => {
         role: "assistant",
         content: [
           {
-            type: "text",
-            text: 'Context note: skill "brainstorming" load was a no-op (already loaded for this unresolved user turn). Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly.',
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "skill",
+            input: { name: "brainstorming" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "skill",
+            output: { type: "text", value: "NOOP_SKILL_OUTPUT" },
           },
         ],
       },

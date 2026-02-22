@@ -2907,24 +2907,6 @@ export namespace SessionPrompt {
                   if (m.info.role !== "assistant") return []
                   if (p.state.status !== "completed") return []
                   if (p.tool === "skill" && projection.supersededPartIDs.has(p.id)) return []
-                  if (p.tool === "skill") {
-                    const meta = p.state.metadata
-                    if (meta && typeof meta === "object" && (meta as { applied?: unknown }).applied === false) {
-                      const data = meta as { name?: unknown; reason?: unknown }
-                      const inputName =
-                        p.state.input && typeof p.state.input === "object"
-                          ? (p.state.input as { name?: unknown }).name
-                          : undefined
-                      const name =
-                        typeof data.name === "string"
-                          ? data.name
-                          : typeof inputName === "string"
-                            ? inputName
-                            : "unknown"
-                      const reason = typeof data.reason === "string" ? data.reason : undefined
-                      return [MessageV2.skillNoopMarker({ name, reason })]
-                    }
-                  }
 
                   const raw = p.state.output
                   const excerpt = MessageV2.excerpt(raw, 4000)

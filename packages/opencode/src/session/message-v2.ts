@@ -538,17 +538,6 @@ export namespace MessageV2 {
     })
   }
 
-  function skillNoopReason(reason?: string) {
-    if (reason === "duplicate_in_turn") return "already active in this assistant message"
-    if (reason === "same_turn") return "already loaded for this unresolved user turn"
-    if (reason === "near_context") return "already loaded and context is still near"
-    return "already active in context"
-  }
-
-  export function skillNoopMarker(input: { name: string; reason?: string }) {
-    return `Context note: skill "${input.name}" load was a no-op (${skillNoopReason(input.reason)}). Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly.`
-  }
-
   export function toModelMessages(input: WithParts[], model: Provider.Model): ModelMessage[] {
     const result: UIMessage[] = []
     const toolNames = new Set<string>()
@@ -694,7 +683,6 @@ export namespace MessageV2 {
           role: "assistant",
           parts: [],
         }
-        const noops = new Set<string>()
         const superseded = projection.supersededNamesByMessageID.get(msg.info.id)
         if (superseded && superseded.length > 0) {
           assistantMessage.parts.push({
@@ -747,44 +735,11 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
-            const noOpSkill =
-              part.tool === "skill" &&
-              part.state.status === "completed" &&
-              (() => {
-                const meta = part.state.metadata
-                if (!meta || typeof meta !== "object") return false
-                return (meta as { applied?: unknown }).applied === false
-              })()
-
             if (
               part.tool === "skill" &&
               part.state.status === "completed" &&
               projection.supersededPartIDs.has(part.id)
             ) {
-              continue
-            }
-
-            if (part.tool === "skill" && part.state.status === "completed" && noOpSkill) {
-              const meta = part.state.metadata
-              const data = meta && typeof meta === "object" ? (meta as { name?: unknown; reason?: unknown }) : {}
-              const inputName =
-                part.state.input && typeof part.state.input === "object"
-                  ? (part.state.input as { name?: unknown }).name
-                  : undefined
-              const name =
-                typeof data.name === "string" ? data.name : typeof inputName === "string" ? inputName : "unknown"
-              const reason = typeof data.reason === "string" ? data.reason : undefined
-              const key = `${name}:${reason ?? ""}`
-              if (!noops.has(key)) {
-                noops.add(key)
-                assistantMessage.parts.push({
-                  type: "text",
-                  text: skillNoopMarker({
-                    name,
-                    reason,
-                  }),
-                })
-              }
               continue
             }
 
