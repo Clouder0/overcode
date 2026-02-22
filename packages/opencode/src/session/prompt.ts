@@ -167,7 +167,7 @@ export namespace SessionPrompt {
   const QUIET_MS = 50
   const SETTLE_MAX_MS = 250
   const debounce = Instance.state(
-    () => new Map<string, { timer: ReturnType<typeof setTimeout>; first: number }>(),
+    () => new Map<string, { timer: ReturnType<typeof setTimeout>; first: number; generation: number }>(),
     async (map) => {
       for (const entry of map.values()) {
         clearTimeout(entry.timer)
@@ -175,6 +175,54 @@ export namespace SessionPrompt {
       map.clear()
     },
   )
+
+  const wakeGeneration = Instance.state(
+    () => new Map<string, number>(),
+    async (map) => {
+      map.clear()
+    },
+  )
+
+  function generation(sessionID: string) {
+    return wakeGeneration().get(sessionID) ?? 0
+  }
+
+  function bump(sessionID: string) {
+    const current = generation(sessionID)
+    const next = current + 1
+    wakeGeneration().set(sessionID, next)
+    return next
+  }
+
+  function clearScheduledWake(sessionID: string) {
+    const scheduled = debounce()
+    const current = scheduled.get(sessionID)
+    if (!current) return
+    clearTimeout(current.timer)
+    scheduled.delete(sessionID)
+  }
+
+  function invalidateWake(sessionID: string) {
+    clearScheduledWake(sessionID)
+    bump(sessionID)
+  }
+
+  function hasWakeWork(sessionID: string) {
+    if (SessionMessage.hasPending(sessionID)) return true
+    const wait = WaitPolicy.get(sessionID)
+    if (!wait) return false
+
+    const respondedFromSources = SessionMessage.respondedRecoverable({
+      to: sessionID,
+      sources: wait.sources,
+      since: wait.since,
+    })
+    const result = WaitPolicy.evaluate({
+      policy: wait,
+      respondedFromSources,
+    })
+    return result.ready
+  }
 
   const waking = Instance.state(
     () => new Set<string>(),
@@ -194,6 +242,8 @@ export namespace SessionPrompt {
       wakeAfter().add(sessionID)
       return
     }
+
+    if (!hasWakeWork(sessionID)) return
 
     queue.add(sessionID)
     log.info("waking session", { sessionID })
@@ -237,14 +287,19 @@ export namespace SessionPrompt {
     const current = scheduled.get(sessionID)
     const first = current ? current.first : now
     const delay = now - first >= input.max ? 0 : input.delay
+    const currentGeneration = generation(sessionID)
     if (current) clearTimeout(current.timer)
 
     const timer = setTimeout(() => {
+      const latest = scheduled.get(sessionID)
+      if (!latest) return
+      if (latest.timer !== timer) return
       scheduled.delete(sessionID)
+      if (latest.generation !== generation(sessionID)) return
       wake(sessionID)
     }, delay)
 
-    scheduled.set(sessionID, { timer, first })
+    scheduled.set(sessionID, { timer, first, generation: currentGeneration })
   }
 
   async function settleInbox(sessionID: string, abort: AbortSignal) {
@@ -1864,6 +1919,10 @@ export namespace SessionPrompt {
         resolve(runLoop(sessionID, opts))
       })
     }
+
+    // A newly-started loop owns wake delivery for this session.
+    // Cancel older debounced wake intents so stale timers cannot retrigger.
+    invalidateWake(sessionID)
 
     using _ = defer(() => releaseLocal(sessionID))
     overflowNotice()
