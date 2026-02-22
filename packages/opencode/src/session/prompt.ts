@@ -166,6 +166,7 @@ export namespace SessionPrompt {
   const DEBOUNCE_MAX_MS = 250
   const QUIET_MS = 50
   const SETTLE_MAX_MS = 250
+  const MAX_PERSIST_RETRIES = 10
   const debounce = Instance.state(
     () => new Map<string, { timer: ReturnType<typeof setTimeout>; first: number; generation: number }>(),
     async (map) => {
@@ -608,37 +609,6 @@ export namespace SessionPrompt {
     ].join("\n")
   }
 
-  type WaitResume = {
-    since: number
-    sources: Set<string>
-  }
-
-  function partSeq(part: MessageV2.MessagePart) {
-    const metadata = part.metadata
-    if (!metadata || typeof metadata !== "object") return
-    const opencode = (metadata as { opencode?: unknown }).opencode
-    if (!opencode || typeof opencode !== "object") return
-    const seq = (opencode as { seq?: unknown }).seq
-    if (typeof seq !== "number") return
-    if (!Number.isInteger(seq) || seq <= 0) return
-    return seq
-  }
-
-  function waitReply(input: { msg: MessageV2.WithParts; resume: WaitResume }) {
-    if (input.msg.info.role !== "user") return false
-
-    return input.msg.parts.some((part) => {
-      if (part.type !== "message") return false
-      if (!isRelevantInboundMessage(part)) return false
-      if (part.direction !== "incoming") return false
-      if (part.peerType !== "agent") return false
-      if (!input.resume.sources.has(part.peer)) return false
-      const seq = partSeq(part)
-      if (seq === undefined) return false
-      return seq > input.resume.since
-    })
-  }
-
   function normalizeContextMessages(input: { messages: MessageV2.WithParts[]; reference: MessageV2.WithParts[] }) {
     const rank = new Map(input.reference.map((msg, index) => [msg.info.id, index]))
     const seen = new Set<string>()
@@ -925,37 +895,19 @@ export namespace SessionPrompt {
         log.error("failed to update wait progress", { sessionID, error: error?.message })
       })
 
+      // Human messages interrupt the wait immediately.
+      // Non-source agent messages stay in the pending queue for the loop to handle.
       const pending = SessionMessage.peekPending(sessionID)
-      const nonSource = pending.filter((m) => !waitMatchesSource({ message: m, sources: policy.sources }))
-      if (nonSource.length > 0) {
-        const human = nonSource.some((m) => m.from === "human")
-        Promise.allSettled(nonSource.map((m) => persistInboundInDirectory(m, directory)))
-          .then((settled) => {
-            const ok = new Set<string>()
-            for (const [i, msg] of nonSource.entries()) {
-              if (settled[i]?.status === "fulfilled") ok.add(msg.id)
-            }
-            if (ok.size === 0) return
-
-            SessionMessage.takePending(
-              sessionID,
-              (msg) => ok.has(msg.id) && !waitMatchesSource({ message: msg, sources: policy.sources }),
-            )
-          })
-          .catch((error) => {
-            log.error("failed to persist non-source wait messages", { sessionID, error: error?.message })
-          })
-
-        if (human) {
-          interruptWaitInDirectory(sessionID, policy, directory, "prompt").catch((error) => {
-            log.error("failed to interrupt wait on incoming human message", { sessionID, error: error?.message })
-          })
-          WaitPolicy.clear(sessionID)
-          SessionStatus.set(sessionID, { type: "idle" })
-          scheduleWake(sessionID, { delay: 0, max: 0 })
-          await saved
-          return
-        }
+      const human = pending.some((m) => m.from === "human")
+      if (human) {
+        interruptWaitInDirectory(sessionID, policy, directory, "prompt").catch((error) => {
+          log.error("failed to interrupt wait on incoming human message", { sessionID, error: error?.message })
+        })
+        WaitPolicy.clear(sessionID)
+        SessionStatus.set(sessionID, { type: "idle" })
+        scheduleWake(sessionID, { delay: 0, max: 0 })
+        await saved
+        return
       }
 
       const respondedFromSources = SessionMessage.respondedRecoverable({
@@ -974,6 +926,7 @@ export namespace SessionPrompt {
         return
       }
 
+      // Wait condition met — wake the loop to handle resolution and all queued messages.
       scheduleWake(sessionID, { delay: 0, max: 0 })
       await saved
       return
@@ -1493,7 +1446,15 @@ export namespace SessionPrompt {
       SessionStatus.set(sessionID, { type: "idle" })
     }
 
-    if (!wakeAfter().has(sessionID)) return
+    if (!wakeAfter().has(sessionID)) {
+      // Safety net: ensure sessions with pending work are not left idle.
+      // This can happen if messages arrive and are persisted outside the loop
+      // (e.g., by the wake function) but no wakeAfter was recorded.
+      if (hasWakeWork(sessionID)) {
+        scheduleWake(sessionID, { delay: DEBOUNCE_MS, max: DEBOUNCE_MAX_MS })
+      }
+      return
+    }
     wakeAfter().delete(sessionID)
 
     const hasPending = SessionMessage.hasPending(sessionID)
@@ -1930,42 +1891,37 @@ export namespace SessionPrompt {
     let step = 0
     let pendingPersistFailures = 0
     const overflow = { debt: 0, streak: 0, user: undefined as string | undefined }
-    let resume: WaitResume | undefined
     while (true) {
       log.info("loop", { step, sessionID })
       if (abort.aborted) break
 
       const wait = WaitPolicy.get(sessionID)
       if (wait) {
+        // Human messages in the pending queue interrupt the wait.
         const pendingMessages = SessionMessage.peekPending(sessionID)
-        const nonSource = pendingMessages.filter((msg) => !waitMatchesSource({ message: msg, sources: wait.sources }))
-        if (nonSource.length > 0) {
-          const settled = await Promise.allSettled(nonSource.map((msg) => persistInbound(msg)))
-          const ok = new Set<string>()
-          const human = nonSource.some((msg) => msg.from === "human")
+        const human = pendingMessages.some((msg) => msg.from === "human")
 
-          for (const [i, msg] of nonSource.entries()) {
+        if (human) {
+          // Persist all pending messages (human + agent) before continuing.
+          const settled = await Promise.allSettled(pendingMessages.map((msg) => persistInbound(msg)))
+          const ok = new Set<string>()
+          for (const [i, msg] of pendingMessages.entries()) {
             if (settled[i]?.status === "fulfilled") ok.add(msg.id)
           }
-
           if (ok.size > 0) {
-            SessionMessage.takePending(
-              sessionID,
-              (msg) => ok.has(msg.id) && !waitMatchesSource({ message: msg, sources: wait.sources }),
-            )
+            SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id))
           }
 
-          if (human) {
-            await interruptWait(sessionID, wait, "prompt").catch((error) => {
-              log.error("failed to interrupt wait in run loop", { sessionID, error: error?.message })
-            })
+          await interruptWait(sessionID, wait, "prompt").catch((error) => {
+            log.error("failed to interrupt wait in run loop", { sessionID, error: error?.message })
+          })
 
-            WaitPolicy.clear(sessionID)
-            SessionStatus.set(sessionID, { type: "busy" })
-            continue
-          }
+          WaitPolicy.clear(sessionID)
+          SessionStatus.set(sessionID, { type: "busy" })
+          continue
         }
 
+        // Evaluate wait condition using both durable state and pending queue.
         const respondedFromSources = SessionMessage.respondedRecoverable({
           to: sessionID,
           sources: wait.sources,
@@ -1989,32 +1945,27 @@ export namespace SessionPrompt {
           break
         }
 
+        // Wait condition met — resolve the wait and persist all queued messages.
         WaitPolicy.clear(sessionID)
         SessionStatus.set(sessionID, { type: "busy" })
 
-        const pending = SessionMessage.peekPending(sessionID)
-
-        const settled = await Promise.allSettled(pending.map((m) => persistInbound(m)))
-        const ok = new Set<string>()
-        for (const [i, msg] of pending.entries()) {
-          if (settled[i]?.status === "fulfilled") ok.add(msg.id)
-        }
-        if (ok.size > 0) {
-          SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id))
+        // Persist ALL pending messages (source replies + non-source agent messages).
+        const allPending = SessionMessage.peekPending(sessionID)
+        if (allPending.length > 0) {
+          const settled = await Promise.allSettled(allPending.map((m) => persistInbound(m)))
+          const ok = new Set<string>()
+          for (const [i, msg] of allPending.entries()) {
+            if (settled[i]?.status === "fulfilled") ok.add(msg.id)
+          }
+          if (ok.size > 0) {
+            SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id))
+          }
         }
 
         const respondedSources = result.respondedSources
         const timedOutSources = result.timedOut ? result.missingSources : []
 
-        resume =
-          respondedSources.length > 0
-            ? {
-                since: wait.since,
-                sources: new Set(respondedSources),
-              }
-            : undefined
-
-        // Generate ONE comprehensive wait result message (system message)
+        // Generate wait result message for timed-out waits.
         if (result.timedOut) {
           const wildcard = wait.sources.length === 1 && wait.sources[0] === "*"
 
@@ -2091,6 +2042,7 @@ export namespace SessionPrompt {
           await persistInbound(waitResultMessage)
         }
 
+        // Update the wait tool part with resolution metadata.
         const parts = await MessageV2.parts(wait.messageID)
         const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === wait.callID)
 
@@ -2144,6 +2096,8 @@ export namespace SessionPrompt {
           })
         }
 
+        // Continue the loop normally — selectPending will find all accumulated
+        // unanswered messages and batch them into the next LLM turn.
         SessionStatus.set(sessionID, { type: "busy" })
         continue
       }
@@ -2198,6 +2152,15 @@ export namespace SessionPrompt {
 
           if (ok.size === 0) {
             pendingPersistFailures++
+            if (pendingPersistFailures > MAX_PERSIST_RETRIES) {
+              log.error("persist retries exhausted, dropping pending messages", {
+                sessionID,
+                count: pending.length,
+                retries: pendingPersistFailures,
+              })
+              SessionMessage.takePending(sessionID, () => true)
+              break
+            }
             const delay = Math.min(100 * Math.pow(2, pendingPersistFailures - 1), 2000)
             await SessionRetry.sleep(delay, abort).catch(() => {})
           }
@@ -2280,18 +2243,12 @@ export namespace SessionPrompt {
         })
       }
 
-      const resumed = resume
-      const resumedPending =
-        resumed === undefined ? undefined : users.find((msg) => unanswered(msg) && waitReply({ msg, resume: resumed }))
-
-      const pending =
-        resumedPending ??
-        selectPending({
-          users,
-          isUnanswered: unanswered,
-          byParent,
-          preferredUserID: opts?.preferredUserID,
-        })
+      const pending = selectPending({
+        users,
+        isUnanswered: unanswered,
+        byParent,
+        preferredUserID: opts?.preferredUserID,
+      })
 
       if (!pending) {
         log.info("exiting loop", { sessionID })
@@ -2299,7 +2256,6 @@ export namespace SessionPrompt {
       }
 
       const pendingID = pending.info.id
-      const resumedTurn = resumedPending?.info.id === pendingID
       if (overflow.user !== pendingID) {
         overflow.user = pendingID
         overflow.debt = 0
@@ -2337,15 +2293,15 @@ export namespace SessionPrompt {
         })
       }
 
-      step++
-
       const lastUser = pending.info as MessageV2.User
       const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID)
 
-      if (inbox || resume !== undefined) {
+      if (inbox) {
         const settled = await settleInbox(sessionID, abort)
         if (!settled) continue
       }
+
+      step++
       const task = tasks.pop()
 
       // pending subtask - spawn a subagent session (async)
@@ -2650,15 +2606,7 @@ export namespace SessionPrompt {
       const startIndex = baseIndex > pendingIndex ? pendingIndex : baseIndex
 
       const slice = users.slice(startIndex, endIndex + 1)
-      const forwardTail =
-        resumed === undefined ? [] : users.slice(pendingIndex + 1).filter((msg) => waitReply({ msg, resume: resumed }))
-      const fallbackTail = resumed === undefined ? [] : users.filter((msg) => waitReply({ msg, resume: resumed }))
-      const resumeTail = resumed === undefined ? [] : forwardTail.length > 0 ? forwardTail : fallbackTail
-      const queuedIDs = new Set(queued.map((msg) => msg.info.id))
-      const tail = resumed === undefined ? [] : resumeTail.filter((msg) => !queuedIDs.has(msg.info.id))
-      resume = undefined
-
-      const scope = tail.length > 0 ? [...slice, ...tail] : slice
+      const scope = slice
       const thread = scope.flatMap((m) => [m, ...(byParent.get(m.info.id) ?? [])])
       const scoped = await insertReminders({ messages: thread, agent, session })
 
@@ -3489,7 +3437,7 @@ export namespace SessionPrompt {
       }
 
       if (processed && !processed.error) {
-        const target = [...(inboxMessage(pending) ? queued : []), ...resumeTail]
+        const target = inboxMessage(pending) ? queued : []
         const consumed = Array.from(new Map(target.map((msg) => [msg.info.id, msg])).values())
         if (consumed.length > 0) {
           await consumeInboxMessages({
@@ -3502,7 +3450,6 @@ export namespace SessionPrompt {
       // Agent↔agent messaging and waiting are handled via tools (send_agent_message / wait_agent_message).
       // Note: send_agent_message is just a side-effect; it should not implicitly end the loop.
 
-      if (resumedTurn) break
       if (outcome === "stop") break
       continue
     }

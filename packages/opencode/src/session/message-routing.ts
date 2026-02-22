@@ -259,12 +259,6 @@ export namespace SessionMessage {
     return message
   }
 
-  export function pending(sessionID: string): Message[] {
-    const pending = pendingState()
-    const queue = pending.get(sessionID) ?? []
-    pending.set(sessionID, [])
-    return queue
-  }
 
   export function takePending(sessionID: string, predicate: (message: Message) => boolean): Message[] {
     const pending = pendingState()

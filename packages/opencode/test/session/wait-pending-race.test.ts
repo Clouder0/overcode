@@ -147,11 +147,13 @@ test("non-source agent pending does not interrupt wait and does not get stranded
         await Bun.sleep(80)
 
         const pending = SessionMessage.peekPending(session.id)
-        const stranded = pending.find((msg) => msg.from === other.id && msg.text === "non-source")
+        const queued = pending.find((msg) => msg.from === other.id && msg.text === "non-source")
 
         expect(calls.count).toBe(1)
         expect(WaitPolicy.isWaiting(session.id)).toBe(true)
-        expect(stranded).toBeUndefined()
+        // Non-source messages remain in the pending queue during a wait.
+        // They will be persisted and processed when the wait resolves.
+        expect(queued).toBeDefined()
       },
     })
   } finally {

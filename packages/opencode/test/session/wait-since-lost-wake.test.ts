@@ -168,6 +168,37 @@ test("wait resolves even if message arrived and pending was drained before wait 
         const seeded = await seed(tmp.path)
         allow.add(seeded.sessionID)
 
+        // After wait resolution, the loop continues and processes the seed message.
+        // Mock provider and processor so it completes cleanly.
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            waitSince() {
+              return 0
+            },
+            partFromToolCall() {
+              return undefined
+            },
+            async process() {
+              args.assistantMessage.finish = "end_turn"
+              args.assistantMessage.time.completed = Date.now()
+              await Session.updateMessage(args.assistantMessage)
+              return "stop" as const
+            },
+          } as any
+        })
+
         try {
           const since = SessionMessage.nowSeq(seeded.sessionID)
 
@@ -235,6 +266,8 @@ test("wait resolves even if message arrived and pending was drained before wait 
           expect(tool.state.output).toContain("Wait resolved")
           expect(tool.state.output).toContain("responded:")
         } finally {
+          providerSpy.mockRestore()
+          processorSpy.mockRestore()
           WaitPolicy.clear(seeded.sessionID)
           WaitPolicy.clear(seeded.sourceID)
           await Session.remove(seeded.sourceID)
@@ -479,7 +512,10 @@ test("wait resume consumes queued inbound replies as one scheduling turn", async
 
           await SessionPrompt.loop(seeded.sessionID)
 
-          expect(parents.length).toBe(1)
+          // The loop processes the queued replies in one batched turn, then continues
+          // to process the original (previously-parked) seed message in a second turn.
+          expect(parents.length).toBe(2)
+          // Both replies are in the first turn's context.
           expect(payloads[0] ?? "").toContain("reply one")
           expect(payloads[0] ?? "").toContain("reply two")
           const one = (payloads[0] ?? "").indexOf("reply one")

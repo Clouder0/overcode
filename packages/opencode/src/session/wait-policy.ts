@@ -1,6 +1,9 @@
 import { Instance } from "@/project/instance"
+import { Log } from "@/util/log"
 
 export namespace WaitPolicy {
+  const log = Log.create({ service: "wait-policy" })
+
   export type Mode = "all" | "any"
 
   export type Policy = {
@@ -157,7 +160,12 @@ export namespace WaitPolicy {
           fn: () => {
             wakeFn?.(input.sessionID)
           },
-        }).catch(() => {})
+        }).catch((error) => {
+          log.error("wait timeout failed to wake session", {
+            sessionID: input.sessionID,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
       }, input.timeout)
     }
 

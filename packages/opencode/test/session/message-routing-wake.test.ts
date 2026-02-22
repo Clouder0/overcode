@@ -200,12 +200,11 @@ function describeWaitDrain() {
 
       expect(stored).toBeDefined()
 
-      for (let i = 0; i < 100; i++) {
-        if (SessionMessage.peekPending(sessionID).length === 0) break
-        await Bun.sleep(10)
-      }
-
-      expect(SessionMessage.peekPending(sessionID).length).toBe(0)
+      // Non-source messages stay in the pending queue during a wait.
+      // They are persisted to durable storage but remain queued for
+      // the loop to process when the wait resolves.
+      const afterNonSource = SessionMessage.peekPending(sessionID)
+      expect(afterNonSource.some((m) => m.text === "non-source")).toBe(true)
 
       const fromSource = sources[0]!
       await SessionMessage.deliver({
@@ -217,8 +216,8 @@ function describeWaitDrain() {
       await Bun.sleep(25)
 
       const remaining = SessionMessage.peekPending(sessionID)
-      expect(remaining.length).toBe(1)
-      expect(remaining[0]?.from).toBe(fromSource)
+      // Both non-source and source messages are in the pending queue.
+      expect(remaining.some((m) => m.from === fromSource)).toBe(true)
     })
   })
 }
