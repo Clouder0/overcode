@@ -43,123 +43,123 @@ test("resume after wait coalesces a burst into a single model turn", async () =>
           },
         }
 
-      const now = Date.now()
-      const userID = Identifier.ascending("message")
-      await Session.updateMessage({
-        id: userID,
-        sessionID: session.id,
-        role: "user",
-        time: { created: now },
-        agent: "build",
-        model: { providerID: "dummy", modelID: "dummy" },
-      })
-      await Session.updatePart({
-        id: Identifier.ascending("part"),
-        sessionID: session.id,
-        messageID: userID,
-        type: "text",
-        text: "seed",
-      })
+        const now = Date.now()
+        const userID = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: userID,
+          sessionID: session.id,
+          role: "user",
+          time: { created: now },
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: userID,
+          type: "text",
+          text: "seed",
+        })
 
-      const waitAssistantID = Identifier.ascending("message")
-      await Session.updateMessage({
-        id: waitAssistantID,
-        sessionID: session.id,
-        role: "assistant",
-        parentID: userID,
-        mode: "build",
-        agent: "build",
-        path: { cwd: tmp.path, root: tmp.path },
-        cost: 0,
-        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-        modelID: "dummy",
-        providerID: "dummy",
-        time: { created: now, completed: now },
-        finish: "tool-calls",
-      } satisfies MessageV2.Assistant)
+        const waitAssistantID = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: waitAssistantID,
+          sessionID: session.id,
+          role: "assistant",
+          parentID: userID,
+          mode: "build",
+          agent: "build",
+          path: { cwd: tmp.path, root: tmp.path },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: "dummy",
+          providerID: "dummy",
+          time: { created: now, completed: now },
+          finish: "tool-calls",
+        } satisfies MessageV2.Assistant)
 
-      const callID = "call_wait"
+        const callID = "call_wait"
 
-      const since = SessionMessage.checkpoint(session.id)
-      const wait = WaitPolicy.register({
-        sessionID: session.id,
-        messageID: waitAssistantID,
-        callID,
-        sources: [source.id],
-        timeout: 10_000,
-        mode: "all",
-        since,
-      })
+        const since = SessionMessage.checkpoint(session.id)
+        const wait = WaitPolicy.register({
+          sessionID: session.id,
+          messageID: waitAssistantID,
+          callID,
+          sources: [source.id],
+          timeout: 10_000,
+          mode: "all",
+          since,
+        })
 
-      SessionStatus.set(session.id, {
-        type: "waiting",
-        sources: wait.sources,
-        timeout: wait.timeout,
-        mode: wait.mode,
-        since: wait.since,
-        time: wait.time,
-      })
+        SessionStatus.set(session.id, {
+          type: "waiting",
+          sources: wait.sources,
+          timeout: wait.timeout,
+          mode: wait.mode,
+          since: wait.since,
+          time: wait.time,
+        })
 
-      const started = Promise.withResolvers<void>()
-      let delayed = false
-      const dummy = {
-        id: "dummy",
-        providerID: "dummy",
-        api: {
+        const started = Promise.withResolvers<void>()
+        let delayed = false
+        const dummy = {
           id: "dummy",
-          url: "",
-          npm: "@ai-sdk/openai-compatible",
-        },
-        limit: { context: 8192, output: 2048 },
-      } as any
-
-      const providerSpy = spyOn(Provider, "getModel").mockImplementation(async () => {
-        if (!delayed) {
-          delayed = true
-          started.resolve()
-          await Bun.sleep(150)
-        }
-        return dummy
-      })
-
-      const calls = { count: 0 }
-      const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
-        return {
-          message: args.assistantMessage,
-          compactionRequest: undefined,
-          partFromToolCall: () => undefined,
-          async process() {
-            calls.count += 1
-            args.assistantMessage.finish = "stop"
-            args.assistantMessage.time.completed = Date.now()
-            await Session.updateMessage(args.assistantMessage)
-            return "stop"
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
           },
+          limit: { context: 8192, output: 2048 },
         } as any
-      })
 
-      await SessionMessage.deliver({
-        from: source.id,
-        to: session.id,
-        text: "reply 1",
-        awaitWake: true,
-      })
+        const providerSpy = spyOn(Provider, "getModel").mockImplementation(async () => {
+          if (!delayed) {
+            delayed = true
+            started.resolve()
+            await Bun.sleep(150)
+          }
+          return dummy
+        })
 
-      const run = SessionPrompt.loop(session.id)
+        const calls = { count: 0 }
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            partFromToolCall: () => undefined,
+            async process() {
+              calls.count += 1
+              args.assistantMessage.finish = "stop"
+              args.assistantMessage.time.completed = Date.now()
+              await Session.updateMessage(args.assistantMessage)
+              return "stop"
+            },
+          } as any
+        })
 
-      await started.promise
+        await SessionMessage.deliver({
+          from: source.id,
+          to: session.id,
+          text: "reply 1",
+          awaitWake: true,
+        })
 
-      await SessionMessage.deliver({
-        from: source.id,
-        to: session.id,
-        text: "reply 2",
-        awaitWake: true,
-      })
+        const run = SessionPrompt.loop(session.id)
 
-      await run
-      await Bun.sleep(900)
+        await started.promise
 
-      expect(calls.count).toBe(1)
+        await SessionMessage.deliver({
+          from: source.id,
+          to: session.id,
+          text: "reply 2",
+          awaitWake: true,
+        })
+
+        await run
+        await Bun.sleep(900)
+
+        expect(calls.count).toBe(1)
 
         processorSpy.mockRestore()
         providerSpy.mockRestore()

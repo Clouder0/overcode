@@ -197,6 +197,11 @@ export const SessionRoutes = lazy(() =>
       validator(
         "query",
         z.object({
+          scope: z
+            .enum(["directory", "project"])
+            .optional()
+            .default("directory")
+            .meta({ description: "Session list scope: directory (default) or project" }),
           directory: z.string().optional().meta({ description: "Filter sessions by project directory" }),
           roots: z.coerce.boolean().optional().meta({ description: "Only return root sessions (no parentID)" }),
           start: z.coerce
@@ -210,9 +215,10 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const query = c.req.valid("query")
         const term = query.search?.toLowerCase()
+        const directory = query.directory ?? (query.scope === "directory" ? Instance.directory : undefined)
         const sessions: Session.Info[] = []
         for await (const session of Session.list()) {
-          if (query.directory !== undefined && session.directory !== query.directory) continue
+          if (directory !== undefined && session.directory !== directory) continue
           if (query.roots && session.parentID) continue
           if (query.start !== undefined && session.time.updated < query.start) continue
           if (term !== undefined && !session.title.toLowerCase().includes(term)) continue

@@ -1,6 +1,7 @@
 import z from "zod"
 import fs from "fs/promises"
 import { existsSync } from "fs"
+import { createHash, randomUUID } from "crypto"
 import { Filesystem } from "../util/filesystem"
 import path from "path"
 import { $ } from "bun"
@@ -16,6 +17,32 @@ import { GlobalBus } from "@/bus/global"
 
 export namespace Project {
   const log = Log.create({ service: "project" })
+
+  function createProjectID() {
+    return "prj_" + randomUUID().replaceAll("-", "")
+  }
+
+  function directoryProjectID(directory: string) {
+    const full = path.resolve(directory)
+    const hash = createHash("sha256").update(full).digest("hex").slice(0, 24)
+    return "prj_dir_" + hash
+  }
+
+  async function legacyGitProjectID(sandbox: string) {
+    const roots = await $`git rev-list --max-parents=0 --all`
+      .quiet()
+      .nothrow()
+      .cwd(sandbox)
+      .text()
+      .then((x) =>
+        x
+          .split("\n")
+          .filter(Boolean)
+          .map((item) => item.trim())
+          .toSorted(),
+      )
+    return roots[0]
+  }
   export const Info = z
     .object({
       id: z.string(),
@@ -53,19 +80,17 @@ export namespace Project {
   export async function fromDirectory(directory: string) {
     log.info("fromDirectory", { directory })
 
-    const { id, sandbox, worktree, vcs } = await iife(async () => {
+    const { id, legacy, sandbox, worktree, vcs } = await iife(async () => {
       const matches = Filesystem.up({ targets: [".git"], start: directory })
       const git = await matches.next().then((x) => x.value)
       await matches.return()
       if (git) {
-        let sandbox = path.dirname(git)
-
-        sandbox = await $`git rev-parse --show-toplevel`
+        const sandbox = await $`git rev-parse --show-toplevel`
           .quiet()
           .nothrow()
-          .cwd(sandbox)
+          .cwd(path.dirname(git))
           .text()
-          .then((x) => path.resolve(sandbox, x.trim()))
+          .then((x) => path.resolve(path.dirname(git), x.trim()))
 
         const commonDir = await $`git rev-parse --git-common-dir`
           .quiet()
@@ -76,51 +101,32 @@ export namespace Project {
 
         const opencodeFile = path.join(commonDir, "opencode")
 
-        // cached id calculation
-        let id = await Bun.file(opencodeFile)
+        const cached = await Bun.file(opencodeFile)
           .text()
           .then((x) => x.trim())
           .catch(() => {})
 
-        // generate id from root commit
-        if (!id) {
-          const roots = await $`git rev-list --max-parents=0 --all`
-            .quiet()
-            .nothrow()
-            .cwd(sandbox)
-            .text()
-            .then((x) =>
-              x
-                .split("\n")
-                .filter(Boolean)
-                .map((x) => x.trim())
-                .toSorted(),
-            )
-          id = roots[0]
-          if (id) await Bun.file(opencodeFile).write(id)
-        }
-
-        if (!id)
-          return {
-            id: "global",
-            worktree: sandbox,
-            sandbox: sandbox,
-            vcs: "git",
-          }
+        const legacy = await legacyGitProjectID(sandbox)
+        const stale = !!cached && !!legacy && cached === legacy
+        const id = cached && !stale ? cached : createProjectID()
+        if (!cached || stale) await Bun.file(opencodeFile).write(id)
 
         const worktree = path.dirname(commonDir)
         return {
           id,
+          legacy,
           sandbox,
           worktree,
           vcs: "git",
         }
       }
 
+      const resolved = path.resolve(directory)
       return {
-        id: "global",
-        worktree: "/",
-        sandbox: "/",
+        id: directoryProjectID(resolved),
+        legacy: undefined,
+        worktree: resolved,
+        sandbox: resolved,
         vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
       }
     })
@@ -138,8 +144,12 @@ export namespace Project {
         },
       }
       if (id !== "global") {
-        await migrateFromGlobal(id, worktree)
+        await migrateFromGlobal(id, sandbox, vcs === "git")
       }
+    }
+
+    if (legacy && legacy !== id) {
+      await migrateFromLegacy(legacy, id, sandbox, vcs === "git")
     }
 
     // migrate old projects before sandboxes
@@ -197,27 +207,76 @@ export namespace Project {
     return
   }
 
-  async function migrateFromGlobal(newProjectID: string, worktree: string) {
-    const globalProject = await Storage.read<Info>(["project", "global"]).catch(() => undefined)
-    if (!globalProject) return
+  function ownsSession(session: Session.Info, sandbox: string, isGit: boolean) {
+    if (!session.directory) return false
+    const root = path.resolve(sandbox)
+    const directory = path.resolve(session.directory)
+    if (!isGit) return directory === root
+    return Filesystem.contains(root, directory)
+  }
 
-    const globalSessions = await Storage.list(["session", "global"]).catch(() => [])
-    if (globalSessions.length === 0) return
+  async function migrateSessions(input: { from: string; to: string; sandbox: string; isGit: boolean; label: string }) {
+    if (input.from === input.to) return
 
-    log.info("migrating sessions from global", { newProjectID, worktree, count: globalSessions.length })
+    const sessions = await Storage.list(["session", input.from]).catch(() => [])
+    if (sessions.length === 0) return
 
-    await work(10, globalSessions, async (key) => {
+    log.info("migrating sessions", {
+      from: input.from,
+      to: input.to,
+      sandbox: input.sandbox,
+      label: input.label,
+      count: sessions.length,
+    })
+
+    await work(10, sessions, async (key) => {
       const sessionID = key[key.length - 1]
       const session = await Storage.read<Session.Info>(key).catch(() => undefined)
       if (!session) return
-      if (session.directory && session.directory !== worktree) return
+      if (!ownsSession(session, input.sandbox, input.isGit)) return
 
-      session.projectID = newProjectID
-      log.info("migrating session", { sessionID, from: "global", to: newProjectID })
-      await Storage.write(["session", newProjectID, sessionID], session)
+      const existing = await Storage.read<Session.Info>(["session", input.to, sessionID]).catch(() => undefined)
+      if (existing?.id === session.id) {
+        await Storage.remove(key)
+        return
+      }
+
+      session.projectID = input.to
+      log.info("migrating session", {
+        sessionID,
+        from: input.from,
+        to: input.to,
+        label: input.label,
+      })
+      await Storage.write(["session", input.to, sessionID], session)
       await Storage.remove(key)
     }).catch((error) => {
-      log.error("failed to migrate sessions from global to project", { error, projectId: newProjectID })
+      log.error("failed to migrate sessions", {
+        error,
+        from: input.from,
+        to: input.to,
+        label: input.label,
+      })
+    })
+  }
+
+  async function migrateFromGlobal(newProjectID: string, sandbox: string, isGit: boolean) {
+    await migrateSessions({
+      from: "global",
+      to: newProjectID,
+      sandbox,
+      isGit,
+      label: "global",
+    })
+  }
+
+  async function migrateFromLegacy(legacyProjectID: string, newProjectID: string, sandbox: string, isGit: boolean) {
+    await migrateSessions({
+      from: legacyProjectID,
+      to: newProjectID,
+      sandbox,
+      isGit,
+      label: "legacy",
     })
   }
 

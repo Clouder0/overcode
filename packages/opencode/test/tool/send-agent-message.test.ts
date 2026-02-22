@@ -110,7 +110,9 @@ describe("tool.send_agent_message validation", () => {
         expect((result.metadata as { deliverySeq?: number }).deliverySeq).toBeUndefined()
         expect(result.output).toContain("checkpoint seq")
         expect(result.output).toContain("Checkpoint seq is your sender-side wait cursor")
-        expect(result.output).toContain("Incoming replies may not appear in the current model-context snapshot immediately")
+        expect(result.output).toContain(
+          "Incoming replies may not appear in the current model-context snapshot immediately",
+        )
         expect(result.output).not.toContain("display order")
         expect(result.output).toContain("Use since=")
         expect(result.output).toContain("Sending does not require immediate waiting")

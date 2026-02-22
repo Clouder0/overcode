@@ -457,11 +457,7 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
         <div data-slot="user-message-inbox">
           <For each={messages()}>
             {(part) => (
-              <div
-                data-slot="user-message-inbox-item"
-                data-direction={part.direction}
-                data-peer-type={part.peerType}
-              >
+              <div data-slot="user-message-inbox-item" data-direction={part.direction} data-peer-type={part.peerType}>
                 {part.text}
               </div>
             )}

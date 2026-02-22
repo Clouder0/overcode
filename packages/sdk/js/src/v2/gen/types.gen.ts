@@ -668,6 +668,16 @@ export type EventSessionMessageDelivered = {
   }
 }
 
+export type EventSessionMessageOverflow = {
+  type: "session.message.overflow"
+  properties: {
+    to: string
+    droppedCount: number
+    droppedIDs: Array<string>
+    maxPending: number
+  }
+}
+
 export type PermissionRequest = {
   id: string
   sessionID: string
@@ -1017,6 +1027,7 @@ export type Event =
   | EventMessagePartUpdated
   | EventMessagePartRemoved
   | EventSessionMessageDelivered
+  | EventSessionMessageOverflow
   | EventPermissionAsked
   | EventPermissionReplied
   | EventQuestionAsked
@@ -3011,6 +3022,10 @@ export type SessionListData = {
      * Filter sessions by project directory
      */
     directory?: string
+    /**
+     * Session list scope: directory (default) or project
+     */
+    scope?: "directory" | "project"
     /**
      * Only return root sessions (no parentID)
      */

@@ -26,7 +26,11 @@ export function DialogSessionList() {
 
   const [searchResults] = createResource(search, async (query) => {
     if (!query) return undefined
-    const result = await sdk.client.session.list({ search: query, limit: 30 })
+    const result = await sdk.client.session.list({
+      search: query,
+      limit: 30,
+      directory: sync.data.path.directory || sdk.directory,
+    })
     return result.data ?? []
   })
 

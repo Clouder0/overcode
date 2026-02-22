@@ -45,7 +45,7 @@ export namespace SessionStatusResolver {
           }
           return local
         },
-      }).catch(() => ({} as Record<string, SessionStatus.Info>))
+      }).catch(() => ({}) as Record<string, SessionStatus.Info>)
 
       for (const sessionID of ids) {
         result[sessionID] = resolved[sessionID]
@@ -80,7 +80,7 @@ export namespace SessionStatusResolver {
           }
           return local
         },
-      }).catch(() => ({} as Record<string, SessionStatus.Info>))
+      }).catch(() => ({}) as Record<string, SessionStatus.Info>)
 
       for (const sessionID of ids) {
         const status = resolved[sessionID]

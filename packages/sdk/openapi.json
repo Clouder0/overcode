@@ -1212,6 +1212,16 @@
           },
           {
             "in": "query",
+            "name": "scope",
+            "schema": {
+              "default": "directory",
+              "type": "string",
+              "enum": ["directory", "project"]
+            },
+            "description": "Session list scope: directory (default) or project"
+          },
+          {
+            "in": "query",
             "name": "roots",
             "schema": {
               "type": "boolean"
@@ -8203,6 +8213,41 @@
         },
         "required": ["type", "properties"]
       },
+      "Event.session.message.overflow": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.message.overflow"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "to": {
+                "type": "string"
+              },
+              "droppedCount": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "droppedIDs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maxPending": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": ["to", "droppedCount", "droppedIDs", "maxPending"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "PermissionRequest": {
         "type": "object",
         "properties": {
@@ -9150,6 +9195,9 @@
           },
           {
             "$ref": "#/components/schemas/Event.session.message.delivered"
+          },
+          {
+            "$ref": "#/components/schemas/Event.session.message.overflow"
           },
           {
             "$ref": "#/components/schemas/Event.permission.asked"

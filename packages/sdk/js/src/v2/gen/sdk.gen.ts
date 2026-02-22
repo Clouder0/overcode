@@ -832,6 +832,7 @@ export class Session extends HeyApiClient {
   public list<ThrowOnError extends boolean = false>(
     parameters?: {
       directory?: string
+      scope?: "directory" | "project"
       roots?: boolean
       start?: number
       search?: string
@@ -845,6 +846,7 @@ export class Session extends HeyApiClient {
         {
           args: [
             { in: "query", key: "directory" },
+            { in: "query", key: "scope" },
             { in: "query", key: "roots" },
             { in: "query", key: "start" },
             { in: "query", key: "search" },

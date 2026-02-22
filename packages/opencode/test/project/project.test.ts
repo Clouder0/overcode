@@ -5,6 +5,7 @@ import { Storage } from "../../src/storage/storage"
 import { $ } from "bun"
 import path from "path"
 import { tmpdir } from "../fixture/fixture"
+import { Identifier } from "../../src/id/id"
 
 Log.init({ print: false })
 
@@ -16,13 +17,23 @@ describe("Project.fromDirectory", () => {
     const { project } = await Project.fromDirectory(tmp.path)
 
     expect(project).toBeDefined()
-    expect(project.id).toBe("global")
+    expect(project.id).not.toBe("global")
     expect(project.vcs).toBe("git")
     expect(project.worktree).toBe(tmp.path)
 
     const opencodeFile = path.join(tmp.path, ".git", "opencode")
     const fileExists = await Bun.file(opencodeFile).exists()
-    expect(fileExists).toBe(false)
+    expect(fileExists).toBe(true)
+  })
+
+  test("should isolate non-git directories", async () => {
+    await using tmp = await tmpdir()
+
+    const { project } = await Project.fromDirectory(tmp.path)
+
+    expect(project).toBeDefined()
+    expect(project.id).not.toBe("global")
+    expect(project.worktree).toBe(tmp.path)
   })
 
   test("should handle git repository with commits", async () => {
@@ -38,6 +49,44 @@ describe("Project.fromDirectory", () => {
     const opencodeFile = path.join(tmp.path, ".git", "opencode")
     const fileExists = await Bun.file(opencodeFile).exists()
     expect(fileExists).toBe(true)
+  })
+
+  test("should not collide across cloned repositories", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const clone = path.join(tmp.path, "..", "clone-" + Math.random().toString(36).slice(2))
+    await $`git clone ${tmp.path} ${clone}`.quiet()
+
+    const a = await Project.fromDirectory(tmp.path)
+    const b = await Project.fromDirectory(clone)
+
+    expect(a.project.id).not.toBe(b.project.id)
+  })
+
+  test("migrates global sessions owned by subdirectories", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const sub = path.join(tmp.path, "sub")
+    await $`mkdir -p ${sub}`.quiet()
+
+    const id = Identifier.descending("session")
+    await Storage.write(["session", "global", id], {
+      id,
+      slug: "sub",
+      version: "test",
+      projectID: "global",
+      directory: sub,
+      sessionType: "primary",
+      childrenIDs: [],
+      title: "subdir session",
+      time: {
+        created: Date.now(),
+        updated: Date.now(),
+      },
+    })
+
+    const { project } = await Project.fromDirectory(tmp.path)
+    const migrated = await Storage.read(["session", project.id, id]).catch(() => undefined)
+
+    expect(migrated).toBeDefined()
   })
 })
 

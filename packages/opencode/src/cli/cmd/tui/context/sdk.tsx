@@ -98,6 +98,12 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       if (timer) clearTimeout(timer)
     })
 
-    return { client: sdk, event: emitter, url: props.url, signal: abort.signal }
+    return {
+      client: sdk,
+      event: emitter,
+      url: props.url,
+      directory: props.directory,
+      signal: abort.signal,
+    }
   },
 })

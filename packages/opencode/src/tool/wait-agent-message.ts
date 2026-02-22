@@ -54,7 +54,9 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
   parameters: z.object({
     sources: z
       .array(z.string())
-      .describe('Session ids to wait for (each starts with "ses_"). Prefer explicit ids; use ["*"] only when the expected sender is unknown.'),
+      .describe(
+        'Session ids to wait for (each starts with "ses_"). Prefer explicit ids; use ["*"] only when the expected sender is unknown.',
+      ),
     timeout: z.coerce.number().min(1).describe("Timeout in milliseconds"),
     mode: z.enum(["all", "any"]).describe('"all" waits for every source, "any" waits for first response'),
     since: z.coerce
@@ -139,7 +141,9 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
     }
 
     if (params.since === 0) {
-      return blocked("since=0 is no longer supported. Use since=-1 for session-start catch-up or a positive seq checkpoint.")
+      return blocked(
+        "since=0 is no longer supported. Use since=-1 for session-start catch-up or a positive seq checkpoint.",
+      )
     }
 
     const outgoingPeers = await MessageV2.parts(ctx.messageID)
@@ -211,9 +215,7 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
         ? "since=-1 matched prior messages; this wait may resolve immediately from history."
         : undefined,
       mode !== params.mode ? 'mode="any" with a single explicit source was normalized to mode="all".' : undefined,
-      clampedSince
-        ? `since=${baselineRaw} exceeded current seq=${currentSeq}; clamped to seq=${baseline}.`
-        : undefined,
+      clampedSince ? `since=${baselineRaw} exceeded current seq=${currentSeq}; clamped to seq=${baseline}.` : undefined,
       immediateRecoverable && !immediate
         ? "Reply exists outside the current context snapshot; wait was registered so the host can refresh and continue."
         : undefined,
@@ -224,7 +226,8 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
     if (immediate) {
       const respondedSources =
         mode === "any" ? Array.from(respondedInContext) : sources.filter((source) => respondedInContext.has(source))
-      const allReceived = mode === "all" ? sources.every((source) => respondedInContext.has(source)) : respondedSources.length > 0
+      const allReceived =
+        mode === "all" ? sources.every((source) => respondedInContext.has(source)) : respondedSources.length > 0
 
       const meta: WaitMessageMetadata = {
         ok: true,

@@ -276,11 +276,14 @@ export const RunCommand = cmd({
     }
 
     if (args.attach) {
-      const sdk = createOpencodeClient({ baseUrl: args.attach })
+      const sdk = createOpencodeClient({
+        baseUrl: args.attach,
+        directory: process.cwd(),
+      })
 
       const sessionID = await (async () => {
         if (args.continue) {
-          const result = await sdk.session.list()
+          const result = await sdk.session.list({ directory: process.cwd() })
           return result.data?.find((s) => !s.parentID)?.id
         }
         if (args.session) return args.session
@@ -343,7 +346,11 @@ export const RunCommand = cmd({
         const request = new Request(input, init)
         return Server.App().fetch(request)
       }) as typeof globalThis.fetch
-      const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
+      const sdk = createOpencodeClient({
+        baseUrl: "http://opencode.internal",
+        fetch: fetchFn,
+        directory: process.cwd(),
+      })
 
       if (args.command) {
         const exists = await Command.get(args.command)
@@ -355,7 +362,7 @@ export const RunCommand = cmd({
 
       const sessionID = await (async () => {
         if (args.continue) {
-          const result = await sdk.session.list()
+          const result = await sdk.session.list({ directory: process.cwd() })
           return result.data?.find((s) => !s.parentID)?.id
         }
         if (args.session) return args.session

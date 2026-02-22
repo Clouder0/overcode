@@ -49,9 +49,9 @@ describe("tool.wait_agent_message validation", () => {
         const result = await tool.execute(
           {
             sources: [],
-              timeout: 1000,
-              mode: "all",
-              since: -1,
+            timeout: 1000,
+            mode: "all",
+            since: -1,
           },
           {
             ...ctxBase,
@@ -109,9 +109,9 @@ describe("tool.wait_agent_message validation", () => {
         const result = await tool.execute(
           {
             sources: ["not_a_session_id"],
-              timeout: 1000,
-              mode: "all",
-              since: -1,
+            timeout: 1000,
+            mode: "all",
+            since: -1,
           },
           {
             ...ctxBase,
@@ -136,9 +136,9 @@ describe("tool.wait_agent_message validation", () => {
         const result = await tool.execute(
           {
             sources: ["ses_missing"],
-              timeout: 1000,
-              mode: "all",
-              since: -1,
+            timeout: 1000,
+            mode: "all",
+            since: -1,
           },
           {
             ...ctxBase,
@@ -164,9 +164,9 @@ describe("tool.wait_agent_message validation", () => {
         const result = await tool.execute(
           {
             sources: [source.id, source.id],
-              timeout: 1000,
-              mode: "all",
-              since: -1,
+            timeout: 1000,
+            mode: "all",
+            since: -1,
           },
           {
             ...ctxBase,
@@ -192,9 +192,9 @@ describe("tool.wait_agent_message validation", () => {
         const result = await tool.execute(
           {
             sources: [source.id],
-              timeout: 1000,
-              mode: "all",
-              since: -1,
+            timeout: 1000,
+            mode: "all",
+            since: -1,
           },
           {
             ...ctxBase,
@@ -391,7 +391,7 @@ describe("tool.wait_agent_message validation", () => {
 
         expect(result.metadata.ok).toBe(false)
         expect(result.metadata.status).toBe("blocked")
-        expect(result.metadata.error).toContain("sources=[\"*\"]")
+        expect(result.metadata.error).toContain('sources=["*"]')
       },
     })
   })
