@@ -1907,7 +1907,7 @@ function TextPart(props: { last: boolean; part: TextPartType; message: Assistant
   const trimmed = createMemo(() => props.part.text.trim())
 
   return (
-    <Show when={trimmed()} keyed>
+    <Show when={trimmed()}>
       {(text) => (
         <Show
           when={badge()}
@@ -1916,7 +1916,7 @@ function TextPart(props: { last: boolean; part: TextPartType; message: Assistant
             <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
               <Switch>
                 <Match when={Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
-                  <markdown syntaxStyle={syntax()} content={text} conceal={ctx.conceal()} />
+                  <markdown syntaxStyle={syntax()} content={text()} conceal={ctx.conceal()} />
                 </Match>
                 <Match when={!Flag.OPENCODE_EXPERIMENTAL_MARKDOWN}>
                   <code
@@ -1924,7 +1924,7 @@ function TextPart(props: { last: boolean; part: TextPartType; message: Assistant
                     drawUnstyledText={false}
                     streaming={true}
                     syntaxStyle={syntax()}
-                    content={text}
+                    content={text()}
                     conceal={ctx.conceal()}
                     fg={theme.text}
                   />
@@ -1937,7 +1937,7 @@ function TextPart(props: { last: boolean; part: TextPartType; message: Assistant
             <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
               <text fg={theme.textMuted}>
                 <span style={{ bg: value.bg, fg: theme.backgroundPanel, bold: true }}> {value.label} </span>
-                <span style={{ fg: theme.textMuted }}> {text}</span>
+                <span style={{ fg: theme.textMuted }}> {text()}</span>
               </text>
             </box>
           )}
