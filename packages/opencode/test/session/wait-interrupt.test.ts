@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
 
 import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
@@ -277,6 +277,83 @@ test("incoming human message interrupts active wait_agent_message", async () => 
         expect(meta?.status).toBe("interrupted")
         expect(meta?.interruptedBy).toBe("prompt")
         expect(output).toContain("Wait interrupted (prompt)")
+      } finally {
+        WaitPolicy.clear(seeded.sessionID)
+        WaitPolicy.clear(seeded.sourceID)
+        await Session.remove(seeded.sourceID)
+        await Session.remove(seeded.sessionID)
+      }
+    },
+  })
+})
+
+test("prompt interrupts wait registered during message persistence race", async () => {
+  await using tmp = await tmpdir({ git: true })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const seeded = await seedWait(tmp.path)
+
+      try {
+        WaitPolicy.clear(seeded.sessionID)
+        SessionStatus.set(seeded.sessionID, { type: "idle" })
+
+        const originalUpdate = Session.updateMessage as any
+        let armed = true
+        const registerSpy = spyOn(Session, "updateMessage").mockImplementation((async (message: any) => {
+          if (armed && message?.sessionID === seeded.sessionID && message?.role === "user") {
+            armed = false
+            const timeout = 10_000
+            const policy = WaitPolicy.register({
+              sessionID: seeded.sessionID,
+              messageID: seeded.waitMessageID,
+              callID: seeded.callID,
+              sources: [seeded.sourceID],
+              timeout,
+              mode: "all",
+              since: 0,
+            })
+
+            SessionStatus.set(seeded.sessionID, {
+              type: "waiting",
+              sources: [seeded.sourceID],
+              timeout,
+              mode: "all",
+              time: policy.time,
+            })
+          }
+
+          return originalUpdate(message)
+        }) as any)
+
+        await using _restore = {
+          [Symbol.asyncDispose]: async () => {
+            registerSpy.mockRestore()
+          },
+        }
+
+        await SessionPrompt.prompt({
+          sessionID: seeded.sessionID,
+          noReply: true,
+          parts: [
+            {
+              type: "text",
+              text: "new direct prompt",
+            },
+          ],
+        })
+
+        expect(WaitPolicy.isWaiting(seeded.sessionID)).toBe(false)
+
+        const parts = await MessageV2.parts(seeded.waitMessageID)
+        const tool = parts.find((p): p is MessageV2.ToolPart => p.type === "tool" && p.callID === seeded.callID)
+        expect(tool?.state.status).toBe("completed")
+        if (tool?.state.status !== "completed") return
+
+        const meta = (tool.state as any).metadata as any
+        expect(meta?.status).toBe("interrupted")
+        expect(meta?.interruptedBy).toBe("prompt")
       } finally {
         WaitPolicy.clear(seeded.sessionID)
         WaitPolicy.clear(seeded.sourceID)

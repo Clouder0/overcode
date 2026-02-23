@@ -816,7 +816,7 @@ describe("session.prompt CPD delta tool output", () => {
     })
   })
 
-  test("omits noop skill reload output from CPD delta", async () => {
+  test("preserves noop skill reload output in CPD delta", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -981,10 +981,8 @@ describe("session.prompt CPD delta tool output", () => {
         processorSpy.mockRestore()
 
         expect(capturedDelta).toBeDefined()
-        expect(capturedDelta).not.toContain("NOOP_SKILL_OUTPUT")
-        expect(capturedDelta).toContain(
-          'Context note: skill "brainstorming" load was a no-op (already active in context). Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly.',
-        )
+        expect(capturedDelta).toContain("NOOP_SKILL_OUTPUT")
+        expect(capturedDelta).not.toContain('Context note: skill "brainstorming" load was a no-op')
       },
     })
   })

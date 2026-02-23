@@ -48,6 +48,27 @@ function contextMaxSeqBySource(input: unknown) {
   return result
 }
 
+function incomingUserMessage(msg: MessageV2.WithParts) {
+  if (msg.info.role !== "user") return false
+  return msg.parts.some((part) => part.type === "message" && part.direction === "incoming")
+}
+
+async function hasNewerDirectPrompt(input: { sessionID: string; messageID: string }) {
+  const msgs = await Session.messages({ sessionID: input.sessionID })
+  const idx = msgs.findIndex((msg) => msg.info.id === input.messageID)
+  if (idx === -1) return false
+
+  for (let i = idx + 1; i < msgs.length; i++) {
+    const msg = msgs[i]
+    if (!msg) continue
+    if (msg.info.role !== "user") continue
+    if (incomingUserMessage(msg)) continue
+    return true
+  }
+
+  return false
+}
+
 export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
   description:
     "Pause only when expected incoming agent messages matter to progress. Wakes when wait condition is met, or on timeout. Timeout message shows source status.",
@@ -254,6 +275,43 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       }
     }
 
+    const interrupted = () => {
+      const interruptedAt = Date.now()
+      const meta: WaitMessageMetadata = {
+        ok: true,
+        status: "interrupted",
+        sources,
+        respondedSources: [],
+        timedOutSources: [],
+        timeout: params.timeout,
+        mode,
+        allReceived: false,
+        since: baseline,
+        interruptedAt,
+        interruptedBy: "prompt",
+        warning: warning.length > 0 ? warning : undefined,
+      }
+
+      const output = [
+        "Wait interrupted (prompt): newer direct prompt already exists. Continue your turn without parking.",
+        warning.length > 0 ? `Warning: ${warning}` : undefined,
+      ].filter((line): line is string => typeof line === "string")
+
+      return {
+        title: "Wait interrupted",
+        output: output.join("\n"),
+        metadata: meta,
+      }
+    }
+
+    const stale = await hasNewerDirectPrompt({
+      sessionID: ctx.sessionID,
+      messageID: ctx.messageID,
+    })
+    if (stale) {
+      return interrupted()
+    }
+
     const policy = WaitPolicy.register({
       sessionID: ctx.sessionID,
       messageID: ctx.messageID,
@@ -263,6 +321,16 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       mode,
       since: baseline,
     })
+
+    const staleAfter = await hasNewerDirectPrompt({
+      sessionID: ctx.sessionID,
+      messageID: ctx.messageID,
+    })
+    if (staleAfter) {
+      WaitPolicy.clear(ctx.sessionID)
+      SessionStatus.set(ctx.sessionID, { type: "busy" })
+      return interrupted()
+    }
 
     SessionStatus.set(ctx.sessionID, {
       type: "waiting",

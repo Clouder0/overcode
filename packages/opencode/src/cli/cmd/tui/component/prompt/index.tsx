@@ -247,6 +247,25 @@ export function Prompt(props: PromptProps) {
     if (typeof status === "number") return status
   }
 
+  async function promptLanded(input: { sessionID: string; messageID: string }) {
+    const result = await sdk.client.session
+      .message(
+        {
+          sessionID: input.sessionID,
+          messageID: input.messageID,
+        },
+        {
+          throwOnError: false,
+        },
+      )
+      .catch((error) => ({ error }) as unknown)
+
+    const status = responseStatus(result)
+    if (status === 404) return false
+    if (status && status >= 200 && status < 300) return true
+    return
+  }
+
   const command = useCommandDialog()
   const renderer = useRenderer()
   const dimensions = useTerminalDimensions()
@@ -921,7 +940,7 @@ export function Prompt(props: PromptProps) {
             throwOnError: false,
           },
         )
-        .then((result) => {
+        .then(async (result) => {
           if (!result.error) return
           const name = result.error instanceof Error ? result.error.name : undefined
           if (name === "AbortError") return
@@ -995,7 +1014,7 @@ export function Prompt(props: PromptProps) {
             throwOnError: false,
           },
         )
-        .then((result) => {
+        .then(async (result) => {
           if (!result.error) return
           const name = result.error instanceof Error ? result.error.name : undefined
           if (name === "AbortError") return
@@ -1082,7 +1101,7 @@ export function Prompt(props: PromptProps) {
             throwOnError: false,
           },
         )
-        .then((result) => {
+        .then(async (result) => {
           if (!result.error) return
           const name = result.error instanceof Error ? result.error.name : undefined
           if (name === "AbortError") return
@@ -1092,6 +1111,12 @@ export function Prompt(props: PromptProps) {
             queue.enqueue(payload)
             return
           }
+
+          const landed = await promptLanded({
+            sessionID,
+            messageID,
+          })
+          if (landed === true) return
 
           stash.push({
             input: inputText,
@@ -1103,7 +1128,7 @@ export function Prompt(props: PromptProps) {
             duration: 3500,
           })
         })
-        .catch((error) => {
+        .catch(async (error) => {
           const name = error instanceof Error ? error.name : undefined
           if (name === "AbortError") return
 
@@ -1112,6 +1137,12 @@ export function Prompt(props: PromptProps) {
             queue.enqueue(payload)
             return
           }
+
+          const landed = await promptLanded({
+            sessionID,
+            messageID,
+          })
+          if (landed === true) return
 
           stash.push({
             input: inputText,

@@ -1645,7 +1645,35 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       })
     }
 
-    void send().catch((err) => {
+    const promptLanded = async () => {
+      const result = await client.session
+        .message(
+          {
+            sessionID: session.id,
+            messageID,
+          },
+          {
+            throwOnError: false,
+          },
+        )
+        .catch((error) => ({ error }) as unknown)
+
+      if (!result || typeof result !== "object") return
+      const response = (result as { response?: unknown }).response
+      if (!response || typeof response !== "object") return
+      const status = (response as { status?: unknown }).status
+      if (status === 404) return false
+      if (typeof status === "number" && status >= 200 && status < 300) return true
+      return
+    }
+
+    void send().catch(async (err) => {
+      const landed = await promptLanded()
+      if (landed === true) {
+        pending.delete(session.id)
+        return
+      }
+
       pending.delete(session.id)
       if (sessionDirectory === projectDirectory) {
         sync.set("session_status", session.id, { type: "idle" })

@@ -1,6 +1,7 @@
 import path from "node:path"
 import { afterEach, describe, expect, test } from "bun:test"
 
+import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionMessage } from "../../src/session/message-routing"
@@ -210,6 +211,117 @@ describe("tool.wait_agent_message validation", () => {
 
         const status = SessionStatus.get(session.id)
         expect(status.type).toBe("waiting")
+      },
+    })
+  })
+
+  test("interrupts stale wait registration when a newer direct prompt already exists", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const session = await Session.create({})
+        const source = await Session.create({})
+        created.push(session.id, source.id)
+
+        const now = Date.now()
+        const userID = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: userID,
+          sessionID: session.id,
+          role: "user",
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-4",
+          },
+          time: { created: now },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: userID,
+          type: "text",
+          text: "seed",
+        })
+
+        const waitMessageID = Identifier.ascending("message")
+
+        await Session.updateMessage({
+          id: waitMessageID,
+          sessionID: session.id,
+          role: "assistant",
+          parentID: userID,
+          modelID: "gpt-4",
+          providerID: "openai",
+          mode: "build",
+          agent: "build",
+          path: {
+            cwd: projectRoot,
+            root: projectRoot,
+          },
+          cost: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: {
+              read: 0,
+              write: 0,
+            },
+          },
+          time: {
+            created: now + 1,
+            completed: now + 1,
+          },
+          finish: "tool-calls",
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: waitMessageID,
+          type: "text",
+          text: "wait call",
+        })
+
+        const newerID = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: newerID,
+          sessionID: session.id,
+          role: "user",
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-4",
+          },
+          time: { created: now + 2 },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: newerID,
+          type: "text",
+          text: "new direct prompt",
+        })
+
+        const tool = await WaitAgentMessageTool.init()
+        const result = await tool.execute(
+          {
+            sources: [source.id],
+            timeout: 1000,
+            mode: "all",
+            since: -1,
+          },
+          {
+            ...ctxBase,
+            messageID: waitMessageID,
+            sessionID: session.id,
+          },
+        )
+
+        expect(result.metadata.ok).toBe(true)
+        expect(result.metadata.status).toBe("interrupted")
+        expect(result.metadata.interruptedBy).toBe("prompt")
+        expect(WaitPolicy.get(session.id)).toBeUndefined()
       },
     })
   })

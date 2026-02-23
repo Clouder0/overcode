@@ -162,6 +162,28 @@ export namespace SessionPrompt {
     },
   )
 
+  const promptAfter = Instance.state(
+    () => new Map<string, { id: string; time: number }>(),
+    async (map) => {
+      map.clear()
+    },
+  )
+
+  function markPrompt(message: MessageV2.WithParts) {
+    if (message.info.role !== "user") return
+    promptAfter().set(message.info.sessionID, {
+      id: message.info.id,
+      time: message.info.time.created,
+    })
+  }
+
+  function hasPromptAfterWait(input: { sessionID: string; wait: WaitPolicy.Policy }) {
+    const prompt = promptAfter().get(input.sessionID)
+    if (!prompt) return false
+    if (prompt.id === input.wait.messageID) return false
+    return prompt.time >= input.wait.time.created
+  }
+
   const DEBOUNCE_MS = 75
   const DEBOUNCE_MAX_MS = 250
   const QUIET_MS = 50
@@ -854,6 +876,19 @@ export namespace SessionPrompt {
     })
   }
 
+  async function interruptPromptWait(sessionID: string) {
+    if (!WaitPolicy.isWaiting(sessionID)) return false
+    const wait = WaitPolicy.get(sessionID)
+    if (wait) {
+      await interruptWaitInDirectory(sessionID, wait, Instance.directory, "prompt").catch((error) => {
+        log.error("failed to mark wait interrupted", { sessionID, error: error?.message })
+      })
+    }
+    WaitPolicy.clear(sessionID)
+    SessionStatus.set(sessionID, { type: "idle" })
+    return true
+  }
+
   SessionMessage.setWakeSessionFn(async (message) => {
     const sessionID = message.to
     const directory = Instance.directory
@@ -1259,19 +1294,14 @@ export namespace SessionPrompt {
       })
 
       // Human input cancels waiting.
-      if (WaitPolicy.isWaiting(input.sessionID)) {
-        const wait = WaitPolicy.get(input.sessionID)
-        if (wait) {
-          await interruptWaitInDirectory(input.sessionID, wait, Instance.directory, "prompt").catch((error) => {
-            log.error("failed to mark wait interrupted", { sessionID: input.sessionID, error: error?.message })
-          })
-        }
-        WaitPolicy.clear(input.sessionID)
-        SessionStatus.set(input.sessionID, { type: "idle" })
-      }
+      await interruptPromptWait(input.sessionID)
 
       const message = await createUserMessage(input)
+      markPrompt(message)
       await Session.touch(input.sessionID)
+
+      // Re-check after persistence so a wait registered in between cannot survive.
+      await interruptPromptWait(input.sessionID)
 
       // this is backwards compatibility for allowing `tools` to be specified when
       // prompting
@@ -1327,7 +1357,6 @@ export namespace SessionPrompt {
     sessionID: string
     targetUserID: string
   }): Promise<MessageV2.WithParts> {
-    const stalled = new Map<string, number>()
     const deadline = Date.now() + 120_000
 
     while (Date.now() < deadline) {
@@ -1341,14 +1370,13 @@ export namespace SessionPrompt {
         preferredUserID: input.targetUserID,
       })
       if (assistantTargetsUser({ assistant: result, targetUserID: input.targetUserID })) return result
-
-      const key = result.info.id
-      const repeats = (stalled.get(key) ?? 0) + 1
-      stalled.set(key, repeats)
-      if (repeats >= 4) {
-        throw new Error(`Could not resolve target assistant for user ${input.targetUserID}: stalled on ${key}`)
-      }
     }
+
+    const finalMatch = await findTargetAssistant({
+      sessionID: input.sessionID,
+      targetUserID: input.targetUserID,
+    })
+    if (finalMatch) return finalMatch
 
     throw new Error(`Target assistant resolution timed out for user ${input.targetUserID}`)
   }
@@ -1865,6 +1893,11 @@ export namespace SessionPrompt {
         return runLoop(sessionID, opts)
       }
 
+      if (opts?.preferredUserID) {
+        await active.done
+        return runLoop(sessionID, opts)
+      }
+
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
         const cb = { resolve, reject }
         active.callbacks.push(cb)
@@ -1914,6 +1947,20 @@ export namespace SessionPrompt {
 
           await interruptWait(sessionID, wait, "prompt").catch((error) => {
             log.error("failed to interrupt wait in run loop", { sessionID, error: error?.message })
+          })
+
+          WaitPolicy.clear(sessionID)
+          SessionStatus.set(sessionID, { type: "busy" })
+          continue
+        }
+
+        const direct = hasPromptAfterWait({
+          sessionID,
+          wait,
+        })
+        if (direct) {
+          await interruptWait(sessionID, wait, "prompt").catch((error) => {
+            log.error("failed to interrupt wait for persisted prompt", { sessionID, error: error?.message })
           })
 
           WaitPolicy.clear(sessionID)
@@ -4561,16 +4608,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
 
       // Human input cancels waiting.
-      if (WaitPolicy.isWaiting(input.sessionID)) {
-        const wait = WaitPolicy.get(input.sessionID)
-        if (wait) {
-          await interruptWaitInDirectory(input.sessionID, wait, Instance.directory, "prompt").catch((error) => {
-            log.error("failed to mark wait interrupted", { sessionID: input.sessionID, error: error?.message })
-          })
-        }
-        WaitPolicy.clear(input.sessionID)
-        SessionStatus.set(input.sessionID, { type: "idle" })
-      }
+      await interruptPromptWait(input.sessionID)
 
       return shellLocal(input)
     })
