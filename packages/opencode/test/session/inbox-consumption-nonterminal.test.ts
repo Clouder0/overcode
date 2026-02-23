@@ -140,6 +140,264 @@ test("non-terminal send turn consumes inbound inbox message once", async () => {
   }
 })
 
+test("consumed inbound inbox message stays visible in later context", async () => {
+  const g = globalThis as any
+  const prev = g.__OPENCODE_TEST_ALLOW_LOOP__
+  const allow = new Set<string>()
+  g.__OPENCODE_TEST_ALLOW_LOOP__ = allow
+
+  try {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const source = await Session.create({})
+
+        allow.add(session.id)
+
+        await using _cleanup = {
+          [Symbol.asyncDispose]: async () => {
+            await Session.remove(source.id)
+            await Session.remove(session.id)
+          },
+        }
+
+        const delivered = await SessionMessage.deliver({
+          from: source.id,
+          to: session.id,
+          text: "status update",
+        })
+
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+
+        const seen = {
+          calls: 0,
+          user: "",
+          hasInbound: false,
+        }
+
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            partFromToolCall: () => undefined,
+            async process(input: any) {
+              seen.calls += 1
+
+              if (seen.calls === 2) {
+                seen.user = input.user.id
+                seen.hasInbound = JSON.stringify(input.messages ?? []).includes("status update")
+              }
+
+              args.assistantMessage.finish = "stop"
+              args.assistantMessage.time.completed = Date.now()
+              await Session.updateMessage(args.assistantMessage)
+              return "stop"
+            },
+          } as any
+        })
+
+        await using _restore = {
+          [Symbol.asyncDispose]: async () => {
+            providerSpy.mockRestore()
+            processorSpy.mockRestore()
+          },
+        }
+
+        await SessionPrompt.loop(session.id)
+
+        const message = await MessageV2.get({
+          sessionID: session.id,
+          messageID: delivered.id,
+        })
+
+        const inbound = message.parts.find((part): part is MessageV2.MessagePart => {
+          if (part.type !== "message") return false
+          return part.direction === "incoming"
+        })
+
+        expect(inbound).toBeDefined()
+        expect((inbound?.metadata as any)?.opencode?.consumed).toBe(true)
+
+        const now = Date.now()
+        const humanID = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: humanID,
+          sessionID: session.id,
+          role: "user",
+          time: { created: now },
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-4",
+          },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: humanID,
+          type: "text",
+          text: "human task",
+        })
+
+        await SessionPrompt.loop(session.id)
+
+        expect(seen.calls).toBe(2)
+        expect(seen.user).toBe(humanID)
+        expect(seen.hasInbound).toBe(true)
+      },
+    })
+  } finally {
+    if (prev === undefined) {
+      delete g.__OPENCODE_TEST_ALLOW_LOOP__
+    }
+    if (prev !== undefined) {
+      g.__OPENCODE_TEST_ALLOW_LOOP__ = prev
+    }
+  }
+})
+
+test("consumed inbound wait_result message stays visible in later context", async () => {
+  const g = globalThis as any
+  const prev = g.__OPENCODE_TEST_ALLOW_LOOP__
+  const allow = new Set<string>()
+  g.__OPENCODE_TEST_ALLOW_LOOP__ = allow
+
+  try {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const source = await Session.create({})
+
+        allow.add(session.id)
+
+        await using _cleanup = {
+          [Symbol.asyncDispose]: async () => {
+            await Session.remove(source.id)
+            await Session.remove(session.id)
+          },
+        }
+
+        const delivered = await SessionMessage.deliver({
+          from: source.id,
+          to: session.id,
+          text: "wait result",
+          messageType: "wait_result",
+        })
+
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+
+        const seen = {
+          calls: 0,
+          user: "",
+          hasInbound: false,
+        }
+
+        const processorSpy = spyOn(SessionProcessor, "create").mockImplementation((args: any) => {
+          return {
+            message: args.assistantMessage,
+            compactionRequest: undefined,
+            partFromToolCall: () => undefined,
+            async process(input: any) {
+              seen.calls += 1
+
+              if (seen.calls === 2) {
+                seen.user = input.user.id
+                seen.hasInbound = JSON.stringify(input.messages ?? []).includes("wait result")
+              }
+
+              args.assistantMessage.finish = "stop"
+              args.assistantMessage.time.completed = Date.now()
+              await Session.updateMessage(args.assistantMessage)
+              return "stop"
+            },
+          } as any
+        })
+
+        await using _restore = {
+          [Symbol.asyncDispose]: async () => {
+            providerSpy.mockRestore()
+            processorSpy.mockRestore()
+          },
+        }
+
+        await SessionPrompt.loop(session.id)
+
+        const message = await MessageV2.get({
+          sessionID: session.id,
+          messageID: delivered.id,
+        })
+
+        const inbound = message.parts.find((part): part is MessageV2.MessagePart => {
+          if (part.type !== "message") return false
+          if (part.direction !== "incoming") return false
+          return part.peerType === "system"
+        })
+
+        expect(inbound).toBeDefined()
+        expect((inbound?.metadata as any)?.opencode?.consumed).toBe(true)
+
+        const now = Date.now()
+        const humanID = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: humanID,
+          sessionID: session.id,
+          role: "user",
+          time: { created: now },
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-4",
+          },
+        })
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: session.id,
+          messageID: humanID,
+          type: "text",
+          text: "human task",
+        })
+
+        await SessionPrompt.loop(session.id)
+
+        expect(seen.calls).toBe(2)
+        expect(seen.user).toBe(humanID)
+        expect(seen.hasInbound).toBe(true)
+      },
+    })
+  } finally {
+    if (prev === undefined) {
+      delete g.__OPENCODE_TEST_ALLOW_LOOP__
+    }
+    if (prev !== undefined) {
+      g.__OPENCODE_TEST_ALLOW_LOOP__ = prev
+    }
+  }
+})
+
 test("human-anchored turn does not consume inbound message until inbox turn", async () => {
   const g = globalThis as any
   const prev = g.__OPENCODE_TEST_ALLOW_LOOP__

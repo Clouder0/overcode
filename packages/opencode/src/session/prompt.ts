@@ -752,6 +752,14 @@ export namespace SessionPrompt {
     return input.sources.includes(input.message.from)
   }
 
+  function isConsumedPart(part: MessageV2.MessagePart) {
+    const meta = part.metadata
+    if (!meta || typeof meta !== "object") return false
+    const oc = (meta as { opencode?: unknown }).opencode
+    if (!oc || typeof oc !== "object") return false
+    return (oc as { consumed?: unknown }).consumed === true
+  }
+
   async function consumeInboxMessages(input: { messages: MessageV2.WithParts[]; assistantID: string }) {
     const now = Date.now()
 
@@ -761,6 +769,7 @@ export namespace SessionPrompt {
       for (const part of msg.parts) {
         if (part.type !== "message") continue
         if (!isRelevantInboundMessage(part)) continue
+        if (isConsumedPart(part)) continue
 
         const metadata = part.metadata
         const base = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {}
@@ -2281,6 +2290,15 @@ export namespace SessionPrompt {
       await omitIncompleteThinking({ sessionID, messages: msgs })
 
       const unanswered = (msg: MessageV2.WithParts) => {
+        const inbound = msg.parts.filter((part): part is MessageV2.MessagePart => {
+          if (part.type !== "message") return false
+          return isRelevantInboundMessage(part)
+        })
+
+        // Inbox messages are "handled once" by marking their inbound parts as consumed.
+        // Keep them model-visible, but don't keep re-processing them.
+        if (inbound.length > 0 && inbound.every(isConsumedPart)) return false
+
         const user = msg.info as MessageV2.User
         const replies = byParent.get(user.id) ?? []
         return !isAnswered({

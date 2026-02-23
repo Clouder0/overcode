@@ -21,12 +21,6 @@ function isBootstrapText(part: MessageV2.TextPart) {
   return meta["bootstrap"] === true
 }
 
-function isConsumedMessage(part: MessageV2.MessagePart) {
-  const meta = opencodeMeta(part.metadata)
-  if (!meta) return false
-  return meta["consumed"] === true
-}
-
 function inboundMessageType(part: MessageV2.MessagePart) {
   const meta = opencodeMeta(part.metadata)
   if (!meta) return
@@ -37,7 +31,6 @@ function inboundMessageType(part: MessageV2.MessagePart) {
 
 export function isRelevantInboundMessage(part: MessageV2.MessagePart) {
   if (part.direction !== "incoming") return false
-  if (isConsumedMessage(part)) return false
   if (part.peerType === "system") {
     const type = inboundMessageType(part)
     if (type === "notice") return true
