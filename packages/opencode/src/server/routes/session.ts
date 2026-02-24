@@ -198,10 +198,10 @@ export const SessionRoutes = lazy(() =>
         "query",
         z.object({
           scope: z
-            .enum(["directory", "project"])
+            .enum(["directory", "project", "auto"])
             .optional()
             .default("directory")
-            .meta({ description: "Session list scope: directory (default) or project" }),
+            .meta({ description: "Session list scope: directory (default), project, or auto" }),
           directory: z.string().optional().meta({ description: "Filter sessions by project directory" }),
           roots: z.coerce.boolean().optional().meta({ description: "Only return root sessions (no parentID)" }),
           start: z.coerce
@@ -215,7 +215,15 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const query = c.req.valid("query")
         const term = query.search?.toLowerCase()
-        const directory = query.directory ?? (query.scope === "directory" ? Instance.directory : undefined)
+        const directory = (() => {
+          if (query.directory) return query.directory
+          if (query.scope === "project") return
+          if (query.scope === "auto") {
+            const linked = Instance.project.vcs === "git" && Instance.worktree !== Instance.project.worktree
+            if (linked) return
+          }
+          return Instance.directory
+        })()
         const sessions: Session.Info[] = []
         for await (const session of Session.list()) {
           if (directory !== undefined && session.directory !== directory) continue
@@ -752,6 +760,37 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
         const result = await Session.fork({ ...body, sessionID })
+        return c.json(result)
+      },
+    )
+    .post(
+      "/:sessionID/handoff",
+      describeRoute({
+        summary: "Handoff session",
+        description:
+          "Move a session's directory to the current request directory. Only allowed when the session is idle.",
+        operationId: "session.handoff",
+        responses: {
+          200: {
+            description: "200",
+            content: {
+              "application/json": {
+                schema: resolver(Session.Info),
+              },
+            },
+          },
+          ...errors(400, 404, 409),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Session.handoff.schema.shape.sessionID,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const result = await Session.handoff({ sessionID })
         return c.json(result)
       },
     )

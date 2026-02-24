@@ -11,6 +11,7 @@ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk/v2"
 import { Server } from "../../server/server"
 import { Provider } from "../../provider/provider"
 import { Agent } from "../../agent/agent"
+import { Filesystem } from "../../util/filesystem"
 
 const TOOL: Record<string, [string, string]> = {
   todowrite: ["Todo", UI.Style.TEXT_WARNING_BOLD],
@@ -23,6 +24,40 @@ const TOOL: Record<string, [string, string]> = {
   read: ["Read", UI.Style.TEXT_HIGHLIGHT_BOLD],
   write: ["Write", UI.Style.TEXT_SUCCESS_BOLD],
   websearch: ["Search", UI.Style.TEXT_DIM_BOLD],
+}
+
+async function continueHere(sdk: OpencodeClient): Promise<{ id?: string; error?: string }> {
+  const list = await sdk.session.list({ scope: "auto" }).catch(() => undefined)
+  const sessions = list?.data ?? []
+
+  const latest = sessions.find((s) => !s.parentID)
+  if (!latest) return {}
+
+  const root = await sdk.path
+    .get()
+    .then((x) => x.data?.worktree || x.data?.directory || "")
+    .catch(() => "")
+
+  if (!root || Filesystem.contains(root, latest.directory)) {
+    return { id: latest.id }
+  }
+
+  const statuses = await sdk.session
+    .status()
+    .then((x) => x.data)
+    .catch(() => undefined)
+  const status = statuses?.[latest.id]
+  if (status && status.type !== "idle") {
+    return { error: "Session is busy; wait for it to become idle before continuing it here." }
+  }
+
+  const moved = await sdk.session
+    .handoff({ sessionID: latest.id })
+    .then((x) => x.data)
+    .catch(() => undefined)
+
+  if (!moved) return { error: "Failed to continue session in this directory." }
+  return { id: moved.id }
 }
 
 export const RunCommand = cmd({
@@ -281,12 +316,9 @@ export const RunCommand = cmd({
         directory: process.cwd(),
       })
 
-      const sessionID = await (async () => {
-        if (args.continue) {
-          const result = await sdk.session.list({ directory: process.cwd() })
-          return result.data?.find((s) => !s.parentID)?.id
-        }
-        if (args.session) return args.session
+      const selected = await (async () => {
+        if (args.continue) return continueHere(sdk)
+        if (args.session) return { id: args.session }
 
         const title =
           args.title !== undefined
@@ -317,8 +349,15 @@ export const RunCommand = cmd({
                 ],
               },
         )
-        return result.data?.id
+        return { id: result.data?.id }
       })()
+
+      if (selected.error) {
+        UI.error(selected.error)
+        process.exit(1)
+      }
+
+      const sessionID = selected.id
 
       if (!sessionID) {
         UI.error("Session not found")
@@ -360,12 +399,9 @@ export const RunCommand = cmd({
         }
       }
 
-      const sessionID = await (async () => {
-        if (args.continue) {
-          const result = await sdk.session.list({ directory: process.cwd() })
-          return result.data?.find((s) => !s.parentID)?.id
-        }
-        if (args.session) return args.session
+      const selected = await (async () => {
+        if (args.continue) return continueHere(sdk)
+        if (args.session) return { id: args.session }
 
         const title =
           args.title !== undefined
@@ -375,8 +411,15 @@ export const RunCommand = cmd({
             : undefined
 
         const result = await sdk.session.create(title ? { title } : {})
-        return result.data?.id
+        return { id: result.data?.id }
       })()
+
+      if (selected.error) {
+        UI.error(selected.error)
+        process.exit(1)
+      }
+
+      const sessionID = selected.id
 
       if (!sessionID) {
         UI.error("Session not found")

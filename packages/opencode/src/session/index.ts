@@ -13,12 +13,16 @@ import { Installation } from "../installation"
 
 import { Storage } from "../storage/storage"
 import { Log } from "../util/log"
+import { defer } from "../util/defer"
 import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
 import { SessionMessage } from "./message-routing"
 import { WaitPolicy } from "./wait-policy"
 import { SessionToolOverrides } from "./tool-overrides"
+import { SessionLease } from "./lease"
+import { SessionStatus } from "./status"
+import { SessionCompaction } from "./compaction"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
@@ -202,6 +206,57 @@ export namespace Session {
         }
       }
       return session
+    },
+  )
+
+  export const handoff = fn(
+    z.object({
+      sessionID: Identifier.schema("session"),
+    }),
+    async (input) => {
+      const next = Instance.directory
+      const lease = await SessionLease.acquire(input.sessionID)
+      if (!lease) {
+        throw new BusyError({ sessionID: input.sessionID })
+      }
+      using _lease = defer(() => {
+        void lease.release()
+      })
+
+      const session = await get(input.sessionID)
+      if (session.directory === next) return session
+
+      // SessionStatus/WaitPolicy/SessionMessage queues are Instance-scoped (directory-scoped).
+      // Always validate idleness in the session's current owning directory.
+      await Instance.provide({
+        directory: session.directory,
+        fn: async () => {
+          SessionPrompt.assertNotBusy(input.sessionID)
+
+          const status = SessionStatus.get(input.sessionID)
+          if (status.type !== "idle") {
+            throw new BusyError({ sessionID: input.sessionID })
+          }
+
+          // Waiting/pending work would be orphaned by moving the session.
+          if (WaitPolicy.isWaiting(input.sessionID)) {
+            throw new BusyError({ sessionID: input.sessionID })
+          }
+          if (SessionMessage.hasPending(input.sessionID)) {
+            throw new BusyError({ sessionID: input.sessionID })
+          }
+
+          // Manual compaction can run outside the prompt loop; block if one is in-flight.
+          const marker = await SessionCompaction.marker(input.sessionID)
+          if (marker) {
+            throw new BusyError({ sessionID: input.sessionID })
+          }
+        },
+      })
+
+      return update(input.sessionID, (draft) => {
+        draft.directory = next
+      })
     },
   )
 

@@ -1,15 +1,89 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
 import fs from "node:fs/promises"
+import { $ } from "bun"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
 import { Log } from "../../src/util/log"
+import { tmpdir } from "../fixture/fixture"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
 
 describe("session.list", () => {
+  test("scope=auto uses project scope only in linked git worktrees", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const worktree = tmp.path + "-wt"
+    const branch = "wt-" + Math.random().toString(36).slice(2)
+
+    await $`git worktree add ${worktree} -b ${branch}`.cwd(tmp.path).quiet()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const app = Server.App()
+
+        const main = await Session.create({})
+        const wt = await Instance.provide({
+          directory: worktree,
+          fn: async () => Session.create({}),
+        })
+
+        const wtAuto = await app.request(`/session?scope=auto`, {
+          headers: {
+            "x-opencode-directory": worktree,
+          },
+        })
+        expect(wtAuto.status).toBe(200)
+        const wtIDs = ((await wtAuto.json()) as Array<{ id: string }>).map((x) => x.id)
+        expect(wtIDs).toContain(main.id)
+        expect(wtIDs).toContain(wt.id)
+
+        const mainAuto = await app.request(`/session?scope=auto`, {
+          headers: {
+            "x-opencode-directory": tmp.path,
+          },
+        })
+        expect(mainAuto.status).toBe(200)
+        const mainIDs = ((await mainAuto.json()) as Array<{ id: string }>).map((x) => x.id)
+        expect(mainIDs).toContain(main.id)
+        expect(mainIDs).not.toContain(wt.id)
+      },
+    })
+  })
+
+  test("directory query overrides scope=auto in linked git worktrees", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const worktree = tmp.path + "-wt"
+    const branch = "wt-" + Math.random().toString(36).slice(2)
+
+    await $`git worktree add ${worktree} -b ${branch}`.cwd(tmp.path).quiet()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const app = Server.App()
+
+        const main = await Session.create({})
+        const wt = await Instance.provide({
+          directory: worktree,
+          fn: async () => Session.create({}),
+        })
+
+        const filtered = await app.request(`/session?scope=auto&directory=${encodeURIComponent(tmp.path)}`, {
+          headers: {
+            "x-opencode-directory": worktree,
+          },
+        })
+        expect(filtered.status).toBe(200)
+        const ids = ((await filtered.json()) as Array<{ id: string }>).map((x) => x.id)
+        expect(ids).toContain(main.id)
+        expect(ids).not.toContain(wt.id)
+      },
+    })
+  })
+
   test("defaults to current directory scope and supports explicit project scope", async () => {
     await Instance.provide({
       directory: projectRoot,

@@ -30,11 +30,14 @@ process.env["XDG_STATE_HOME"] = path.join(dir, "state")
 // Avoid loading/installing default plugins during tests.
 process.env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
 
+// Avoid bun add/install in config dirs during tests.
+process.env["OPENCODE_DISABLE_CONFIG_DEPENDENCIES"] = "true"
+
 // Pre-populate models.json so tests don't depend on network.
 // Also write the cache version file to prevent global/index.ts from clearing the cache.
 const cacheDir = path.join(dir, "cache", "opencode")
 await fs.mkdir(cacheDir, { recursive: true })
-await fs.writeFile(path.join(cacheDir, "version"), "14")
+await fs.writeFile(path.join(cacheDir, "version"), "21")
 
 const modelsDevFixture = {
   anthropic: {

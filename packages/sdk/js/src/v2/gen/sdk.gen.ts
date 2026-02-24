@@ -109,6 +109,8 @@ import type {
   SessionForkResponses,
   SessionGetErrors,
   SessionGetResponses,
+  SessionHandoffErrors,
+  SessionHandoffResponses,
   SessionInitErrors,
   SessionInitResponses,
   SessionListResponses,
@@ -832,7 +834,7 @@ export class Session extends HeyApiClient {
   public list<ThrowOnError extends boolean = false>(
     parameters?: {
       directory?: string
-      scope?: "directory" | "project"
+      scope?: "directory" | "project" | "auto"
       roots?: boolean
       start?: number
       search?: string
@@ -1186,6 +1188,36 @@ export class Session extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Handoff session
+   *
+   * Move a session's directory to the current request directory. Only allowed when the session is idle.
+   */
+  public handoff<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionHandoffResponses, SessionHandoffErrors, ThrowOnError>({
+      url: "/session/{sessionID}/handoff",
+      ...options,
+      ...params,
     })
   }
 

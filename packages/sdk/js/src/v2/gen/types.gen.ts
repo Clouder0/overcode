@@ -2192,6 +2192,13 @@ export type SessionContext = {
   }
 }
 
+export type SessionBusyError = {
+  name: "SessionBusyError"
+  data: {
+    sessionID: string
+  }
+}
+
 export type TextPartInput = {
   id?: string
   metadata?: {
@@ -3023,9 +3030,9 @@ export type SessionListData = {
      */
     directory?: string
     /**
-     * Session list scope: directory (default) or project
+     * Session list scope: directory (default), project, or auto
      */
-    scope?: "directory" | "project"
+    scope?: "directory" | "project" | "auto"
     /**
      * Only return root sessions (no parentID)
      */
@@ -3418,6 +3425,47 @@ export type SessionForkResponses = {
 }
 
 export type SessionForkResponse = SessionForkResponses[keyof SessionForkResponses]
+
+export type SessionHandoffData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/handoff"
+}
+
+export type SessionHandoffErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequest
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: SessionBusyError
+  /**
+   * Internal server error
+   */
+  500: UnknownError
+}
+
+export type SessionHandoffError = SessionHandoffErrors[keyof SessionHandoffErrors]
+
+export type SessionHandoffResponses = {
+  /**
+   * 200
+   */
+  200: Session
+}
+
+export type SessionHandoffResponse = SessionHandoffResponses[keyof SessionHandoffResponses]
 
 export type SessionAbortData = {
   body?: never

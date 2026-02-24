@@ -208,6 +208,10 @@ export namespace Config {
   })
 
   export async function installDependencies(dir: string) {
+    // Tests (and some CI runs) must not hit the network or mutate user/global config dirs.
+    // This flag allows the runner to skip bun add/install entirely.
+    if (Flag.OPENCODE_DISABLE_CONFIG_DEPENDENCIES) return
+
     const pkg = path.join(dir, "package.json")
 
     if (!(await Bun.file(pkg).exists())) {

@@ -1216,9 +1216,9 @@
             "schema": {
               "default": "directory",
               "type": "string",
-              "enum": ["directory", "project"]
+              "enum": ["directory", "project", "auto"]
             },
-            "description": "Session list scope: directory (default) or project"
+            "description": "Session list scope: directory (default), project, or auto"
           },
           {
             "in": "query",
@@ -2023,6 +2023,89 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.fork({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/{sessionID}/handoff": {
+      "post": {
+        "operationId": "session.handoff",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses[0-9A-Za-z_]+$"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Handoff session",
+        "description": "Move a session's directory to the current request directory. Only allowed when the session is idle.",
+        "responses": {
+          "200": {
+            "description": "200",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionBusyError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnknownError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk/v2/client\"\n\nconst client = createOpencodeClient()\nawait client.session.handoff({\n  ...\n})"
           }
         ]
       }
@@ -11493,6 +11576,26 @@
           }
         },
         "required": ["cpd", "flags", "actions", "estimate"]
+      },
+      "SessionBusyError": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "const": "SessionBusyError"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses[0-9A-Za-z_]+$"
+              }
+            },
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["name", "data"]
       },
       "TextPartInput": {
         "type": "object",

@@ -42,6 +42,7 @@ import { ArgsProvider, useArgs, type Args } from "./context/args"
 import open from "open"
 import { writeHeapSnapshot } from "v8"
 import { PromptRefProvider, usePromptRef } from "./context/prompt"
+import { Filesystem } from "@/util/filesystem"
 
 async function getTerminalBackgroundColor(): Promise<"dark" | "light"> {
   // can't set raw mode if not a TTY
@@ -279,13 +280,42 @@ function App() {
   createEffect(() => {
     // When using -c, session list is loaded in blocking phase, so we can navigate at "partial"
     if (continued || sync.status === "loading" || !args.continue) return
-    const match = sync.data.session
+    const latest = sync.data.session
       .toSorted((a, b) => b.time.updated - a.time.updated)
-      .find((x) => x.parentID === undefined)?.id
-    if (match) {
-      continued = true
-      route.navigate({ type: "session", sessionID: match })
-    }
+      .find((x) => x.parentID === undefined)
+    if (!latest) return
+
+    continued = true
+    void (async () => {
+      const info = await sdk.client.path
+        .get()
+        .then((x) => x.data)
+        .catch(() => undefined)
+      const root = info?.worktree || info?.directory || sdk.directory
+      if (!root || Filesystem.contains(root, latest.directory)) {
+        route.navigate({ type: "session", sessionID: latest.id })
+        return
+      }
+
+      const statuses = await sdk.client.session.status().catch(() => undefined)
+      const status = statuses?.data?.[latest.id]
+      if (status && status.type !== "idle") {
+        toast.show({
+          variant: "warning",
+          message: "Session is busy; wait for it to become idle before continuing it here.",
+          duration: 3000,
+        })
+        return
+      }
+
+      const moved = await sdk.client.session.handoff({ sessionID: latest.id }).catch(() => undefined)
+      const movedID = moved?.data?.id
+      if (!movedID) {
+        toast.show({ variant: "warning", message: "Failed to continue session here.", duration: 3000 })
+        return
+      }
+      route.navigate({ type: "session", sessionID: movedID })
+    })()
   })
 
   createEffect(
