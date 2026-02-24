@@ -7,7 +7,6 @@ import { Session } from "../../src/session"
 import { SessionMessage } from "../../src/session/message-routing"
 import { SessionStatus } from "../../src/session/status"
 import { WaitPolicy } from "../../src/session/wait-policy"
-import { SendAgentMessageTool } from "../../src/tool/send-agent-message"
 import { WaitAgentMessageTool } from "../../src/tool/wait-agent-message"
 
 const projectRoot = path.join(__dirname, "../..")
@@ -413,10 +412,64 @@ describe("tool.wait_agent_message validation", () => {
 
         expect(result.metadata.ok).toBe(true)
         expect(result.metadata.status).toBe("waiting")
+        expect(result.metadata.respondedSources).toEqual([source.id])
 
         const policy = WaitPolicy.get(session.id)
         expect(policy).toBeDefined()
         expect(policy?.sources).toEqual([source.id])
+        expect(policy?.since).toBe(since)
+
+        const status = SessionStatus.get(session.id)
+        expect(status.type).toBe("waiting")
+      },
+    })
+  })
+
+  test("preserves partial progress for wait-all when only some sources have replied", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const session = await Session.create({})
+        const first = await Session.create({})
+        const second = await Session.create({})
+        created.push(session.id, first.id, second.id)
+
+        const since = SessionMessage.checkpoint(session.id)
+        await SessionMessage.deliver({
+          from: first.id,
+          to: session.id,
+          text: "first replied",
+        })
+
+        const tool = await WaitAgentMessageTool.init()
+        const result = await tool.execute(
+          {
+            sources: [first.id, second.id],
+            timeout: 1000,
+            mode: "all",
+            since,
+          },
+          {
+            ...ctxBase,
+            sessionID: session.id,
+            extra: {
+              waitContext: {
+                maxSeqBySource: {
+                  [first.id]: since,
+                  [second.id]: since,
+                },
+              },
+            },
+          },
+        )
+
+        expect(result.metadata.ok).toBe(true)
+        expect(result.metadata.status).toBe("waiting")
+        expect(result.metadata.respondedSources).toEqual([first.id])
+
+        const policy = WaitPolicy.get(session.id)
+        expect(policy).toBeDefined()
+        expect(policy?.sources).toEqual([first.id, second.id])
         expect(policy?.since).toBe(since)
 
         const status = SessionStatus.get(session.id)
@@ -467,23 +520,21 @@ describe("tool.wait_agent_message validation", () => {
         const target = await Session.create({})
         created.push(waiter.id, target.id)
 
-        const sendTool = await SendAgentMessageTool.init()
         const msgID = "msg_same_turn"
 
-        const sent = await sendTool.execute(
-          {
-            to: target.id,
-            text: "please report back",
+        await Session.updatePart({
+          id: Identifier.ascending("part"),
+          sessionID: waiter.id,
+          messageID: msgID,
+          type: "message",
+          direction: "outgoing",
+          peer: target.id,
+          peerType: "agent",
+          text: "please report back",
+          time: {
+            created: Date.now(),
           },
-          {
-            ...ctxBase,
-            messageID: msgID,
-            callID: "call_send",
-            sessionID: waiter.id,
-          },
-        )
-
-        expect(sent.metadata.ok).toBe(true)
+        })
 
         const waitTool = await WaitAgentMessageTool.init()
         const result = await waitTool.execute(

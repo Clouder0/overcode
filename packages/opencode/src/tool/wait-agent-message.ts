@@ -14,6 +14,7 @@ type WaitMessageMetadata = {
   status: WaitMessageStatus
   sources: string[]
   respondedSources: string[]
+  respondedSeqs?: Record<string, number>
   timedOutSources: string[]
   timeout: number
   mode: "all" | "any"
@@ -228,7 +229,20 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       since: baseline,
     })
 
+    const respondedSourcesRecoverable = (() => {
+      if (isWildcard) return Array.from(responded)
+      if (mode === "any") return Array.from(responded)
+      return sources.filter((source) => responded.has(source))
+    })()
+
+    const respondedSeqsRecoverable = Object.fromEntries(
+      respondedSourcesRecoverable
+        .map((source) => [source, SessionMessage.lastSeq(ctx.sessionID, source)] as const)
+        .filter((entry) => entry[1] > baseline),
+    )
+
     const immediateRecoverable = mode === "any" ? responded.size > 0 : sources.every((source) => responded.has(source))
+    const partialRecoverable = mode === "all" && responded.size > 0 && !immediateRecoverable
 
     const immediate = immediateInContext
     const warning = [
@@ -239,6 +253,9 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       clampedSince ? `since=${baselineRaw} exceeded current seq=${currentSeq}; clamped to seq=${baseline}.` : undefined,
       immediateRecoverable && !immediate
         ? "Reply exists outside the current context snapshot; wait was registered so the host can refresh and continue."
+        : undefined,
+      partialRecoverable
+        ? "Some replies already arrived outside the current context snapshot; wait remains active for remaining sources."
         : undefined,
     ]
       .filter((line): line is string => typeof line === "string")
@@ -281,7 +298,8 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
         ok: true,
         status: "interrupted",
         sources,
-        respondedSources: [],
+        respondedSources: respondedSourcesRecoverable,
+        respondedSeqs: Object.keys(respondedSeqsRecoverable).length > 0 ? respondedSeqsRecoverable : undefined,
         timedOutSources: [],
         timeout: params.timeout,
         mode,
@@ -345,7 +363,8 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       ok: true,
       status: "waiting",
       sources,
-      respondedSources: [],
+      respondedSources: respondedSourcesRecoverable,
+      respondedSeqs: Object.keys(respondedSeqsRecoverable).length > 0 ? respondedSeqsRecoverable : undefined,
       timedOutSources: [],
       timeout: params.timeout,
       mode: policy.mode,
