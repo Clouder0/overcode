@@ -252,10 +252,10 @@ export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
       mode !== params.mode ? 'mode="any" with a single explicit source was normalized to mode="all".' : undefined,
       clampedSince ? `since=${baselineRaw} exceeded current seq=${currentSeq}; clamped to seq=${baseline}.` : undefined,
       immediateRecoverable && !immediate
-        ? "Reply exists outside the current context snapshot; wait was registered so the host can refresh and continue."
+        ? "Reply exists but is not visible in the current context; wait was registered so the host can refresh and continue."
         : undefined,
       partialRecoverable
-        ? "Some replies already arrived outside the current context snapshot; wait remains active for remaining sources."
+        ? "Some sources have already replied but are not visible in the current context; wait remains active for remaining sources."
         : undefined,
     ]
       .filter((line): line is string => typeof line === "string")

@@ -6,21 +6,22 @@ import fs from "fs/promises"
 import fsSync from "fs"
 import { afterAll } from "bun:test"
 
-const dir = path.join(os.tmpdir(), "opencode-test-data-" + process.pid)
+const dir = path.join(
+  os.tmpdir(),
+  "opencode-test-data-" + process.pid + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+)
 await fs.mkdir(dir, { recursive: true })
 
 const home = path.join(dir, "home")
 await fs.mkdir(home, { recursive: true })
+// Isolate tests from user's actual home directory
+// This prevents tests from picking up real user configs/skills from ~/.opencode
 process.env["HOME"] = home
+process.env["OPENCODE_TEST_HOME"] = home
 
 afterAll(() => {
   fsSync.rmSync(dir, { recursive: true, force: true })
 })
-// Set test home directory to isolate tests from user's actual home directory
-// This prevents tests from picking up real user configs/skills from ~/.claude/skills
-const testHome = path.join(dir, "home")
-await fs.mkdir(testHome, { recursive: true })
-process.env["OPENCODE_TEST_HOME"] = testHome
 
 process.env["XDG_DATA_HOME"] = path.join(dir, "share")
 process.env["XDG_CACHE_HOME"] = path.join(dir, "cache")
@@ -238,6 +239,8 @@ delete process.env["AWS_PROFILE"]
 delete process.env["AWS_REGION"]
 delete process.env["AWS_BEARER_TOKEN_BEDROCK"]
 delete process.env["OPENROUTER_API_KEY"]
+delete process.env["OPENCODE_API_KEY"]
+delete process.env["GITLAB_TOKEN"]
 delete process.env["GROQ_API_KEY"]
 delete process.env["MISTRAL_API_KEY"]
 delete process.env["PERPLEXITY_API_KEY"]

@@ -6,7 +6,7 @@ import { GlobalBus } from "./global"
 
 export namespace Bus {
   const log = Log.create({ service: "bus" })
-  type Subscription = (event: any) => void
+  type Subscription = (event: any) => void | Promise<void>
 
   export const InstanceDisposed = BusEvent.define(
     "server.instance.disposed",
@@ -32,9 +32,22 @@ export namespace Bus {
           directory: Instance.directory,
         },
       }
+
+      const pending: Promise<void>[] = []
       for (const sub of [...wildcard]) {
-        sub(event)
+        pending.push(
+          Promise.resolve()
+            .then(() => sub(event))
+            .catch((error) => {
+              log.error("subscriber failed", {
+                event: InstanceDisposed.type,
+                key: "*",
+                error,
+              })
+            }),
+        )
       }
+      await Promise.all(pending)
     },
   )
 
@@ -49,11 +62,30 @@ export namespace Bus {
     log.debug("publishing", {
       type: def.type,
     })
-    const pending = []
+    const pending: Promise<void>[] = []
     for (const key of [def.type, "*"]) {
       const match = state().subscriptions.get(key)
       for (const sub of match ?? []) {
-        pending.push(sub(payload))
+        pending.push(
+          (() => {
+            try {
+              return Promise.resolve(sub(payload)).catch((error) => {
+                log.error("subscriber failed", {
+                  event: def.type,
+                  key,
+                  error,
+                })
+              })
+            } catch (error) {
+              log.error("subscriber failed", {
+                event: def.type,
+                key,
+                error,
+              })
+              return Promise.resolve()
+            }
+          })(),
+        )
       }
     }
     GlobalBus.emit("event", {

@@ -75,7 +75,10 @@ export namespace BunProc {
     const dependencies = parsed.dependencies ?? {}
     if (!parsed.dependencies) parsed.dependencies = dependencies
     const modExists = await Filesystem.exists(mod)
-    if (dependencies[pkg] === version && modExists) return mod
+
+    const pinned = dependencies[pkg]
+    if (modExists && pinned === version) return mod
+    if (modExists && version === "latest" && pinned) return mod
 
     const proxied = !!(
       process.env.HTTP_PROXY ||

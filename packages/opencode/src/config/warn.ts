@@ -20,6 +20,7 @@ export namespace Warn {
     })
 
     Once.run("warn.config.name", () => {
+      if (process.env.OPENCODE_TEST_HOME) return
       const message = msg()
       Bus.publish(TuiEvent.ToastShow, {
         title: "Deprecated config",
