@@ -3,6 +3,7 @@ import {
   createContext,
   createEffect,
   createMemo,
+  createResource,
   createSignal,
   For,
   Match,
@@ -42,6 +43,7 @@ import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util/locale"
 import { Log } from "@/util/log"
 import { buildSessionTree } from "../../lib/session-tree"
+import { after, cut, reverted, show, swap } from "../../context/revert"
 import type { Tool } from "@/tool/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
@@ -92,6 +94,7 @@ import { formatTranscript } from "../../util/transcript"
 import { SkillProjection } from "@/util/skill-projection"
 import { resolveSkillStatus } from "./skill-status"
 import { projectSkillProjection } from "./skill-projection"
+import { isQueued } from "./queued"
 
 addDefaultParsers(parsers.parsers)
 
@@ -653,8 +656,8 @@ export function Session() {
       onSelect: async (dialog) => {
         const status = sync.data.session_status?.[route.sessionID]
         if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
-        const revert = session()?.revert?.messageID
-        const message = messages().findLast((x) => (!revert || x.id < revert) && x.role === "user")
+
+        const message = shown().findLast((x) => x.role === "user")
         if (!message) return
         sdk.client.session
           .revert({
@@ -689,11 +692,30 @@ export function Session() {
       slash: {
         name: "redo",
       },
-      onSelect: (dialog) => {
+      onSelect: async (dialog) => {
         dialog.clear()
-        const messageID = session()?.revert?.messageID
-        if (!messageID) return
-        const message = messages().find((x) => x.role === "user" && x.id > messageID)
+        const info = revertInfo()
+        if (!info?.messageID) return
+        const list = messages()
+
+        const boundary = await (async () => {
+          const found = list.find((x) => x.id === info.messageID)
+          if (found) return found
+          const cached = edge()
+          if (cached) return cached
+          return sdk.client.session
+            .message({ sessionID: route.sessionID, messageID: info.messageID })
+            .then((x) => x.data?.info)
+            .catch(() => undefined)
+        })()
+
+        if (!boundary) return
+
+        const message = after({
+          list,
+          boundary,
+          role: "user",
+        })
         if (!message) {
           sdk.client.session.unrevert({
             sessionID: route.sessionID,
@@ -920,9 +942,15 @@ export function Session() {
       category: "Session",
       onSelect: (dialog) => {
         const revertID = session()?.revert?.messageID
-        const lastAssistantMessage = messages().findLast(
-          (msg) => msg.role === "assistant" && (!revertID || msg.id < revertID),
-        )
+        const list = messages()
+        const cut = (() => {
+          if (!revertID) return list.length
+          const idx = list.findIndex((x) => x.id === revertID)
+          if (idx === -1) return list.length
+          return idx
+        })()
+
+        const lastAssistantMessage = list.slice(0, cut).findLast((msg) => msg.role === "assistant")
         if (!lastAssistantMessage) {
           toast.show({ message: "No assistant messages found", variant: "error" })
           dialog.clear()
@@ -1111,6 +1139,55 @@ export function Session() {
   const revertInfo = createMemo(() => session()?.revert)
   const revertMessageID = createMemo(() => revertInfo()?.messageID)
 
+  const [edge] = createResource(
+    () => {
+      const messageID = revertMessageID()
+      if (!messageID) return
+      if (messages().some((x) => x.id === messageID)) return
+      return route.sessionID + ":" + messageID
+    },
+    (key) => {
+      const idx = key.indexOf(":")
+      if (idx === -1) return
+
+      const sessionID = key.slice(0, idx)
+      const messageID = key.slice(idx + 1)
+
+      return sdk.client.session
+        .message({ sessionID, messageID })
+        .then((x) => x.data?.info)
+        .catch(() => undefined)
+    },
+  )
+
+  const boundary = createMemo(() => {
+    const messageID = revertMessageID()
+    if (!messageID) return
+    const loaded = messages().find((x) => x.id === messageID)
+    if (loaded) return loaded
+
+    const fetched = edge()
+    if (!fetched || fetched.id !== messageID) return
+    return fetched
+  })
+
+  const rev = createMemo(() => {
+    const info = revertInfo()
+    if (!info?.messageID) return
+    return {
+      messageID: info.messageID,
+      partID: info.partID,
+    }
+  })
+
+  const shown = createMemo(() => {
+    return cut({
+      list: messages(),
+      revert: rev(),
+      boundary: boundary(),
+    })
+  })
+
   const revertDiffFiles = createMemo(() => {
     const diffText = revertInfo()?.diff ?? ""
     if (!diffText) return []
@@ -1138,9 +1215,12 @@ export function Session() {
   })
 
   const revertRevertedMessages = createMemo(() => {
-    const messageID = revertMessageID()
-    if (!messageID) return []
-    return messages().filter((x) => x.id >= messageID && x.role === "user")
+    return reverted({
+      list: messages(),
+      revert: rev(),
+      boundary: boundary(),
+      role: "user",
+    })
   })
 
   const revert = createMemo(() => {
@@ -1236,14 +1316,11 @@ export function Session() {
                       )}
                     </Show>
                   </box>
-                  <For each={sync.data.message[sessionID] ?? []}>
+                  <For each={shown()}>
                     {(message, index) => (
                       <Switch>
-                        <Match when={message.id === revert()?.messageID}>
+                        <Match when={swap({ id: message.id, revert: rev() })}>
                           <RevertNotice data={revert() as RevertNoticeData} />
-                        </Match>
-                        <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
-                          <></>
                         </Match>
                         <Match when={message.role === "user"}>
                           <UserMessage
@@ -1273,6 +1350,9 @@ export function Session() {
                       </Switch>
                     )}
                   </For>
+                  <Show when={show({ list: shown(), revert: rev() })}>
+                    <RevertNotice data={revert() as RevertNoticeData} />
+                  </Show>
                 </scrollbox>
               )}
             </Show>
@@ -1426,7 +1506,27 @@ function UserMessage(props: {
   const sync = useSync()
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
-  const queued = createMemo(() => props.pending && props.message.id > props.pending)
+  const pendingOrder = createMemo(() => {
+    const id = props.pending
+    if (!id) return 0
+    const msg = (sync.data.message[props.message.sessionID] ?? []).find((m) => m.id === id)
+    const order = msg?.order
+    if (typeof order !== "number" || !Number.isInteger(order) || order <= 0) return 0
+    return order
+  })
+
+  const queued = createMemo(() => {
+    const id = props.pending
+    if (!id) return false
+    const order = props.message.order
+    const pending = pendingOrder()
+    if (typeof order === "number" && Number.isInteger(order) && order > 0 && pending > 0) {
+      return order > pending
+    }
+    const pendingIndex = (sync.data.message[props.message.sessionID] ?? []).findIndex((m) => m.id === id)
+    if (pendingIndex === -1) return false
+    return props.index > pendingIndex
+  })
   const color = createMemo(() => (queued() ? theme.accent : local.agent.color(props.message.agent)))
   const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
 
@@ -1666,7 +1766,10 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
     if (props.part.peerType !== "agent") return false
 
     const pending = pendingAssistant()
-    if (pending && props.part.messageID > pending) return true
+    if (pending) {
+      const messages = sync.data.message[props.part.sessionID] ?? []
+      if (isQueued({ messages, pending, current: props.part.messageID })) return true
+    }
 
     const status = sessionStatus()
     if (status?.type === "waiting") {

@@ -18,6 +18,8 @@ import {
 import { A, useNavigate, useParams } from "@solidjs/router"
 import { useLayout, getAvatarColors, LocalProject } from "@/context/layout"
 import { useGlobalSync } from "@/context/global-sync"
+import { mergeMessages, mergeParts, seal } from "@/context/message-merge"
+import { sortMessages } from "@/context/message-sort"
 import { Persist, persisted } from "@/utils/persist"
 import { base64Encode } from "@opencode-ai/util/encode"
 import { decode64 } from "@/utils/base64"
@@ -247,16 +249,20 @@ export default function Layout(props: ParentProps) {
       <Show
         when={isEditing()}
         fallback={
-          <span
-            class={props.displayClass ?? props.class}
-            onDblClick={handleDblClick}
-            onPointerDown={stopPropagation}
-            onMouseDown={stopPropagation}
-            onClick={stopPropagation}
-            onTouchStart={stopPropagation}
-          >
-            {props.value()}
-          </span>
+          <>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: inline editor trigger is mouse-only */}
+            {/* biome-ignore lint/a11y/useKeyWithClickEvents: inline editor trigger is mouse-only */}
+            <span
+              class={props.displayClass ?? props.class}
+              onDblClick={handleDblClick}
+              onPointerDown={stopPropagation}
+              onMouseDown={stopPropagation}
+              onClick={stopPropagation}
+              onTouchStart={stopPropagation}
+            >
+              {props.value()}
+            </span>
+          </>
         }
       >
         <InlineInput
@@ -738,31 +744,47 @@ export default function Layout(props: ParentProps) {
   }
 
   async function prefetchMessages(directory: string, sessionID: string, token: number) {
-    const [, setStore] = globalSync.child(directory, { bootstrap: false })
+    const [store, setStore] = globalSync.child(directory, { bootstrap: false })
 
     return retry(() => globalSDK.client.session.messages({ directory, sessionID, limit: prefetchChunk }))
       .then((messages) => {
         if (prefetchToken.value !== token) return
 
-        const items = (messages.data ?? []).filter((x) => !!x?.info?.id)
-        const next = items
+        const tombstone = store.tombstone.message[sessionID] ?? {}
+        const items = (messages.data ?? []).filter((x) => !!x?.info?.id && !tombstone[x.info.id])
+        const snapshot = items
           .map((x) => x.info)
           .filter((m) => !!m?.id)
-          .slice()
-          .sort((a, b) => a.id.localeCompare(b.id))
+          .sort(sortMessages)
+
+        const next = mergeMessages({
+          current: store.message[sessionID] ?? [],
+          snapshot,
+          limit: prefetchChunk,
+          tombstone,
+        })
 
         batch(() => {
           setStore("message", sessionID, reconcile(next, { key: "id" }))
 
           for (const message of items) {
+            const current = store.part[message.info.id] ?? []
+            const tombstone = store.tombstone.part[message.info.id] ?? {}
+            const sealed = seal(message.info)
+            const snapshot = (message.parts ?? [])
+              .filter((p) => !!p?.id)
+              .filter((p) => !tombstone[p.id])
+              .sort((a, b) => a.id.localeCompare(b.id))
             setStore(
               "part",
               message.info.id,
               reconcile(
-                message.parts
-                  .filter((p) => !!p?.id)
-                  .slice()
-                  .sort((a, b) => a.id.localeCompare(b.id)),
+                mergeParts({
+                  current,
+                  snapshot,
+                  tombstone,
+                  sealed,
+                }),
                 { key: "id" },
               ),
             )
@@ -2821,6 +2843,8 @@ export default function Layout(props: ParentProps) {
           </Show>
         </nav>
         <div class="xl:hidden">
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop only dismisses on click */}
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop only dismisses on click */}
           <div
             classList={{
               "fixed inset-x-0 top-10 bottom-0 z-40 transition-opacity duration-200": true,
@@ -2831,6 +2855,8 @@ export default function Layout(props: ParentProps) {
               if (e.target === e.currentTarget) layout.mobileSidebar.hide()
             }}
           />
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: mobile sidebar stops overlay clicks */}
+          {/* biome-ignore lint/a11y/useKeyWithClickEvents: mobile sidebar stops overlay clicks */}
           <nav
             aria-label={language.t("sidebar.nav.projectsAndSessions")}
             classList={{

@@ -44,6 +44,7 @@ import { getFilename } from "@opencode-ai/util/path"
 import { usePlatform } from "./platform"
 import { useLanguage } from "@/context/language"
 import { Persist, persisted } from "@/utils/persist"
+import { upsertMessage } from "./message-sort"
 
 type ProjectMeta = {
   name?: string
@@ -94,6 +95,14 @@ type State = {
   }
   part: {
     [messageID: string]: Part[]
+  }
+  tombstone: {
+    message: {
+      [sessionID: string]: Record<string, true>
+    }
+    part: {
+      [messageID: string]: Record<string, true>
+    }
   }
 }
 
@@ -340,6 +349,10 @@ function createGlobalSync() {
           limit: 5,
           message: {},
           part: {},
+          tombstone: {
+            message: {},
+            part: {},
+          },
         })
 
         children[directory] = child
@@ -632,10 +645,12 @@ function createGlobalSync() {
               const id = message?.id
               if (!id) continue
               delete draft.part[id]
+              delete draft.tombstone.part[id]
             }
           }
 
           delete draft.message[sessionID]
+          delete draft.tombstone.message[sessionID]
           delete draft.session_diff[sessionID]
           delete draft.todo[sessionID]
           delete draft.permission[sessionID]
@@ -724,21 +739,20 @@ function createGlobalSync() {
         break
       }
       case "message.updated": {
-        const messages = store.message[event.properties.info.sessionID]
-        if (!messages) {
-          setStore("message", event.properties.info.sessionID, [event.properties.info])
-          break
-        }
-        const result = Binary.search(messages, event.properties.info.id, (m) => m.id)
-        if (result.found) {
-          setStore("message", event.properties.info.sessionID, result.index, reconcile(event.properties.info))
-          break
-        }
+        const info = event.properties.info
+        const sessionID = info.sessionID
+
         setStore(
-          "message",
-          event.properties.info.sessionID,
           produce((draft) => {
-            draft.splice(result.index, 0, event.properties.info)
+            if (draft.tombstone.message[sessionID]?.[info.id]) return
+
+            const messages = draft.message[sessionID]
+            if (!messages) {
+              draft.message[sessionID] = [info]
+              return
+            }
+
+            upsertMessage(messages, info)
           }),
         )
         break
@@ -749,21 +763,27 @@ function createGlobalSync() {
 
         setStore(
           produce((draft) => {
+            if (!draft.tombstone.message[sessionID]) {
+              draft.tombstone.message[sessionID] = {}
+            }
+            draft.tombstone.message[sessionID][messageID] = true
+
             const messages = draft.message[sessionID]
             if (messages) {
-              const result = Binary.search(messages, messageID, (m) => m.id)
-              if (result.found) {
-                messages.splice(result.index, 1)
-              }
+              const idx = messages.findIndex((m) => m.id === messageID)
+              if (idx !== -1) messages.splice(idx, 1)
             }
 
             delete draft.part[messageID]
+            delete draft.tombstone.part[messageID]
           }),
         )
         break
       }
       case "message.part.updated": {
         const part = event.properties.part
+        if (store.tombstone.message[part.sessionID]?.[part.messageID]) break
+        if (store.tombstone.part[part.messageID]?.[part.id]) break
         const parts = store.part[part.messageID]
         if (!parts) {
           setStore("part", part.messageID, [part])
@@ -785,21 +805,22 @@ function createGlobalSync() {
       }
       case "message.part.removed": {
         const messageID = event.properties.messageID
-        const parts = store.part[messageID]
-        if (!parts) break
-        const result = Binary.search(parts, event.properties.partID, (p) => p.id)
-        if (result.found) {
-          setStore(
-            produce((draft) => {
-              const list = draft.part[messageID]
-              if (!list) return
-              const next = Binary.search(list, event.properties.partID, (p) => p.id)
-              if (!next.found) return
-              list.splice(next.index, 1)
-              if (list.length === 0) delete draft.part[messageID]
-            }),
-          )
-        }
+        const partID = event.properties.partID
+        setStore(
+          produce((draft) => {
+            if (!draft.tombstone.part[messageID]) {
+              draft.tombstone.part[messageID] = {}
+            }
+            draft.tombstone.part[messageID][partID] = true
+
+            const parts = draft.part[messageID]
+            if (!parts) return
+            const idx = parts.findIndex((p) => p.id === partID)
+            if (idx === -1) return
+            parts.splice(idx, 1)
+            if (parts.length === 0) delete draft.part[messageID]
+          }),
+        )
         break
       }
       case "vcs.branch.updated": {

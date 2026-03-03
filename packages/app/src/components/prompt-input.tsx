@@ -55,7 +55,6 @@ import { useLanguage } from "@/context/language"
 import { useGlobalSync } from "@/context/global-sync"
 import { usePlatform } from "@/context/platform"
 import { createOpencodeClient, type Message, type Part } from "@opencode-ai/sdk/v2/client"
-import { Binary } from "@opencode-ai/util/binary"
 import { showToast } from "@opencode-ai/ui/toast"
 import { base64Encode } from "@opencode-ai/util/encode"
 
@@ -1506,8 +1505,26 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             if (!messages) {
               draft.message[session.id] = [optimisticMessage]
             } else {
-              const result = Binary.search(messages, messageID, (m) => m.id)
-              messages.splice(result.index, 0, optimisticMessage)
+              const idx = messages.findIndex((m) => m.id === messageID)
+              if (idx !== -1) messages[idx] = optimisticMessage
+              if (idx === -1) messages.push(optimisticMessage)
+              messages.sort((a, b) => {
+                const ao =
+                  typeof a.order === "number" && Number.isInteger(a.order) && a.order > 0
+                    ? a.order
+                    : Number.MAX_SAFE_INTEGER
+                const bo =
+                  typeof b.order === "number" && Number.isInteger(b.order) && b.order > 0
+                    ? b.order
+                    : Number.MAX_SAFE_INTEGER
+                if (ao !== bo) return ao - bo
+
+                const at = typeof a.time?.created === "number" ? a.time.created : 0
+                const bt = typeof b.time?.created === "number" ? b.time.created : 0
+                if (at !== bt) return at - bt
+
+                return a.id.localeCompare(b.id)
+              })
             }
             draft.part[messageID] = optimisticParts
               .filter((p) => !!p?.id)
@@ -1524,8 +1541,26 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           if (!messages) {
             draft.message[session.id] = [optimisticMessage]
           } else {
-            const result = Binary.search(messages, messageID, (m) => m.id)
-            messages.splice(result.index, 0, optimisticMessage)
+            const idx = messages.findIndex((m) => m.id === messageID)
+            if (idx !== -1) messages[idx] = optimisticMessage
+            if (idx === -1) messages.push(optimisticMessage)
+            messages.sort((a, b) => {
+              const ao =
+                typeof a.order === "number" && Number.isInteger(a.order) && a.order > 0
+                  ? a.order
+                  : Number.MAX_SAFE_INTEGER
+              const bo =
+                typeof b.order === "number" && Number.isInteger(b.order) && b.order > 0
+                  ? b.order
+                  : Number.MAX_SAFE_INTEGER
+              if (ao !== bo) return ao - bo
+
+              const at = typeof a.time?.created === "number" ? a.time.created : 0
+              const bt = typeof b.time?.created === "number" ? b.time.created : 0
+              if (at !== bt) return at - bt
+
+              return a.id.localeCompare(b.id)
+            })
           }
           draft.part[messageID] = optimisticParts
             .filter((p) => !!p?.id)
@@ -1541,8 +1576,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           produce((draft) => {
             const messages = draft.message[session.id]
             if (messages) {
-              const result = Binary.search(messages, messageID, (m) => m.id)
-              if (result.found) messages.splice(result.index, 1)
+              const idx = messages.findIndex((m) => m.id === messageID)
+              if (idx !== -1) messages.splice(idx, 1)
             }
             delete draft.part[messageID]
           }),
@@ -1554,8 +1589,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         produce((draft) => {
           const messages = draft.message[session.id]
           if (messages) {
-            const result = Binary.search(messages, messageID, (m) => m.id)
-            if (result.found) messages.splice(result.index, 1)
+            const idx = messages.findIndex((m) => m.id === messageID)
+            if (idx !== -1) messages.splice(idx, 1)
           }
           delete draft.part[messageID]
         }),

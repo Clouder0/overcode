@@ -405,6 +405,16 @@ export namespace SessionPrompt {
   async function persistDeliveredMessage(message: SessionMessage.Message) {
     const sessionID = message.to
 
+    const compacting = await (async () => {
+      const active = state()[sessionID]?.compaction
+      if (active) return active
+
+      const manual = SessionCompaction.manual(sessionID)
+      if (manual) return manual
+
+      return await SessionCompaction.marker(sessionID).catch(() => undefined)
+    })()
+
     const agentName = await lastAgent(sessionID)
     const agentInfo = await Agent.get(agentName)
 
@@ -418,21 +428,6 @@ export namespace SessionPrompt {
     }
 
     await Session.updateMessage(uiMessage)
-
-    const compacting = await (async () => {
-      const active = state()[sessionID]?.compaction
-      if (active) return active
-
-      const manual = SessionCompaction.manual(sessionID)
-      if (manual) {
-        return {
-          requestID: manual.requestID,
-          startedAt: manual.startedAt,
-        }
-      }
-
-      return await SessionCompaction.marker(sessionID).catch(() => undefined)
-    })()
     if (compacting) {
       await Session.updatePart(
         compactionReminder({
@@ -488,6 +483,11 @@ export namespace SessionPrompt {
     },
   )
 
+  const inbound = Instance.state(
+    () => new Map<string, Promise<void>>(),
+    async (map) => map.clear(),
+  )
+
   function persistInbound(message: SessionMessage.Message) {
     const cache = delivered()
     if (cache.done.has(message.id)) return Promise.resolve()
@@ -495,7 +495,11 @@ export namespace SessionPrompt {
     const existing = cache.inflight.get(message.id)
     if (existing) return existing
 
-    const next = persistDeliveredMessage(message)
+    const chain = inbound()
+    const prev = chain.get(message.to) ?? Promise.resolve()
+
+    const next = prev
+      .then(() => persistDeliveredMessage(message))
       .then(() => {
         SessionMessage.markDurable(message)
         cache.done.set(message.id, true)
@@ -509,8 +513,28 @@ export namespace SessionPrompt {
         cache.inflight.delete(message.id)
       })
 
+    chain.set(
+      message.to,
+      next.catch(() => {}),
+    )
+
     cache.inflight.set(message.id, next)
     return next
+  }
+
+  async function persistBatch(messages: SessionMessage.Message[]) {
+    const ok = new Set<string>()
+    const list = messages.slice().sort((a, b) => a.seq - b.seq)
+
+    for (const msg of list) {
+      const done = await persistInbound(msg).then(
+        () => true,
+        () => false,
+      )
+      if (done) ok.add(msg.id)
+    }
+
+    return ok
   }
 
   function persistInboundInDirectory(message: SessionMessage.Message, directory: string) {
@@ -657,7 +681,13 @@ export namespace SessionPrompt {
     known.sort(
       (a, b) => (rank.get(a.info.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.info.id) ?? Number.MAX_SAFE_INTEGER),
     )
-    unknown.sort((a, b) => (a.info.id > b.info.id ? 1 : -1))
+    unknown.sort((a, b) => {
+      const ao = typeof a.info.order === "number" ? a.info.order : 0
+      const bo = typeof b.info.order === "number" ? b.info.order : 0
+      if (ao !== bo) return ao - bo
+      if (a.info.id === b.info.id) return 0
+      return a.info.id > b.info.id ? 1 : -1
+    })
     return [...known, ...unknown]
   }
 
@@ -1945,11 +1975,7 @@ export namespace SessionPrompt {
 
         if (human) {
           // Persist all pending messages (human + agent) before continuing.
-          const settled = await Promise.allSettled(pendingMessages.map((msg) => persistInbound(msg)))
-          const ok = new Set<string>()
-          for (const [i, msg] of pendingMessages.entries()) {
-            if (settled[i]?.status === "fulfilled") ok.add(msg.id)
-          }
+          const ok = await persistBatch(pendingMessages)
           if (ok.size > 0) {
             SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id))
           }
@@ -2008,11 +2034,7 @@ export namespace SessionPrompt {
         // Persist ALL pending messages (source replies + non-source agent messages).
         const allPending = SessionMessage.peekPending(sessionID)
         if (allPending.length > 0) {
-          const settled = await Promise.allSettled(allPending.map((m) => persistInbound(m)))
-          const ok = new Set<string>()
-          for (const [i, msg] of allPending.entries()) {
-            if (settled[i]?.status === "fulfilled") ok.add(msg.id)
-          }
+          const ok = await persistBatch(allPending)
           if (ok.size > 0) {
             SessionMessage.takePending(sessionID, (msg) => ok.has(msg.id))
           }
@@ -2200,11 +2222,7 @@ export namespace SessionPrompt {
       if (SessionMessage.hasPending(sessionID)) {
         const pending = SessionMessage.peekPending(sessionID)
         if (pending.length > 0) {
-          const settled = await Promise.allSettled(pending.map((m) => persistInbound(m)))
-          const ok = new Set<string>()
-          for (const [i, msg] of pending.entries()) {
-            if (settled[i]?.status === "fulfilled") ok.add(msg.id)
-          }
+          const ok = await persistBatch(pending)
 
           if (ok.size === 0) {
             pendingPersistFailures++
@@ -2274,7 +2292,14 @@ export namespace SessionPrompt {
       // If the previous run was interrupted mid-thinking, we can end up with an assistant message that contains only
       // reasoning parts and no final output/tool call. Some providers (eg, Claude) reject such empty messages after
       // unsupported parts are dropped. Keep the thinking in history, but omit it from the model context and mark it.
-      if (newestAssistant && newestUser && newestUser.id > newestAssistant.id && !newestAssistant.finish) {
+      const orphaned = (() => {
+        const ai = msgs.findLastIndex((m) => m.info.role === "assistant")
+        const ui = msgs.findLastIndex((m) => m.info.role === "user")
+        if (ai === -1 || ui === -1) return false
+        return ui > ai
+      })()
+
+      if (orphaned && newestAssistant && newestUser && !newestAssistant.finish) {
         const orphan = msgs.find((m) => m.info.role === "assistant" && m.info.id === newestAssistant.id)
         if (orphan) {
           await omitOrphanThinking({
@@ -2664,7 +2689,17 @@ export namespace SessionPrompt {
       const baseIndex = (() => {
         const upto = cpd?.upto
         if (!upto) return 0
-        const next = users.findIndex((m) => m.info.id > upto)
+        const uptoOrder = cpd?.uptoOrder ?? users.find((m) => m.info.id === upto)?.info.order
+        if (typeof uptoOrder !== "number" || !Number.isInteger(uptoOrder) || uptoOrder <= 0) return 0
+
+        const ord = (msg: { order?: number } | undefined) => {
+          const value = msg?.order
+          if (typeof value !== "number") return Number.MAX_SAFE_INTEGER
+          if (!Number.isInteger(value) || value <= 0) return Number.MAX_SAFE_INTEGER
+          return value
+        }
+
+        const next = users.findIndex((m) => ord(m.info) > uptoOrder)
         if (next === -1) return users.length
         return next
       })()
@@ -3086,7 +3121,17 @@ export namespace SessionPrompt {
           const rebased = cpd?.upto
           const nextBase = (() => {
             if (!rebased) return 0
-            const next = users.findIndex((m) => m.info.id > rebased)
+            const rebasedOrder = cpd?.uptoOrder ?? users.find((m) => m.info.id === rebased)?.info.order
+            if (typeof rebasedOrder !== "number" || !Number.isInteger(rebasedOrder) || rebasedOrder <= 0) return 0
+
+            const ord = (msg: { order?: number } | undefined) => {
+              const value = msg?.order
+              if (typeof value !== "number") return Number.MAX_SAFE_INTEGER
+              if (!Number.isInteger(value) || value <= 0) return Number.MAX_SAFE_INTEGER
+              return value
+            }
+
+            const next = users.findIndex((m) => ord(m.info) > rebasedOrder)
             if (next === -1) return users.length
             return next
           })()
@@ -4221,7 +4266,7 @@ export namespace SessionPrompt {
       throw new Session.BusyError({ sessionID: input.sessionID })
     }
 
-    await Session.updateMessage(info)
+    const saved = await Session.updateMessage(info)
     for (const part of parts) {
       await Session.updatePart(part)
     }
@@ -4235,7 +4280,7 @@ export namespace SessionPrompt {
     }
 
     return {
-      info,
+      info: saved,
       parts,
     }
   }

@@ -460,7 +460,22 @@ export const SessionRoutes = lazy(() =>
           const baseIndex = (() => {
             const upto = cpd?.upto
             if (!upto) return 0
-            const idx = users.findIndex((m) => m.info.id > upto)
+
+            const uptoOrder = cpd?.uptoOrder ?? users.find((m) => m.info.id === upto)?.info.order
+            if (typeof uptoOrder !== "number" || !Number.isInteger(uptoOrder) || uptoOrder <= 0) return 0
+
+            const ord = (msg: { order?: number } | undefined) => {
+              const value = msg?.order
+              if (typeof value !== "number") return Number.MAX_SAFE_INTEGER
+              if (!Number.isInteger(value) || value <= 0) return Number.MAX_SAFE_INTEGER
+              return value
+            }
+
+            const idx = users.findIndex((m) => {
+              const order = ord(m.info)
+              if (order !== uptoOrder) return order > uptoOrder
+              return m.info.id > upto
+            })
             if (idx >= 0) return idx
             return users.length
           })()
@@ -1101,8 +1116,24 @@ export const SessionRoutes = lazy(() =>
 
           const existing = await SessionCPD.get(sessionID)
           const startIndex = (() => {
-            if (!existing?.upto) return 0
-            const idx = users.findIndex((m) => m.info.id > existing.upto)
+            const upto = existing?.upto
+            if (!upto) return 0
+
+            const uptoOrder = existing.uptoOrder ?? users.find((m) => m.info.id === upto)?.info.order
+            if (typeof uptoOrder !== "number" || !Number.isInteger(uptoOrder) || uptoOrder <= 0) return 0
+
+            const ord = (msg: { order?: number } | undefined) => {
+              const value = msg?.order
+              if (typeof value !== "number") return Number.MAX_SAFE_INTEGER
+              if (!Number.isInteger(value) || value <= 0) return Number.MAX_SAFE_INTEGER
+              return value
+            }
+
+            const idx = users.findIndex((m) => {
+              const order = ord(m.info)
+              if (order !== uptoOrder) return order > uptoOrder
+              return m.info.id > upto
+            })
             if (idx === -1) return users.length
             return idx
           })()

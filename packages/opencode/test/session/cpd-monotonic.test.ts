@@ -17,6 +17,35 @@ afterEach(() => {
 })
 
 describe("session.cpd monotonic", () => {
+  test("allows legacy orderless upto messages", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const session = await Session.create({})
+        const upto = Identifier.ascending("message")
+        const now = Date.now()
+
+        await Storage.write(["message", session.id, upto], {
+          id: upto,
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now },
+        })
+
+        await SessionCPD.set(session.id, { text: "legacy", upto })
+
+        const cpd = await SessionCPD.get(session.id)
+        expect(cpd?.upto).toBe(upto)
+        expect(cpd?.uptoOrder).toBeUndefined()
+        expect(cpd?.text).toBe("legacy")
+
+        await Session.remove(session.id)
+      },
+    })
+  })
+
   test("does not allow CPD upto to move backwards", async () => {
     await Instance.provide({
       directory: projectRoot,
@@ -25,6 +54,24 @@ describe("session.cpd monotonic", () => {
 
         const older = Identifier.ascending("message")
         const newer = Identifier.ascending("message")
+
+        const now = Date.now()
+        await Session.updateMessage({
+          id: older,
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now },
+        })
+        await Session.updateMessage({
+          id: newer,
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now + 1 },
+        })
 
         await SessionCPD.set(session.id, { text: "new", upto: newer })
         await SessionCPD.set(session.id, { text: "old", upto: older })
@@ -49,6 +96,24 @@ describe("session.cpd monotonic", () => {
         const older = Identifier.ascending("message")
         const newer = Identifier.ascending("message")
 
+        const now = Date.now()
+        await Session.updateMessage({
+          id: older,
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now },
+        })
+        await Session.updateMessage({
+          id: newer,
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now + 1 },
+        })
+
         await Promise.all([
           SessionCPD.set(session.id, { text: "new", upto: newer }),
           SessionCPD.set(session.id, { text: "old", upto: older }),
@@ -71,12 +136,29 @@ describe("session.cpd monotonic", () => {
         const session = await Session.create({})
 
         const upto1 = Identifier.ascending("message")
+        const now = Date.now()
+        await Session.updateMessage({
+          id: upto1,
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now },
+        })
         await SessionCPD.set(session.id, { text: "one", upto: upto1 })
 
         const file = path.join(Global.Path.data, "storage", "cpd", session.id + ".json")
         await Bun.write(file, "{not-json")
 
         const upto2 = Identifier.ascending("message")
+        await Session.updateMessage({
+          id: upto2,
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: "dummy", modelID: "dummy" },
+          time: { created: now + 1 },
+        })
         await SessionCPD.set(session.id, { text: "two", upto: upto2 })
 
         const cpd = await SessionCPD.get(session.id)

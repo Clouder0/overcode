@@ -7,12 +7,14 @@ import { Agent } from "@/agent/agent"
 import { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
 import type { ModelMessage } from "ai"
+import { MessageV2 } from "./message-v2"
 
 export namespace SessionCPD {
   export const Data = z
     .object({
       text: z.string(),
       upto: Identifier.schema("message"),
+      uptoOrder: z.number().int().positive().optional(),
       updated: z.number(),
     })
     .meta({
@@ -38,6 +40,14 @@ export namespace SessionCPD {
     const updated = input.updated ?? Date.now()
     const upto = Identifier.schema("message").parse(input.upto)
 
+    const info = await Storage.read<MessageV2.Info>(["message", sessionID, upto]).catch(() => undefined)
+    const uptoOrder = (() => {
+      const value = info?.order
+      if (typeof value !== "number") return
+      if (!Number.isInteger(value) || value <= 0) return
+      return value
+    })()
+
     // CPD must only advance forward. Do the monotonic check inside a single
     // write-lock so concurrent updates can't move the boundary backwards.
     const result = await Storage.upsert<Data>(
@@ -45,12 +55,33 @@ export namespace SessionCPD {
       () => ({
         text: input.text,
         upto,
+        uptoOrder,
         updated,
       }),
       (draft) => {
-        if (draft.upto > upto) return false
+        const draftOrder = (() => {
+          const value = draft.uptoOrder
+          if (typeof value !== "number") return
+          if (!Number.isInteger(value) || value <= 0) return
+          return value
+        })()
+
+        // If we have an order boundary, never update it with an unknown order.
+        if (draftOrder !== undefined && uptoOrder === undefined) return false
+
+        // Prefer numeric monotonic checks when available.
+        if (draftOrder !== undefined && uptoOrder !== undefined) {
+          if (draftOrder > uptoOrder) return false
+          if (draftOrder === uptoOrder && draft.upto > upto) return false
+        }
+
+        // Fall back to lexicographic monotonic checks for legacy messages.
+        if (draftOrder === undefined && uptoOrder === undefined) {
+          if (draft.upto > upto) return false
+        }
         draft.text = input.text
         draft.upto = upto
+        draft.uptoOrder = uptoOrder
         draft.updated = updated
       },
     )

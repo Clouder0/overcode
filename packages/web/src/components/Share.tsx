@@ -66,7 +66,24 @@ export default function Share(props: { id: string; api: string; info: Session.In
     },
     messages: {},
   })
-  const messages = createMemo(() => Object.values(store.messages).toSorted((a, b) => a.id?.localeCompare(b.id)))
+  const messages = createMemo(() =>
+    Object.values(store.messages).toSorted((a, b) => {
+      const ao = typeof a.order === "number" ? a.order : Number.POSITIVE_INFINITY
+      const bo = typeof b.order === "number" ? b.order : Number.POSITIVE_INFINITY
+      if (ao !== bo) return ao - bo
+
+      const at = typeof a.time?.created === "number" ? a.time.created : Number.POSITIVE_INFINITY
+      const bt = typeof b.time?.created === "number" ? b.time.created : Number.POSITIVE_INFINITY
+      if (at !== bt) return at - bt
+
+      const aid = a.id
+      const bid = b.id
+      if (typeof aid !== "string") return -1
+      if (typeof bid !== "string") return 1
+      if (aid === bid) return 0
+      return aid > bid ? 1 : -1
+    }),
+  )
   const [connectionStatus, setConnectionStatus] = createSignal<[Status, string?]>(["disconnected", "Disconnected"])
   createEffect(() => {
     if (!debug) return

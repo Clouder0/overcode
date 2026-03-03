@@ -6,6 +6,8 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useGlobalSync } from "./global-sync"
 import { useSDK } from "./sdk"
 import type { Message, Part } from "@opencode-ai/sdk/v2/client"
+import { sortMessages } from "./message-sort"
+import { mergeMessages, mergeParts, seal } from "./message-merge"
 
 const keyFor = (directory: string, id: string) => `${directory}\n${id}`
 
@@ -45,6 +47,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const loadMessages = async (input: {
       directory: string
       client: typeof sdk.client
+      store: Child[0]
       setStore: Setter
       sessionID: string
       limit: number
@@ -56,27 +59,60 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       await retry(() => input.client.session.messages({ sessionID: input.sessionID, limit: input.limit }))
         .then((messages) => {
           const items = (messages.data ?? []).filter((x) => !!x?.info?.id)
-          const next = items
+          const tombstone = input.store.tombstone.message[input.sessionID] ?? {}
+          const live = items.filter((x) => !tombstone[x.info.id])
+
+          const snapshot = live
             .map((x) => x.info)
             .filter((m) => !!m?.id)
-            .sort((a, b) => a.id.localeCompare(b.id))
+            .sort(sortMessages)
+
+          const next = mergeMessages({
+            current: input.store.message[input.sessionID] ?? [],
+            snapshot,
+            limit: input.limit,
+            tombstone,
+          })
+
+          const removed = (() => {
+            const prev = new Set((input.store.message[input.sessionID] ?? []).map((m) => m.id))
+            for (const msg of next) {
+              prev.delete(msg.id)
+            }
+            return prev
+          })()
 
           batch(() => {
             input.setStore("message", input.sessionID, reconcile(next, { key: "id" }))
 
-            for (const message of items) {
+            for (const message of live) {
+              const current = input.store.part[message.info.id] ?? []
+              const tombstone = input.store.tombstone.part[message.info.id] ?? {}
+              const sealed = seal(message.info)
+              const snapshot = (message.parts ?? [])
+                .filter((p) => !!p?.id)
+                .filter((p) => !tombstone[p.id])
+                .sort((a, b) => a.id.localeCompare(b.id))
+
               input.setStore(
                 "part",
                 message.info.id,
-                reconcile(
-                  message.parts.filter((p) => !!p?.id).sort((a, b) => a.id.localeCompare(b.id)),
-                  { key: "id" },
-                ),
+                reconcile(mergeParts({ current, snapshot, tombstone, sealed }), { key: "id" }),
+              )
+            }
+
+            if (removed.size > 0) {
+              input.setStore(
+                produce((draft) => {
+                  for (const id of removed) {
+                    delete draft.part[id]
+                  }
+                }),
               )
             }
 
             setMeta("limit", key, input.limit)
-            setMeta("complete", key, next.length < input.limit)
+            setMeta("complete", key, items.length < input.limit)
           })
         })
         .finally(() => {
@@ -126,8 +162,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               if (!messages) {
                 draft.message[input.sessionID] = [message]
               } else {
-                const result = Binary.search(messages, input.messageID, (m) => m.id)
-                messages.splice(result.index, 0, message)
+                const idx = messages.findIndex((m) => m.id === input.messageID)
+                if (idx !== -1) messages[idx] = message
+                if (idx === -1) messages.push(message)
+                messages.sort(sortMessages)
               }
               draft.part[input.messageID] = input.parts.filter((p) => !!p?.id).sort((a, b) => a.id.localeCompare(b.id))
             }),
@@ -176,6 +214,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               : loadMessages({
                   directory,
                   client,
+                  store,
                   setStore,
                   sessionID,
                   limit,
@@ -248,7 +287,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           async loadMore(sessionID: string, count = chunk) {
             const directory = sdk.directory
             const client = sdk.client
-            const [, setStore] = globalSync.child(directory)
+            const [store, setStore] = globalSync.child(directory)
             const key = keyFor(directory, sessionID)
             if (meta.loading[key]) return
             if (meta.complete[key]) return
@@ -257,6 +296,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             await loadMessages({
               directory,
               client,
+              store,
               setStore,
               sessionID,
               limit: currentLimit + count,

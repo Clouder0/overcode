@@ -34,6 +34,56 @@ import { Global } from "@/global"
 export namespace Session {
   const log = Log.create({ service: "session" })
 
+  const messageOrder = Instance.state(
+    () => new Map<string, number>(),
+    async (map) => {
+      map.clear()
+    },
+  )
+
+  async function messageOrderFloor(sessionID: string) {
+    const map = messageOrder()
+    const cached = map.get(sessionID)
+    if (typeof cached === "number" && Number.isInteger(cached) && cached > 0) return cached
+
+    const keys = await Storage.list(["message", sessionID]).catch(() => [])
+    const max = { value: 0 }
+
+    for (const key of keys) {
+      const info = await Storage.read<MessageV2.Info>(key).catch(() => undefined)
+      const value = info?.order
+      if (typeof value !== "number") continue
+      if (!Number.isInteger(value) || value <= max.value) continue
+      max.value = value
+    }
+
+    const floor = max.value + 1
+    map.set(sessionID, floor)
+    return floor
+  }
+
+  async function nextMessageOrder(sessionID: string) {
+    const floor = await messageOrderFloor(sessionID)
+    const state = { value: 0 }
+
+    await Storage.upsert<{ next: number }>(
+      ["message_order", sessionID],
+      () => ({
+        next: floor,
+      }),
+      (draft) => {
+        const next =
+          typeof draft.next === "number" && Number.isInteger(draft.next) && draft.next > 0 ? draft.next : floor
+        const value = next > floor ? next : floor
+        state.value = value
+        draft.next = value + 1
+      },
+    )
+
+    messageOrder().set(sessionID, state.value + 1)
+    return state.value
+  }
+
   const parentTitlePrefix = "New session - "
   const childTitlePrefix = "Child session - "
 
@@ -183,8 +233,10 @@ export namespace Session {
       const msgs = await messages({ sessionID: input.sessionID })
       const idMap = new Map<string, string>()
 
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
+      const stop = input.messageID ? msgs.findIndex((m) => m.info.id === input.messageID) : -1
+      const slice = stop === -1 ? msgs : msgs.slice(0, stop)
+
+      for (const msg of slice) {
         const newID = Identifier.ascending("message")
         idMap.set(msg.info.id, newID)
 
@@ -193,6 +245,7 @@ export namespace Session {
           ...msg.info,
           sessionID: session.id,
           id: newID,
+          order: undefined,
           ...(parentID && { parentID }),
         })
 
@@ -505,6 +558,7 @@ export namespace Session {
       WaitPolicy.clear(sessionID)
       await Storage.remove(["compaction", sessionID]).catch(() => {})
       await Storage.remove(["cpd", sessionID]).catch(() => {})
+      await Storage.remove(["message_order", sessionID]).catch(() => {})
       await SessionToolOverrides.clear(sessionID).catch((error) => {
         log.error("failed to clear tool overrides", { sessionID, error })
       })
@@ -525,11 +579,22 @@ export namespace Session {
   })
 
   export const updateMessage = fn(MessageV2.Info, async (msg) => {
-    await Storage.write(["message", msg.sessionID, msg.id], msg)
+    const existing = await Storage.read<MessageV2.Info>(["message", msg.sessionID, msg.id]).catch(() => undefined)
+    const stored = existing?.order
+    const order =
+      typeof stored === "number" && Number.isInteger(stored) && stored > 0
+        ? stored
+        : await nextMessageOrder(msg.sessionID)
+    const next = {
+      ...msg,
+      order,
+    }
+
+    await Storage.write(["message", msg.sessionID, msg.id], next)
     Bus.publish(MessageV2.Event.Updated, {
-      info: msg,
+      info: next,
     })
-    return msg
+    return next
   })
 
   export const removeMessage = fn(

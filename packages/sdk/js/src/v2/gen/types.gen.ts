@@ -195,6 +195,7 @@ export type FileDiff = {
 export type UserMessage = {
   id: string
   sessionID: string
+  order?: number
   role: "user"
   time: {
     created: number
@@ -264,6 +265,7 @@ export type ApiError = {
 export type AssistantMessage = {
   id: string
   sessionID: string
+  order?: number
   role: "assistant"
   time: {
     created: number
@@ -2158,6 +2160,7 @@ export type SessionContext = {
   cpd: {
     text: string
     upto: string
+    uptoOrder?: number
     updated: number
     size?: number
   } | null

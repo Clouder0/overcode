@@ -14,7 +14,6 @@ import { type UiI18nKey, type UiI18nParams, useI18n } from "../context/i18n"
 import { findLast } from "@opencode-ai/util/array"
 import { getDirectory, getFilename } from "@opencode-ai/util/path"
 
-import { Binary } from "@opencode-ai/util/binary"
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, ParentProps, Show, Switch } from "solid-js"
 import { DiffChanges } from "./diff-changes"
 import { Message, Part } from "./message-part"
@@ -33,6 +32,7 @@ import { createStore } from "solid-js/store"
 import { DateTime, DurationUnit, Interval } from "luxon"
 import { createAutoScroll } from "../hooks"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
+import { collectAssistants } from "./session-turn-assistant"
 
 type Translator = (key: UiI18nKey, params?: UiI18nParams) => string
 
@@ -129,6 +129,7 @@ export function SessionTurn(
     sessionID: string
     sessionTitle?: string
     messageID: string
+    messages?: readonly MessageType[]
     lastUserMessageID?: string
     stepsExpanded?: boolean
     onStepsExpandedToggle?: () => void
@@ -153,17 +154,17 @@ export function SessionTurn(
   const emptyDiffs: FileDiff[] = []
   const idle = { type: "idle" as const }
 
-  const allMessages = createMemo(() => data.store.message[props.sessionID] ?? emptyMessages)
+  const allMessages = createMemo(() => props.messages ?? data.store.message[props.sessionID] ?? emptyMessages)
 
   const messageIndex = createMemo(() => {
     const messages = allMessages() ?? emptyMessages
-    const result = Binary.search(messages, props.messageID, (m) => m.id)
-    if (!result.found) return -1
+    const idx = messages.findIndex((m) => m.id === props.messageID)
+    if (idx === -1) return -1
 
-    const msg = messages[result.index]
+    const msg = messages[idx]
     if (!msg || msg.role !== "user") return -1
 
-    return result.index
+    return idx
   })
 
   const message = createMemo(() => {
@@ -218,14 +219,7 @@ export function SessionTurn(
       const index = messageIndex()
       if (index < 0) return emptyAssistant
 
-      const result: AssistantMessage[] = []
-      for (let i = index + 1; i < messages.length; i++) {
-        const item = messages[i]
-        if (!item) continue
-        if (item.role === "user") break
-        if (item.role === "assistant" && item.parentID === msg.id) result.push(item as AssistantMessage)
-      }
-      return result
+      return collectAssistants(messages, msg.id, index + 1) as AssistantMessage[]
     },
     emptyAssistant,
     { equals: same },

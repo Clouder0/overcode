@@ -28,6 +28,8 @@ import { useArgs } from "./args"
 import { batch, onMount } from "solid-js"
 import { Log } from "@/util/log"
 import type { Path } from "@opencode-ai/sdk"
+import { ord } from "./message-sort"
+import { mergeMessages, mergeParts, seal } from "./message-merge"
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
@@ -148,6 +150,31 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     // Track deletions so a late list can't resurrect a deleted session.
     const sessionTombstones = new Set<string>()
 
+    const messageTombstones = new Map<string, Set<string>>()
+    const partTombstones = new Map<string, Set<string>>()
+
+    const buryMessage = (sessionID: string, messageID: string) => {
+      const set = messageTombstones.get(sessionID)
+      if (set) {
+        set.add(messageID)
+        return
+      }
+      messageTombstones.set(sessionID, new Set([messageID]))
+    }
+
+    const buryPart = (messageID: string, partID: string) => {
+      const set = partTombstones.get(messageID)
+      if (set) {
+        set.add(partID)
+        return
+      }
+      partTombstones.set(messageID, new Set([partID]))
+    }
+
+    const deadMessage = (sessionID: string, messageID: string) =>
+      messageTombstones.get(sessionID)?.has(messageID) ?? false
+    const deadPart = (messageID: string, partID: string) => partTombstones.get(messageID)?.has(partID) ?? false
+
     function mergeSessionList(list: typeof store.session) {
       // Merge instead of replace: session.create() optimistically inserts the
       // new session into the store; a stale session.list response must not
@@ -186,6 +213,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           fullSyncInFlight.clear()
           sessionInfoInFlight.clear()
           sessionTombstones.clear()
+          messageTombstones.clear()
+          partTombstones.clear()
           bootstrap()
           break
         case "permission.replied": {
@@ -318,14 +347,15 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "message.updated": {
+          if (deadMessage(event.properties.info.sessionID, event.properties.info.id)) break
           const messages = store.message[event.properties.info.sessionID]
           if (!messages) {
             setStore("message", event.properties.info.sessionID, [event.properties.info])
             break
           }
-          const result = Binary.search(messages, event.properties.info.id, (m) => m.id)
-          if (result.found) {
-            setStore("message", event.properties.info.sessionID, result.index, reconcile(event.properties.info))
+          const idx = messages.findIndex((m) => m.id === event.properties.info.id)
+          if (idx !== -1) {
+            setStore("message", event.properties.info.sessionID, idx, reconcile(event.properties.info))
             break
           }
           const gone: { id?: string } = {}
@@ -337,7 +367,14 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               "message",
               event.properties.info.sessionID,
               produce((draft) => {
-                draft.splice(result.index, 0, event.properties.info)
+                const order = ord(event.properties.info)
+                if (!order) {
+                  draft.push(event.properties.info)
+                }
+                if (order) {
+                  const index = draft.findIndex((m) => ord(m) > order)
+                  draft.splice(index === -1 ? draft.length : index, 0, event.properties.info)
+                }
                 if (draft.length <= 100) return
                 gone.id = draft.shift()?.id
               }),
@@ -356,18 +393,19 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
         }
         case "message.removed": {
+          buryMessage(event.properties.sessionID, event.properties.messageID)
           const messages = store.message[event.properties.sessionID]
-          const result = messages ? Binary.search(messages, event.properties.messageID, (m) => m.id) : undefined
+          const idx = messages ? messages.findIndex((m) => m.id === event.properties.messageID) : -1
 
           const protectedIDs = pins(store.permission)
 
           batch(() => {
-            if (result?.found) {
+            if (messages && idx !== -1) {
               setStore(
                 "message",
                 event.properties.sessionID,
                 produce((draft) => {
-                  draft.splice(result.index, 1)
+                  draft.splice(idx, 1)
                 }),
               )
             }
@@ -384,6 +422,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
         case "message.part.updated": {
           const part = event.properties.part
+
+          if (deadMessage(part.sessionID, part.messageID)) break
+          if (deadPart(part.messageID, part.id)) break
 
           const protectedIDs = pins(store.permission)
 
@@ -413,16 +454,24 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "message.part.removed": {
-          const parts = store.part[event.properties.messageID]
-          const result = Binary.search(parts, event.properties.partID, (p) => p.id)
-          if (result.found)
-            setStore(
-              "part",
-              event.properties.messageID,
-              produce((draft) => {
-                draft.splice(result.index, 1)
-              }),
-            )
+          const messageID = event.properties.messageID
+          const partID = event.properties.partID
+
+          buryPart(messageID, partID)
+
+          const parts = store.part[messageID]
+          if (!parts) break
+
+          const result = Binary.search(parts, partID, (p) => p.id)
+          if (!result.found) break
+
+          setStore(
+            "part",
+            messageID,
+            produce((draft) => {
+              draft.splice(result.index, 1)
+            }),
+          )
           break
         }
 
@@ -650,51 +699,37 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                   // Merge the snapshot with any newer SSE updates already in memory.
                   // This avoids clobbering newer messages/parts when a sync response races with live events.
                   const list = messages.data ?? []
-                  const existingByID = new Map(current.map((m) => [m.id, m]))
-
-                  const snapshotInfos = list.map((x) => {
-                    const existing = existingByID.get(x.info.id)
-                    if (!existing) return x.info
-
-                    // Keep the completed message if the snapshot is stale.
-                    if (existing.role === "assistant" && x.info.role === "assistant") {
-                      if (existing.time.completed !== undefined && x.info.time.completed === undefined) return existing
-                    }
-
-                    return x.info
+                  const tombstone = messageTombstones.get(sessionID)
+                  const snapshot = list
+                    .map((x) => x.info)
+                    .filter((m) => !!m?.id)
+                    .filter((m) => !tombstone?.has(m.id))
+                  const mergedInfos = mergeMessages({
+                    current,
+                    snapshot,
+                    limit: 100,
+                    pinned: protectedIDs,
+                    tombstone,
                   })
-
-                  const lastSnapshotID = snapshotInfos.at(-1)?.id
-                  const newer = (() => {
-                    if (snapshotInfos.length === 0) return current
-                    if (!lastSnapshotID) return current
-                    return current.filter((m) => m.id > lastSnapshotID)
-                  })()
-
-                  const mergedInfos = snapshotInfos.concat(newer)
-                  const cappedInfos =
-                    mergedInfos.length <= 100 ? mergedInfos : mergedInfos.slice(Math.max(0, mergedInfos.length - 100))
-
-                  const next = new Set(cappedInfos.map((m) => m.id))
-                  draft.message[sessionID] = cappedInfos
+                  const next = new Set(mergedInfos.map((m) => m.id))
+                  draft.message[sessionID] = mergedInfos
 
                   for (const message of list) {
-                    const existing = draft.part[message.info.id] ?? []
-                    const snapshot = message.parts ?? []
-                    const partsByID = new Map(existing.map((p) => [p.id, p]))
+                    if (tombstone?.has(message.info.id)) continue
+                    const dead = partTombstones.get(message.info.id)
+                    const sealed = seal(message.info)
+                    const current = draft.part[message.info.id] ?? []
+                    const snapshot = (message.parts ?? []).filter((p) => !dead?.has(p.id))
 
-                    const snapshotParts = snapshot.map((p) => partsByID.get(p.id) ?? p)
-                    const lastSnapshotPartID = snapshotParts.at(-1)?.id
-                    const newerParts = (() => {
-                      if (snapshotParts.length === 0) return existing
-                      if (!lastSnapshotPartID) return existing
-                      return existing.filter((p) => p.id > lastSnapshotPartID)
-                    })()
-
-                    draft.part[message.info.id] = snapshotParts.concat(newerParts)
+                    draft.part[message.info.id] = mergeParts({ current, snapshot, tombstone: dead, sealed })
                   }
 
+                  const candidates = new Set<string>(snapshot.map((m) => m.id))
                   for (const id of previous) {
+                    candidates.add(id)
+                  }
+
+                  for (const id of candidates) {
                     if (next.has(id)) continue
                     if (protectedIDs.has(id)) continue
                     delete draft.part[id]

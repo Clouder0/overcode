@@ -71,7 +71,8 @@ export namespace SessionRevert {
       revert.snapshot = session.revert?.snapshot ?? (await Snapshot.track())
       await Snapshot.revert(patches)
       if (revert.snapshot) revert.diff = await Snapshot.diff(revert.snapshot)
-      const rangeMessages = all.filter((msg) => msg.info.id >= revert!.messageID)
+      const start = all.findIndex((msg) => msg.info.id === revert.messageID)
+      const rangeMessages = start === -1 ? all : all.slice(start)
       const diffs = await SessionSummary.computeDiff({ messages: rangeMessages })
       await Storage.write(["session_diff", input.sessionID], diffs)
       Bus.publish(Session.Event.Diff, {
@@ -111,6 +112,7 @@ export namespace SessionRevert {
     SessionMessage.clear(sessionID)
     let msgs = await Session.messages({ sessionID })
     const messageID = session.revert.messageID
+    const order = msgs.find((x) => x.info.id === messageID)?.info.order
 
     const split = (() => {
       const idx = msgs.findIndex((x) => x.info.id === messageID)
@@ -201,7 +203,9 @@ export namespace SessionRevert {
 
     await SessionCPD.flag(sessionID, flags)
 
-    const invalid = cpd && cpd.upto >= messageID
+    const uptoOrder = cpd?.uptoOrder ?? msgs.find((x) => x.info.id === cpd?.upto)?.info.order
+    const invalid =
+      typeof order === "number" && Number.isInteger(order) && typeof uptoOrder === "number" && uptoOrder >= order
     if (invalid) {
       await SessionCPD.clear(sessionID)
     }

@@ -167,6 +167,126 @@ export namespace Storage {
         )
       }
     },
+    async (dir) => {
+      const root = path.join(dir, "message")
+      if (!(await Filesystem.isDir(root))) return
+
+      const sessions = new Map<
+        string,
+        {
+          file: string
+          id: string
+          created: number
+          json: Record<string, unknown>
+        }[]
+      >()
+
+      for await (const file of new Bun.Glob("message/*/*.json").scan({
+        cwd: dir,
+        absolute: true,
+      })) {
+        const json = await Bun.file(file)
+          .json()
+          .catch(() => undefined)
+        if (!json || typeof json !== "object") continue
+        if (Array.isArray(json)) continue
+
+        const rel = path.relative(dir, file)
+        const parts = rel.split(path.sep)
+        const sessionID = parts.length >= 3 ? parts[1] : undefined
+        if (!sessionID) continue
+
+        const id = (() => {
+          const value = (json as { id?: unknown }).id
+          if (typeof value === "string") return value
+          return path.basename(file, ".json")
+        })()
+
+        const created = (() => {
+          const time = (json as { time?: unknown }).time
+          const raw = (() => {
+            if (!time || typeof time !== "object") return
+            const value = (time as { created?: unknown }).created
+            if (typeof value === "number") return value
+          })()
+          if (raw !== undefined) return raw
+
+          const index = id.indexOf("_")
+          if (index < 0) return 0
+          const hex = id.slice(index + 1, index + 13)
+          if (!/^[0-9a-fA-F]{12}$/.test(hex)) return 0
+          const value = Number(BigInt(`0x${hex}`) / 0x1000n)
+          if (!Number.isFinite(value)) return 0
+          return value
+        })()
+
+        const existing = sessions.get(sessionID) ?? []
+        existing.push({ file, id, created, json: json as Record<string, unknown> })
+        sessions.set(sessionID, existing)
+      }
+
+      await fs.mkdir(path.join(dir, "message_order"), { recursive: true })
+
+      for (const [sessionID, items] of sessions) {
+        const byID = new Map<string, number>()
+
+        const preserve = (() => {
+          const seen = new Set<number>()
+          for (const item of items) {
+            const raw = item.json["order"]
+            if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) return false
+            if (seen.has(raw)) return false
+            seen.add(raw)
+            byID.set(item.id, raw)
+          }
+          return true
+        })()
+
+        const next = await (async () => {
+          if (preserve) {
+            const max = Math.max(...Array.from(byID.values()), 0)
+            return max + 1
+          }
+
+          items.sort((a, b) => {
+            const aCreated = a.created > 0 ? a.created : Number.POSITIVE_INFINITY
+            const bCreated = b.created > 0 ? b.created : Number.POSITIVE_INFINITY
+            if (aCreated !== bCreated) return aCreated - bCreated
+            if (a.id === b.id) return 0
+            return a.id > b.id ? 1 : -1
+          })
+
+          byID.clear()
+          for (const [index, item] of items.entries()) {
+            const order = index + 1
+            item.json["order"] = order
+            byID.set(item.id, order)
+            await Bun.write(item.file, JSON.stringify(item.json, null, 2))
+          }
+
+          return items.length + 1
+        })()
+
+        await Bun.write(path.join(dir, "message_order", sessionID + ".json"), JSON.stringify({ next }, null, 2))
+
+        const cpdFile = path.join(dir, "cpd", sessionID + ".json")
+        const cpd = await Bun.file(cpdFile)
+          .json()
+          .catch(() => undefined)
+        if (!cpd || typeof cpd !== "object") continue
+        if (Array.isArray(cpd)) continue
+        const upto = (cpd as { upto?: unknown }).upto
+        if (typeof upto !== "string") continue
+        const uptoOrder = byID.get(upto)
+        if (typeof uptoOrder !== "number") continue
+        const current = (cpd as { uptoOrder?: unknown }).uptoOrder
+        const valid = typeof current === "number" && Number.isInteger(current) && current > 0
+        if (!valid || current !== uptoOrder) {
+          ;(cpd as Record<string, unknown>)["uptoOrder"] = uptoOrder
+          await Bun.write(cpdFile, JSON.stringify(cpd, null, 2))
+        }
+      }
+    },
   ]
 
   const state = lazy(async () => {
@@ -178,7 +298,16 @@ export namespace Storage {
     for (let index = migration; index < MIGRATIONS.length; index++) {
       log.info("running migration", { index })
       const migration = MIGRATIONS[index]
-      await migration(dir).catch(() => log.error("failed to run migration", { index }))
+
+      const ok = await migration(dir).then(
+        () => true,
+        (error) => {
+          log.error("failed to run migration", { index, error })
+          return false
+        },
+      )
+
+      if (!ok) break
       await Bun.write(path.join(dir, "migration"), (index + 1).toString())
     }
     return {

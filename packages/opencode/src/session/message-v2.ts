@@ -393,6 +393,7 @@ export namespace MessageV2 {
   const Base = z.object({
     id: z.string(),
     sessionID: z.string(),
+    order: z.number().int().positive().optional(),
   })
 
   export const User = Base.extend({
@@ -811,12 +812,41 @@ export namespace MessageV2 {
   }
 
   export const stream = fn(Identifier.schema("session"), async function* (sessionID) {
-    const list = await Array.fromAsync(await Storage.list(["message", sessionID]))
-    for (let i = list.length - 1; i >= 0; i--) {
-      yield await get({
-        sessionID,
-        messageID: list[i][2],
-      })
+    const keys = await Array.fromAsync(await Storage.list(["message", sessionID]))
+    const infos = [] as MessageV2.Info[]
+
+    for (const key of keys) {
+      const info = await Storage.read<MessageV2.Info>(key).catch(() => undefined)
+      if (!info) continue
+      infos.push(info)
+    }
+
+    infos.sort((a, b) => {
+      const ord = (msg: { order?: number } | undefined) => {
+        const value = msg?.order
+        if (typeof value !== "number") return Number.MAX_SAFE_INTEGER
+        if (!Number.isInteger(value) || value <= 0) return Number.MAX_SAFE_INTEGER
+        return value
+      }
+
+      const ao = ord(a)
+      const bo = ord(b)
+      if (ao !== bo) return ao - bo
+
+      const at = typeof a.time?.created === "number" ? a.time.created : Number.MAX_SAFE_INTEGER
+      const bt = typeof b.time?.created === "number" ? b.time.created : Number.MAX_SAFE_INTEGER
+      if (at !== bt) return at - bt
+
+      return a.id.localeCompare(b.id)
+    })
+
+    for (let i = infos.length - 1; i >= 0; i--) {
+      const info = infos[i]
+      if (!info) continue
+      yield {
+        info,
+        parts: await parts(info.id),
+      }
     }
   })
 

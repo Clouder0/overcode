@@ -7,6 +7,7 @@ import {
   Switch,
   createMemo,
   createEffect,
+  createResource,
   createSignal,
   on,
   type JSX,
@@ -54,6 +55,7 @@ import { useNavigate, useParams } from "@solidjs/router"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import type { FileDiff } from "@opencode-ai/sdk/v2/client"
 import { useSDK } from "@/context/sdk"
+import { after, cut } from "@/context/revert"
 import { usePrompt } from "@/context/prompt"
 import { useComments, type LineComment } from "@/context/comments"
 import { extractPromptFromParts } from "@/utils/prompt"
@@ -381,7 +383,8 @@ export default function Page() {
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
-  const revertMessageID = createMemo(() => info()?.revert?.messageID)
+  const revert = createMemo(() => info()?.revert)
+  const revertMessageID = createMemo(() => revert()?.messageID)
   const messages = createMemo(() => (params.id ? (sync.data.message[params.id] ?? []) : []))
   const messagesReady = createMemo(() => {
     const id = params.id
@@ -399,16 +402,46 @@ export default function Page() {
     return sync.session.history.loading(id)
   })
   const emptyUserMessages: UserMessage[] = []
-  const userMessages = createMemo(
-    () => messages().filter((m) => m.role === "user") as UserMessage[],
-    emptyUserMessages,
-    { equals: same },
+
+  const [edge] = createResource(
+    () => {
+      const sessionID = params.id
+      const messageID = revertMessageID()
+      if (!sessionID || !messageID) return
+      if (messages().some((m) => m.id === messageID)) return
+      return sessionID + ":" + messageID
+    },
+    (key) => {
+      const idx = key.indexOf(":")
+      if (idx === -1) return
+
+      const sessionID = key.slice(0, idx)
+      const messageID = key.slice(idx + 1)
+
+      return sdk.client.session
+        .message({ sessionID, messageID })
+        .then((x) => x.data?.info)
+        .catch(() => undefined)
+    },
   )
+
+  const boundary = createMemo(() => {
+    const messageID = revertMessageID()
+    if (!messageID) return
+    return messages().find((m) => m.id === messageID) ?? (edge()?.id === messageID ? edge() : undefined)
+  })
+
+  const visibleMessages = createMemo(() => {
+    return cut({
+      list: messages(),
+      revert: revert(),
+      boundary: boundary(),
+    })
+  })
+
   const visibleUserMessages = createMemo(
     () => {
-      const revert = revertMessageID()
-      if (!revert) return userMessages()
-      return userMessages().filter((m) => m.id < revert)
+      return visibleMessages().filter((m) => m.role === "user") as UserMessage[]
     },
     emptyUserMessages,
     {
@@ -861,9 +894,9 @@ export default function Page() {
         if (status()?.type !== "idle") {
           await sdk.client.session.abort({ sessionID }).catch(() => {})
         }
-        const revert = info()?.revert?.messageID
-        // Find the last user message that's not already reverted
-        const message = findLast(userMessages(), (x) => !revert || x.id < revert)
+        const msgs = visibleUserMessages()
+        const message = msgs.at(-1)
+        const prior = msgs.at(-2)
         if (!message) return
         await sdk.client.session.revert({ sessionID, messageID: message.id })
         // Restore the prompt from the reverted message
@@ -872,9 +905,8 @@ export default function Page() {
           const restored = extractPromptFromParts(parts, { directory: sdk.directory })
           prompt.set(restored)
         }
-        // Navigate to the message before the reverted one (which will be the new last visible message)
-        const priorMessage = findLast(userMessages(), (x) => x.id < message.id)
-        setActiveMessage(priorMessage)
+        // Navigate to the message before the reverted one
+        setActiveMessage(prior)
       },
     },
     {
@@ -887,22 +919,44 @@ export default function Page() {
       onSelect: async () => {
         const sessionID = params.id
         if (!sessionID) return
-        const revertMessageID = info()?.revert?.messageID
-        if (!revertMessageID) return
-        const nextMessage = userMessages().find((x) => x.id > revertMessageID)
+        const info = revert()
+        if (!info?.messageID) return
+        const list = messages()
+        const boundary = await (async () => {
+          const found = list.find((m) => m.id === info.messageID)
+          if (found) return found
+          const cached = edge()
+          if (cached) return cached
+          return sdk.client.session
+            .message({ sessionID, messageID: info.messageID })
+            .then((x) => x.data?.info)
+            .catch(() => undefined)
+        })()
+
+        if (!boundary) return
+
+        const nextMessage = after({
+          list,
+          boundary,
+          role: "user",
+        }) as UserMessage | undefined
         if (!nextMessage) {
           // Full unrevert - restore all messages and navigate to last
           await sdk.client.session.unrevert({ sessionID })
           prompt.reset()
           // Navigate to the last message (the one that was at the revert point)
-          const lastMsg = findLast(userMessages(), (x) => x.id >= revertMessageID)
+          const lastMsg = findLast(list, (x) => x.role === "user") as UserMessage | undefined
           setActiveMessage(lastMsg)
           return
         }
         // Partial redo - move forward to next message
         await sdk.client.session.revert({ sessionID, messageID: nextMessage.id })
         // Navigate to the message before the new revert point
-        const priorMsg = findLast(userMessages(), (x) => x.id < nextMessage.id)
+        const nextIndex = list.findIndex((m) => m.id === nextMessage.id)
+        const priorMsg =
+          nextIndex <= 0
+            ? undefined
+            : (findLast(list.slice(0, nextIndex), (x) => x.role === "user") as UserMessage | undefined)
         setActiveMessage(priorMsg)
       },
     },
@@ -1858,12 +1912,16 @@ export default function Page() {
                         }}
                       >
                         <button
+                          type="button"
                           class="pointer-events-auto size-8 flex items-center justify-center rounded-full bg-background-base border border-border-base shadow-sm text-text-base hover:bg-background-stronger transition-colors"
                           onClick={resumeScroll}
                         >
                           <Icon name="arrow-down-to-line" />
                         </button>
                       </div>
+                      {/* biome-ignore lint/a11y/noStaticElementInteractions: scroll container handles gestures */}
+                      {/* biome-ignore lint/a11y/useKeyWithMouseEvents: scroll container handles gestures */}
+                      {/* biome-ignore lint/a11y/useKeyWithClickEvents: scroll container handles gestures */}
                       <div
                         ref={setScrollRef}
                         onWheel={(e) => {
@@ -2044,6 +2102,7 @@ export default function Page() {
                                   <SessionTurn
                                     sessionID={params.id!}
                                     messageID={message.id}
+                                    messages={visibleMessages()}
                                     lastUserMessageID={lastUserMessage()?.id}
                                     stepsExpanded={store.expanded[message.id] ?? false}
                                     onStepsExpandedToggle={() =>
@@ -2885,9 +2944,8 @@ export default function Page() {
       </div>
 
       <Show when={isDesktop() && view().terminal.opened()}>
-        <div
+        <section
           id="terminal-panel"
-          role="region"
           aria-label={language.t("terminal.title")}
           class="relative w-full flex flex-col shrink-0 border-t border-border-weak-base"
           style={{ height: `${layout.terminal.height()}px` }}
@@ -3027,7 +3085,7 @@ export default function Page() {
               </DragOverlay>
             </DragDropProvider>
           </Show>
-        </div>
+        </section>
       </Show>
     </div>
   )

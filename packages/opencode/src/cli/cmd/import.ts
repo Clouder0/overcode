@@ -83,11 +83,60 @@ export const ImportCommand = cmd({
 
       await Storage.write(["session", Instance.project.id, exportData.info.id], exportData.info)
 
-      for (const msg of exportData.messages) {
-        await Storage.write(["message", exportData.info.id, msg.info.id], msg.info)
+      const created = (info: unknown) => {
+        if (!info || typeof info !== "object") return 0
+
+        const time = (info as { time?: unknown }).time
+        const raw = (() => {
+          if (!time || typeof time !== "object") return
+          const value = (time as { created?: unknown }).created
+          if (typeof value === "number") return value
+        })()
+        if (raw !== undefined) return raw
+
+        const id = (info as { id?: unknown }).id
+        if (typeof id !== "string") return 0
+        const index = id.indexOf("_")
+        if (index < 0) return 0
+        const hex = id.slice(index + 1, index + 13)
+        if (!/^[0-9a-fA-F]{12}$/.test(hex)) return 0
+        const value = Number(BigInt(`0x${hex}`) / 0x1000n)
+        if (!Number.isFinite(value)) return 0
+        return value
+      }
+
+      const sorted = exportData.messages.slice().sort((a, b) => {
+        const at = created(a.info)
+        const bt = created(b.info)
+        const aCreated = at > 0 ? at : Number.POSITIVE_INFINITY
+        const bCreated = bt > 0 ? bt : Number.POSITIVE_INFINITY
+        if (aCreated !== bCreated) return aCreated - bCreated
+
+        const ar = a.info?.role === "assistant" ? 1 : 0
+        const br = b.info?.role === "assistant" ? 1 : 0
+        if (ar !== br) return ar - br
+
+        const aid = a.info?.id
+        const bid = b.info?.id
+        if (typeof aid !== "string") return -1
+        if (typeof bid !== "string") return 1
+        if (aid === bid) return 0
+        return aid > bid ? 1 : -1
+      })
+
+      for (const msg of sorted) {
+        await Session.updateMessage({
+          ...msg.info,
+          sessionID: exportData.info.id,
+          order: undefined,
+        })
 
         for (const part of msg.parts) {
-          await Storage.write(["part", msg.info.id, part.id], part)
+          await Session.updatePart({
+            ...part,
+            sessionID: exportData.info.id,
+            messageID: msg.info.id,
+          })
         }
       }
 
