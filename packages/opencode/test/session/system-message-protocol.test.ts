@@ -26,6 +26,14 @@ describe("session.system message protocol", () => {
     )
   })
 
+  test("documents that wait_agent_message does not return message bodies", () => {
+    const protocol = SystemPrompt.messageProtocol("primary", "ses_test").join("\n")
+
+    expect(protocol).toContain("wait_agent_message is a blocking control-flow tool")
+    expect(protocol).toContain("does not return message bodies")
+    expect(protocol).toContain("Wait result")
+  })
+
   test("documents optional seq in inbox message format", () => {
     const protocol = SystemPrompt.messageProtocol("primary", "ses_test").join("\n")
 

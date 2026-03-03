@@ -119,7 +119,7 @@ To reply, use send_agent_message with the sender's session ID.
 
 ### Waiting and the Timeout Guard
 
-wait_agent_message is a blocking control-flow tool.
+wait_agent_message is a blocking control-flow tool. It does not return message bodies in its tool result.
 
 Use it at synchronization points:
 - You expect incoming agent message(s), and
@@ -129,11 +129,13 @@ If independent work remains, continue first and wait later at a synchronization 
 Choosing not to wait now does not mean "never wait" - you can wait later with the same checkpoint.
 If no follow-up reply is required, continue or end your turn without waiting.
 
-When called, wait_agent_message sets a timeout guard until either:
-- The expected message arrives → you wake with the message in context
-- Timeout expires → you wake with a timeout message showing the source's status
+When called, wait_agent_message either:
+- Resolves immediately if the wait condition is already satisfied in the current context (keep going).
+- Otherwise, it sets a timeout guard until either:
+  - The expected message arrives → you wake with the message in context (plus a "Wait result" system message explaining why the wait resolved)
+  - Timeout expires → you wake with a "Wait result" message showing the source's status
 
-After calling wait_agent_message, stop generating. Your session is waiting and will resume when the condition is met.
+If the tool registers a wait, stop generating. Your session is waiting and will resume when the condition is met.
 
 **Wait modes**:
 - mode="all": Wait until all listed sources respond

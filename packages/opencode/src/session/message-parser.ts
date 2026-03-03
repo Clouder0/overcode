@@ -33,39 +33,61 @@ export namespace MessageParser {
   }
 
   export type WaitResultInput = {
+    status: "resolved" | "timedOut" | "interrupted"
     timeoutMs: number
     mode: "all" | "any"
+    since: number
+    sources: string[]
     responded: string[]
+    respondedSeqs?: Record<string, number>
     timedOut: TimeoutSnapshot[]
     agents?: Record<string, string>
-    wildcard?: boolean
   }
 
   export function formatWaitResult(input: WaitResultInput): string {
     const lines: string[] = []
 
-    const tag = (id: string, agent?: string) => {
-      if (!agent) return id
-      return `${id} (${agent})`
+    const tag = (id: string, agent?: string, seq?: number) => {
+      const parts = [agent, typeof seq === "number" && seq > 0 ? `seq=${seq}` : undefined].filter(
+        (value): value is string => typeof value === "string" && value.length > 0,
+      )
+      if (parts.length === 0) return id
+      return `${id} (${parts.join(", ")})`
     }
 
-    const wildcard = input.wildcard === true
+    const wildcard = input.sources.length === 1 && input.sources[0] === "*"
+    const status = input.status
 
     // Header
-    if (input.timedOut.length > 0 || wildcard) {
+    if (status === "timedOut") {
       lines.push(`Wait timed out after ${input.timeoutMs}ms`)
-    } else {
-      lines.push(`Wait resolved`)
+    }
+    if (status === "resolved") {
+      lines.push("Wait resolved")
+    }
+    if (status === "interrupted") {
+      lines.push("Wait interrupted")
     }
     lines.push(`Mode: ${input.mode}`)
+    lines.push(`Since: ${input.since}`)
     if (wildcard) {
       lines.push(`Sources: any agent`)
+    } else {
+      lines.push(`Sources: ${input.sources.join(", ")}`)
     }
     lines.push("")
 
+    if (status === "resolved") {
+      const reason =
+        input.mode === "any"
+          ? "at least one source sent a message with seq > since."
+          : "all required sources sent a message with seq > since."
+      lines.push(`Reason: ${reason}`)
+    }
+
     // Responded sources
     if (input.responded.length > 0) {
-      const responded = input.responded.map((id) => tag(id, input.agents?.[id])).join(", ")
+      const responded = input.responded.map((id) => tag(id, input.agents?.[id], input.respondedSeqs?.[id])).join(", ")
       lines.push(`Responded: ${responded}`)
     }
 
@@ -95,9 +117,14 @@ export namespace MessageParser {
       }
     }
 
-    if (wildcard && input.timedOut.length === 0) {
+    if (status === "timedOut" && wildcard && input.timedOut.length === 0) {
       lines.push("No agent message was received before the timeout.")
     }
+
+    lines.push("")
+    lines.push(
+      "Note: wait_agent_message does not return message bodies; replies appear as separate incoming agent messages.",
+    )
 
     return lines.join("\n").trimEnd()
   }

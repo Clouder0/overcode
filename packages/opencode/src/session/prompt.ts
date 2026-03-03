@@ -2043,82 +2043,89 @@ export namespace SessionPrompt {
         const respondedSources = result.respondedSources
         const timedOutSources = result.timedOut ? result.missingSources : []
 
-        // Generate wait result message for timed-out waits.
-        if (result.timedOut) {
-          const wildcard = wait.sources.length === 1 && wait.sources[0] === "*"
+        const resolvedAt = Date.now()
+        const respondedSeqs = Object.fromEntries(
+          respondedSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
+        )
+        const timedOutSeqs = Object.fromEntries(
+          timedOutSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
+        )
 
-          const ids = wildcard ? respondedSources : Array.from(new Set([...respondedSources, ...timedOutSources]))
-          const sessions = await Promise.all(ids.map((id) => Session.get(id).catch(() => undefined)))
+        const wildcard = wait.sources.length === 1 && wait.sources[0] === "*"
+        const ids = wildcard ? respondedSources : Array.from(new Set([...respondedSources, ...timedOutSources]))
+        const sessions = await Promise.all(ids.map((id) => Session.get(id).catch(() => undefined)))
 
-          const agents: Record<string, string> = {}
-          ids.forEach((id, i) => {
-            const name = sessions[i]?.agentName
-            if (typeof name !== "string" || name.length === 0) return
-            agents[id] = name
+        const agents: Record<string, string> = {}
+        ids.forEach((id, i) => {
+          const name = sessions[i]?.agentName
+          if (typeof name !== "string" || name.length === 0) return
+          agents[id] = name
+        })
+
+        const snapshots = await (async () => {
+          if (!result.timedOut) return [] as MessageParser.TimeoutSnapshot[]
+          if (wildcard) return [] as MessageParser.TimeoutSnapshot[]
+
+          const statusMap = await SessionStatusResolver.many(timedOutSources)
+          return timedOutSources.map((source): MessageParser.TimeoutSnapshot => {
+            const st = statusMap[source]
+            const agent = agents[source]
+            if (!st) return { source, agent, run: "unknown" }
+            if (st.type === "idle") {
+              return { source, agent, run: "idle" }
+            }
+            if (st.type === "busy") {
+              return { source, agent, run: "working" }
+            }
+            if (st.type === "retry") {
+              return {
+                source,
+                agent,
+                run: "retry",
+                retry: {
+                  attempt: st.attempt,
+                  message: st.message,
+                  next: st.next,
+                },
+              }
+            }
+            if (st.type === "waiting") {
+              return {
+                source,
+                agent,
+                run: "waiting",
+                waiting: {
+                  sources: st.sources,
+                  mode: st.mode,
+                  deadline: st.time.deadline,
+                },
+              }
+            }
+            return { source, agent, run: "unknown" }
           })
+        })()
 
-          const statusMap = wildcard
-            ? ({} as Record<string, SessionStatus.Info | undefined>)
-            : await SessionStatusResolver.many(timedOutSources)
-
-          const snapshots = wildcard
-            ? ([] as MessageParser.TimeoutSnapshot[])
-            : timedOutSources.map((source): MessageParser.TimeoutSnapshot => {
-                const st = statusMap[source]
-                const agent = agents[source]
-                if (!st) return { source, agent, run: "unknown" }
-                if (st.type === "idle") {
-                  return { source, agent, run: "idle" }
-                }
-                if (st.type === "busy") {
-                  return { source, agent, run: "working" }
-                }
-                if (st.type === "retry") {
-                  return {
-                    source,
-                    agent,
-                    run: "retry",
-                    retry: {
-                      attempt: st.attempt,
-                      message: st.message,
-                      next: st.next,
-                    },
-                  }
-                }
-                if (st.type === "waiting") {
-                  return {
-                    source,
-                    agent,
-                    run: "waiting",
-                    waiting: {
-                      sources: st.sources,
-                      mode: st.mode,
-                      deadline: st.time.deadline,
-                    },
-                  }
-                }
-                return { source, agent, run: "unknown" }
-              })
-
-          const waitResultMessage: SessionMessage.Message = {
-            id: Identifier.ascending("message"),
-            seq: 0,
-            from: "Wait result",
-            to: sessionID,
-            text: MessageParser.formatWaitResult({
-              timeoutMs: wait.timeout,
-              mode: wait.mode,
-              responded: respondedSources,
-              timedOut: snapshots,
-              agents,
-              wildcard,
-            }),
-            time: Date.now(),
-            messageType: "wait_result",
-          }
-
-          await persistInbound(waitResultMessage)
+        const waitResultMessage: SessionMessage.Message = {
+          id: Identifier.ascending("message"),
+          seq: 0,
+          from: "Wait result",
+          to: sessionID,
+          text: MessageParser.formatWaitResult({
+            status: result.timedOut ? "timedOut" : "resolved",
+            timeoutMs: wait.timeout,
+            mode: wait.mode,
+            since: wait.since,
+            sources: wait.sources,
+            responded: respondedSources,
+            respondedSeqs: Object.keys(respondedSeqs).length > 0 ? respondedSeqs : undefined,
+            timedOut: snapshots,
+            agents,
+          }),
+          time: resolvedAt,
+          messageType: "wait_result",
         }
+
+        await persistInbound(waitResultMessage)
 
         // Update the wait tool part with resolution metadata.
         const parts = await MessageV2.parts(wait.messageID)
@@ -2127,14 +2134,6 @@ export namespace SessionPrompt {
         if (tool && tool.state.status === "completed") {
           const status = result.timedOut ? "timedOut" : "resolved"
           const allReceived = wait.mode === "all" && !result.timedOut
-
-          const resolvedAt = Date.now()
-          const respondedSeqs = Object.fromEntries(
-            respondedSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
-          )
-          const timedOutSeqs = Object.fromEntries(
-            timedOutSources.map((source) => [source, SessionMessage.lastSeq(sessionID, source)]),
-          )
 
           const meta = {
             ok: true,

@@ -72,7 +72,7 @@ async function hasNewerDirectPrompt(input: { sessionID: string; messageID: strin
 
 export const WaitAgentMessageTool = Tool.define("wait_agent_message", {
   description:
-    "Pause only when expected incoming agent messages matter to progress. Wakes when wait condition is met, or on timeout. Timeout message shows source status.",
+    "Blocking control-flow tool. Does not return message bodies; replies arrive as incoming messages after wake. Wakes when wait condition is met or timeout expires; a wait_result system message summarizes resolution/status.",
   parameters: z.object({
     sources: z
       .array(z.string())

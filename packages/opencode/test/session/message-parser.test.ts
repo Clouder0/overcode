@@ -36,19 +36,28 @@ test("formatInbox for multiple messages", () => {
 
 test("formatWaitResult with timeout shows header and mode", () => {
   const result = MessageParser.formatWaitResult({
+    status: "timedOut",
     timeoutMs: 30000,
     mode: "all",
+    since: 42,
+    sources: ["ses_child"],
     responded: [],
     timedOut: [{ source: "ses_child", run: "idle" }],
   })
   expect(result).toContain("Wait timed out after 30000ms")
   expect(result).toContain("Mode: all")
+  expect(result).toContain("Since: 42")
+  expect(result).toContain("Sources: ses_child")
+  expect(result).toContain("wait_agent_message does not return message bodies")
 })
 
 test("formatWaitResult shows responded sources", () => {
   const result = MessageParser.formatWaitResult({
+    status: "timedOut",
     timeoutMs: 30000,
     mode: "all",
+    since: 7,
+    sources: ["ses_a", "ses_b", "ses_c"],
     responded: ["ses_a", "ses_b"],
     timedOut: [{ source: "ses_c", run: "working" }],
   })
@@ -57,8 +66,11 @@ test("formatWaitResult shows responded sources", () => {
 
 test("formatWaitResult shows timed out sources with status", () => {
   const result = MessageParser.formatWaitResult({
+    status: "timedOut",
     timeoutMs: 30000,
     mode: "all",
+    since: 9,
+    sources: ["ses_a", "ses_b"],
     responded: [],
     timedOut: [
       { source: "ses_a", run: "working" },
@@ -72,8 +84,11 @@ test("formatWaitResult shows timed out sources with status", () => {
 
 test("formatWaitResult suggests waiting again for working/waiting/retry", () => {
   const result = MessageParser.formatWaitResult({
+    status: "timedOut",
     timeoutMs: 30000,
     mode: "all",
+    since: 1,
+    sources: ["ses_child"],
     responded: [],
     timedOut: [{ source: "ses_child", run: "working" }],
   })
@@ -82,8 +97,11 @@ test("formatWaitResult suggests waiting again for working/waiting/retry", () => 
 
 test("formatWaitResult suggests sending message for idle", () => {
   const result = MessageParser.formatWaitResult({
+    status: "timedOut",
     timeoutMs: 30000,
     mode: "all",
+    since: 1,
+    sources: ["ses_child"],
     responded: [],
     timedOut: [{ source: "ses_child", run: "idle" }],
   })
@@ -92,8 +110,11 @@ test("formatWaitResult suggests sending message for idle", () => {
 
 test("formatWaitResult includes agent labels when provided", () => {
   const result = MessageParser.formatWaitResult({
+    status: "timedOut",
     timeoutMs: 30000,
     mode: "all",
+    since: 123,
+    sources: ["ses_a", "ses_b"],
     responded: ["ses_a"],
     timedOut: [{ source: "ses_b", run: "working" }],
     agents: {
@@ -108,13 +129,37 @@ test("formatWaitResult includes agent labels when provided", () => {
 
 test("formatWaitResult resolved without timeout", () => {
   const result = MessageParser.formatWaitResult({
+    status: "resolved",
     timeoutMs: 30000,
     mode: "all",
+    since: 4,
+    sources: ["ses_a"],
     responded: ["ses_a"],
     timedOut: [],
   })
   expect(result).toContain("Wait resolved")
   expect(result).toContain("Mode: all")
+  expect(result).toContain("Reason:")
   expect(result).toContain("Responded: ses_a")
-  expect(result).not.toContain("Timed out")
+  expect(result).not.toContain("Wait timed out")
+  expect(result).toContain("wait_agent_message does not return message bodies")
+})
+
+test("formatWaitResult resolved wildcard uses sources=any", () => {
+  const result = MessageParser.formatWaitResult({
+    status: "resolved",
+    timeoutMs: 30000,
+    mode: "any",
+    since: 0,
+    sources: ["*"],
+    responded: ["ses_a"],
+    respondedSeqs: {
+      ses_a: 42,
+    },
+    timedOut: [],
+  })
+  expect(result).toContain("Wait resolved")
+  expect(result).toContain("Mode: any")
+  expect(result).toContain("Sources: any agent")
+  expect(result).toContain("ses_a (seq=42)")
 })
