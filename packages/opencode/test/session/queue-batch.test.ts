@@ -10,6 +10,7 @@ function user(input: {
   system?: string
   tools?: Record<string, boolean>
   variant?: string
+  serviceTier?: "auto" | "flex" | "priority"
 }) {
   const info: MessageV2.User = {
     id: input.id,
@@ -24,6 +25,7 @@ function user(input: {
     ...(input.system === undefined ? {} : { system: input.system }),
     ...(input.tools === undefined ? {} : { tools: input.tools }),
     ...(input.variant === undefined ? {} : { variant: input.variant }),
+    ...(input.serviceTier === undefined ? {} : { serviceTier: input.serviceTier }),
   }
 
   return {
@@ -74,10 +76,29 @@ function assistant(input: { id: string; parentID: string; completed?: boolean; f
 
 describe("queue batch helpers", () => {
   test("settingsKey is stable for equivalent user settings", () => {
-    const a = user({ id: "u1", tools: { bash: true, read: false }, system: "sys", variant: "v1" })
-    const b = user({ id: "u2", tools: { read: false, bash: true }, system: "sys", variant: "v1" })
+    const a = user({
+      id: "u1",
+      tools: { bash: true, read: false },
+      system: "sys",
+      variant: "v1",
+      serviceTier: "priority",
+    })
+    const b = user({
+      id: "u2",
+      tools: { read: false, bash: true },
+      system: "sys",
+      variant: "v1",
+      serviceTier: "priority",
+    })
 
     expect(settingsKey(a.info as MessageV2.User)).toBe(settingsKey(b.info as MessageV2.User))
+  })
+
+  test("settingsKey changes when service tier changes", () => {
+    const base = user({ id: "u1", serviceTier: "auto" })
+    const fast = user({ id: "u2", serviceTier: "priority" })
+
+    expect(settingsKey(base.info as MessageV2.User)).not.toBe(settingsKey(fast.info as MessageV2.User))
   })
 
   test("coveredUsers reads hidden assistant batch metadata", () => {

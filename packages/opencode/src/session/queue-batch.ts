@@ -15,6 +15,7 @@ export function settingsKey(user: MessageV2.User) {
     system: user.system ?? "",
     tools: tools(user.tools),
     variant: user.variant ?? "",
+    serviceTier: user.serviceTier ?? "",
   })
 }
 

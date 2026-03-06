@@ -37,6 +37,7 @@ import { cols, maxLineCols } from "../../lib/cols"
 import { truncateEnd, truncateMiddle } from "../../lib/cols"
 import { expandPromptPastes } from "../../lib/prompt-paste"
 import { twice } from "../../lib/twice"
+import { fastModeState, nextFastModeTier } from "./fast-mode"
 
 export type PromptProps = {
   sessionID?: string
@@ -222,6 +223,12 @@ export function Prompt(props: PromptProps) {
 
     return local.model.parsed()
   })
+  const effectiveModelInfo = createMemo(() => {
+    const current = effectiveModel()
+    if (!current) return
+    const provider = sync.data.provider.find((x) => x.id === current.providerID)
+    return provider?.models[current.modelID]
+  })
 
   const history = usePromptHistory()
   const stash = usePromptStash()
@@ -384,6 +391,7 @@ export function Prompt(props: PromptProps) {
       }
       if (msg.model) local.model.set(msg.model)
       if (msg.variant) local.model.variant.set(msg.variant)
+      local.model.serviceTier.set(msg.serviceTier)
     }
   })
 
@@ -453,6 +461,46 @@ export function Prompt(props: PromptProps) {
         },
       },
 
+      {
+        title: fastModeState({
+          model: effectiveModelInfo(),
+          serviceTier: local.model.serviceTier.current(),
+        }).title,
+        value: "prompt.fast",
+        category: "Prompt",
+        slash: {
+          name: "fast",
+        },
+        onSelect: (dialog) => {
+          const current = effectiveModel()
+          if (!current) {
+            promptModelWarning()
+            dialog.clear()
+            return
+          }
+          const fast = fastModeState({
+            model: effectiveModelInfo(),
+            serviceTier: local.model.serviceTier.current(),
+          })
+          if (!fast.supported) {
+            toast.show({
+              variant: "warning",
+              message: "Fast mode is unavailable for the current model",
+              duration: 3000,
+            })
+            dialog.clear()
+            return
+          }
+          const next = nextFastModeTier(local.model.serviceTier.current())
+          local.model.serviceTier.set(next)
+          toast.show({
+            variant: "info",
+            message: next === "priority" ? "Fast mode enabled" : "Fast mode disabled",
+            duration: 2000,
+          })
+          dialog.clear()
+        },
+      },
       {
         title: "Interrupt session",
         value: "session.interrupt",
@@ -920,6 +968,7 @@ export function Prompt(props: PromptProps) {
     // Capture mode before it gets reset
     const currentMode = store.mode
     const variant = local.model.variant.current()
+    const serviceTier = local.model.serviceTier.current()
 
     // Use effective agent name for subagent sessions
     const agentName = displayAgentName()
@@ -1009,6 +1058,7 @@ export function Prompt(props: PromptProps) {
             model: `${selectedModel.providerID}/${selectedModel.modelID}`,
             messageID,
             variant,
+            serviceTier,
           },
           {
             throwOnError: false,
@@ -1072,6 +1122,7 @@ export function Prompt(props: PromptProps) {
           modelID: selectedModel.modelID,
         },
         variant,
+        serviceTier,
         text: inputText,
         parts: nonTextParts,
       }
@@ -1085,6 +1136,7 @@ export function Prompt(props: PromptProps) {
             agent: agentName,
             model: payload.model,
             variant,
+            serviceTier,
             parts: [
               {
                 id: Identifier.ascending("part"),
@@ -1671,6 +1723,12 @@ export function Prompt(props: PromptProps) {
     const current = local.model.variant.current()
     return !!current
   })
+  const fast = createMemo(() =>
+    fastModeState({
+      model: effectiveModelInfo(),
+      serviceTier: local.model.serviceTier.current(),
+    }),
+  )
 
   const [span, setSpan] = createSignal(0)
   const [topWidth, setTopWidth] = createSignal(0)
@@ -1685,6 +1743,7 @@ export function Prompt(props: PromptProps) {
         lock,
         model: "",
         provider: "",
+        fast: "",
         variant: "",
       }
     }
@@ -1695,6 +1754,7 @@ export function Prompt(props: PromptProps) {
       lock,
       model: effectiveModelParsed().model,
       provider: effectiveModelParsed().provider,
+      fast: fast().badge,
       variant,
     }
   })
@@ -1706,6 +1766,7 @@ export function Prompt(props: PromptProps) {
         head: "",
         model: "",
         provider: "",
+        fast: "",
         variant: "",
       }
     }
@@ -1717,6 +1778,7 @@ export function Prompt(props: PromptProps) {
         head: truncateEnd({ method: renderer.widthMethod, text: headRaw, max }),
         model: "",
         provider: "",
+        fast: "",
         variant: "",
       }
     }
@@ -1726,6 +1788,7 @@ export function Prompt(props: PromptProps) {
         head: headRaw,
         model: "",
         provider: "",
+        fast: "",
         variant: "",
       }
     }
@@ -1738,6 +1801,7 @@ export function Prompt(props: PromptProps) {
         head: truncateEnd({ method: renderer.widthMethod, text: headRaw, max }),
         model: "",
         provider: "",
+        fast: "",
         variant: "",
       }
     }
@@ -1745,42 +1809,54 @@ export function Prompt(props: PromptProps) {
     // Prefer showing at least a few columns of the model id; drop extras first.
     const minModel = 4
     const provider = m.provider ? space + m.provider : ""
+    const fast = m.fast
     const variant = m.variant ? " · " + m.variant : ""
 
     const base = {
       provider,
+      fast,
       variant,
     }
 
     const dropVariant = {
       provider,
+      fast,
       variant: "",
     }
 
     const dropProvider = {
       provider: "",
+      fast,
+      variant: "",
+    }
+
+    const dropFast = {
+      provider: "",
+      fast: "",
       variant: "",
     }
 
     const pick = (p: typeof base) => {
-      const tail = p.provider + p.variant
+      const tail = p.provider + p.fast + p.variant
       const tailW = cols(renderer.widthMethod, tail)
       const room = Math.max(0, avail - tailW)
       const need = Math.min(minModel, avail)
       if (room < need) return
       return {
         provider: p.provider,
+        fast: p.fast,
         variant: p.variant,
         model: truncateMiddle({ method: renderer.widthMethod, text: m.model, max: room }),
       }
     }
 
-    const chosen = pick(base) ?? pick(dropVariant) ?? pick(dropProvider)
+    const chosen = pick(base) ?? pick(dropVariant) ?? pick(dropProvider) ?? pick(dropFast)
     if (!chosen) {
       return {
         head: headRaw,
         model: space + truncateMiddle({ method: renderer.widthMethod, text: m.model, max: avail }),
         provider: "",
+        fast: "",
         variant: "",
       }
     }
@@ -1789,6 +1865,7 @@ export function Prompt(props: PromptProps) {
       head: headRaw,
       model: space + chosen.model,
       provider: chosen.provider,
+      fast: chosen.fast,
       variant: chosen.variant,
     }
   }
@@ -2286,6 +2363,7 @@ export function Prompt(props: PromptProps) {
                   <span style={{ fg: highlight() }}>{topMeta().head}</span>
                   <span style={{ fg: keybind.leader ? theme.textMuted : theme.text }}>{topMeta().model}</span>
                   <span style={{ fg: theme.textMuted }}>{topMeta().provider}</span>
+                  <span style={{ fg: theme.success, bold: true }}>{topMeta().fast}</span>
                   <span style={{ fg: theme.warning, bold: true }}>{topMeta().variant}</span>
                 </text>
               </box>
@@ -2439,6 +2517,7 @@ export function Prompt(props: PromptProps) {
                   <span style={{ fg: highlight() }}>{footMeta().head}</span>
                   <span style={{ fg: keybind.leader ? theme.textMuted : theme.text }}>{footMeta().model}</span>
                   <span style={{ fg: theme.textMuted }}>{footMeta().provider}</span>
+                  <span style={{ fg: theme.success, bold: true }}>{footMeta().fast}</span>
                   <span style={{ fg: theme.warning, bold: true }}>{footMeta().variant}</span>
                 </text>
               </Match>

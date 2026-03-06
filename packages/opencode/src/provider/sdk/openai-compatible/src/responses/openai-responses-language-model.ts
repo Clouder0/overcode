@@ -30,6 +30,7 @@ import type { OpenAIResponsesIncludeOptions, OpenAIResponsesIncludeValue } from 
 import { prepareResponsesTools } from "./openai-responses-prepare-tools"
 import type { OpenAIResponsesModelId } from "./openai-responses-settings"
 import { localShellInputSchema } from "./tool/local-shell"
+import { getOpenAIServiceTierSupport } from "../../../../openai/service-tier"
 
 const webSearchCallItem = z.object({
   type: z.literal("web_search_call"),
@@ -1822,21 +1823,12 @@ type ResponsesModelConfig = {
 }
 
 function getResponsesModelConfig(modelId: string): ResponsesModelConfig {
-  const supportsFlexProcessing =
-    modelId.startsWith("o3") ||
-    modelId.startsWith("o4-mini") ||
-    (modelId.startsWith("gpt-5") && !modelId.startsWith("gpt-5-chat"))
-  const supportsPriorityProcessing =
-    modelId.startsWith("gpt-4") ||
-    modelId.startsWith("gpt-5-mini") ||
-    (modelId.startsWith("gpt-5") && !modelId.startsWith("gpt-5-nano") && !modelId.startsWith("gpt-5-chat")) ||
-    modelId.startsWith("o3") ||
-    modelId.startsWith("o4-mini")
+  const support = getOpenAIServiceTierSupport(modelId)
   const defaults = {
     requiredAutoTruncation: false,
     systemMessageMode: "system" as const,
-    supportsFlexProcessing,
-    supportsPriorityProcessing,
+    supportsFlexProcessing: support.flex,
+    supportsPriorityProcessing: support.priority,
   }
 
   // gpt-5-chat models are non-reasoning

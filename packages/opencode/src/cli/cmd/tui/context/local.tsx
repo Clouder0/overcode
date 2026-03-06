@@ -6,6 +6,7 @@ import { uniqueBy } from "remeda"
 import path from "path"
 import { Global } from "@/global"
 import { iife } from "@/util/iife"
+import type { OpenAIServiceTier } from "@/provider/openai/service-tier"
 import { createSimpleContext } from "./helper"
 import { useToast } from "../ui/toast"
 import { Provider } from "@/provider/provider"
@@ -104,12 +105,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           modelID: string
         }[]
         variant: Record<string, string | undefined>
+        serviceTier: Record<string, OpenAIServiceTier | undefined>
       }>({
         ready: false,
         model: {},
         recent: [],
         favorite: [],
         variant: {},
+        serviceTier: {},
       })
 
       const file = Bun.file(path.join(Global.Path.state, "model.json"))
@@ -129,6 +132,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             recent: modelStore.recent,
             favorite: modelStore.favorite,
             variant: modelStore.variant,
+            serviceTier: modelStore.serviceTier,
           }),
         )
       }
@@ -139,6 +143,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (Array.isArray(x.recent)) setModelStore("recent", x.recent)
           if (Array.isArray(x.favorite)) setModelStore("favorite", x.favorite)
           if (typeof x.variant === "object" && x.variant !== null) setModelStore("variant", x.variant)
+          if (typeof x.serviceTier === "object" && x.serviceTier !== null) setModelStore("serviceTier", x.serviceTier)
         })
         .catch(() => {})
         .finally(() => {
@@ -352,6 +357,21 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               return
             }
             this.set(variants[index + 1])
+          },
+        },
+        serviceTier: {
+          current() {
+            const m = currentModel()
+            if (!m) return undefined
+            const key = `${m.providerID}/${m.modelID}`
+            return modelStore.serviceTier[key]
+          },
+          set(value: OpenAIServiceTier | undefined) {
+            const m = currentModel()
+            if (!m) return
+            const key = `${m.providerID}/${m.modelID}`
+            setModelStore("serviceTier", key, value)
+            save()
           },
         },
       }

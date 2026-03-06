@@ -215,6 +215,7 @@ export type UserMessage = {
     [key: string]: boolean
   }
   variant?: string
+  serviceTier?: "auto" | "flex" | "priority"
 }
 
 export type ProviderAuthError = {
@@ -3708,6 +3709,7 @@ export type SessionPromptData = {
     }
     system?: string
     variant?: string
+    serviceTier?: "auto" | "flex" | "priority"
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
@@ -3911,6 +3913,7 @@ export type SessionPromptAsyncData = {
     }
     system?: string
     variant?: string
+    serviceTier?: "auto" | "flex" | "priority"
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
@@ -3959,6 +3962,7 @@ export type SessionCommandData = {
     arguments: string
     command: string
     variant?: string
+    serviceTier?: "auto" | "flex" | "priority"
     parts?: Array<{
       id?: string
       metadata?: {

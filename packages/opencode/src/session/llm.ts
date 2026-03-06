@@ -27,6 +27,7 @@ import { Wildcard } from "@/util/wildcard"
 import { SessionToolOverrides } from "./tool-overrides"
 import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
+import { sanitizeOpenAIServiceTier } from "@/provider/openai/service-tier"
 import { LLMConcurrencyMachine } from "./llm-concurrency-machine"
 
 export namespace LLM {
@@ -118,6 +119,11 @@ export namespace LLM {
       mergeDeep(input.agent.options),
       mergeDeep(variant),
     )
+    const serviceTier = sanitizeOpenAIServiceTier(input.model, input.user.serviceTier ?? options.serviceTier)
+    if (input.user.serviceTier !== undefined || options.serviceTier !== undefined) {
+      if (serviceTier === undefined) delete options.serviceTier
+      else options.serviceTier = serviceTier
+    }
     if (isCodex) {
       options.instructions = SystemPrompt.instructions()
     }

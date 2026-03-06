@@ -416,6 +416,7 @@ export namespace MessageV2 {
     system: z.string().optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
     variant: z.string().optional(),
+    serviceTier: z.enum(["auto", "flex", "priority"]).optional(),
   }).meta({
     ref: "UserMessage",
   })

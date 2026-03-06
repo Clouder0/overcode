@@ -9,28 +9,7 @@ import { useToast } from "../../ui/toast"
 import { usePromptStash } from "./stash"
 import type { PromptInfo } from "./history"
 import { promptQueueFilePath } from "./queue-file"
-
-type QueueItem = {
-  id: string
-  sessionID: string
-  agent: string
-  model: {
-    providerID: string
-    modelID: string
-  }
-  variant: string | undefined
-  text: string
-  parts: PromptInfo["parts"]
-  time: {
-    created: number
-  }
-  prepared:
-    | {
-        messageID: string
-        partIDs: string[]
-      }
-    | undefined
-}
+import { createQueueItem, type QueueItem, toPromptAsyncInput } from "./queue-data"
 
 type QueueEvent =
   | {
@@ -204,14 +183,10 @@ export const { use: usePromptQueue, provider: PromptQueueProvider } = createSimp
 
       const res = await sdk.client.session
         .promptAsync(
-          {
-            sessionID: next.sessionID,
-            messageID: next.prepared!.messageID,
-            agent: next.agent,
-            model: next.model,
-            variant: next.variant,
+          toPromptAsyncInput({
+            item: next as QueueItem & { prepared: NonNullable<QueueItem["prepared"]> },
             parts,
-          },
+          }),
           {
             throwOnError: false,
           },
@@ -348,21 +323,21 @@ export const { use: usePromptQueue, provider: PromptQueueProvider } = createSimp
       agent: string
       model: { providerID: string; modelID: string }
       variant: string | undefined
+      serviceTier: "auto" | "flex" | "priority" | undefined
       text: string
       parts: PromptInfo["parts"]
     }) {
-      const item: Omit<QueueItem, "prepared"> = {
+      const item = createQueueItem({
         id: `queue_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        created: Date.now(),
         sessionID: input.sessionID,
         agent: input.agent,
         model: input.model,
         variant: input.variant,
+        serviceTier: input.serviceTier,
         text: input.text,
         parts: input.parts,
-        time: {
-          created: Date.now(),
-        },
-      }
+      })
 
       setStore(
         produce((draft) => {

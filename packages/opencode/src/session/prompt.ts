@@ -1266,6 +1266,7 @@ export namespace SessionPrompt {
       ),
     system: z.string().optional(),
     variant: z.string().optional(),
+    serviceTier: z.enum(["auto", "flex", "priority"]).optional(),
     parts: z.array(
       z.discriminatedUnion("type", [
         MessageV2.TextPart.omit({
@@ -3881,6 +3882,7 @@ export namespace SessionPrompt {
       model,
       system: input.system,
       variant: input.variant,
+      serviceTier: input.serviceTier,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -4684,6 +4686,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     arguments: z.string(),
     command: z.string(),
     variant: z.string().optional(),
+    serviceTier: z.enum(["auto", "flex", "priority"]).optional(),
     parts: z
       .array(
         z.discriminatedUnion("type", [
@@ -4839,6 +4842,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       agent: userAgent,
       parts,
       variant: input.variant,
+      serviceTier: input.serviceTier,
     })) as MessageV2.WithParts
 
     Bus.publish(Command.Event.Executed, {
