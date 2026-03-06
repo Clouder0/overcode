@@ -1,8 +1,10 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
+import z from "zod"
 import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider/provider"
 import { Session } from "../../src/session"
+import { LLM } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionMessage } from "../../src/session/message-routing"
 import { SessionProcessor } from "../../src/session/processor"
@@ -10,6 +12,7 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { SessionStatus } from "../../src/session/status"
 import { WaitPolicy } from "../../src/session/wait-policy"
 import { Plugin } from "../../src/plugin"
+import { Tool } from "../../src/tool/tool"
 import { tmpdir } from "../fixture/fixture"
 
 afterEach(() => {
@@ -669,6 +672,158 @@ test("wait resume consumes replies after non-terminal tool-calls turn", async ()
         } finally {
           providerSpy.mockRestore()
           processorSpy.mockRestore()
+          WaitPolicy.clear(seeded.sessionID)
+          WaitPolicy.clear(seeded.sourceID)
+          await Session.remove(seeded.sourceID)
+          await Session.remove(seeded.sessionID)
+        }
+      },
+    })
+  } finally {
+    if (originalAllow === undefined) {
+      delete g.__OPENCODE_TEST_ALLOW_LOOP__
+    }
+    if (originalAllow !== undefined) {
+      g.__OPENCODE_TEST_ALLOW_LOOP__ = originalAllow
+    }
+  }
+})
+
+test("wait resume rebuilds waitContext with the latest inbound seq", async () => {
+  const g = globalThis as any
+  const originalAllow = g.__OPENCODE_TEST_ALLOW_LOOP__
+  const allow = new Set<string>()
+  g.__OPENCODE_TEST_ALLOW_LOOP__ = allow
+
+  try {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const seeded = await seed(tmp.path)
+        allow.add(seeded.sessionID)
+
+        const existing = await Session.messages({ sessionID: seeded.sessionID })
+        const sentinel = existing.find(
+          (msg) => msg.info.role === "assistant" && (msg.info as MessageV2.Assistant).finish === "stop",
+        )
+        if (sentinel) {
+          await Session.removeMessage({ sessionID: seeded.sessionID, messageID: sentinel.info.id })
+        }
+
+        const seen: Array<{ seq: number | undefined; messages: string }> = []
+
+        SessionPrompt.setExtraTools(seeded.sessionID, [
+          Tool.define("probe", {
+            description: "Inspect wait context after resume",
+            parameters: z.object({}),
+            async execute(_args, ctx) {
+              seen.push({
+                seq: ctx.extra?.waitContext?.maxSeqBySource[seeded.sourceID],
+                messages: JSON.stringify(ctx.messages),
+              })
+
+              return {
+                title: "probe",
+                metadata: {},
+                output: "probe",
+              }
+            },
+          }),
+        ])
+
+        const providerSpy = spyOn(Provider, "getModel").mockResolvedValue({
+          id: "dummy",
+          providerID: "dummy",
+          api: {
+            id: "dummy",
+            url: "",
+            npm: "@ai-sdk/openai-compatible",
+          },
+          limit: { context: 8192, output: 2048 },
+        } as any)
+
+        const llmSpy = spyOn(LLM, "stream").mockImplementation(async (input) => {
+          async function* fullStream() {
+            yield { type: "start" as const }
+            yield { type: "tool-input-start" as const, id: "call_probe", toolName: "probe" }
+            yield {
+              type: "tool-call" as const,
+              toolCallId: "call_probe",
+              toolName: "probe",
+              input: {},
+            }
+
+            const probe = input.tools.probe
+            expect(probe).toBeDefined()
+            if (!probe) throw new Error("missing probe tool")
+            const execute = probe.execute
+            expect(execute).toBeDefined()
+            if (!execute) throw new Error("missing probe execute")
+
+            yield {
+              type: "tool-result" as const,
+              toolCallId: "call_probe",
+              toolName: "probe",
+              input: {},
+              output: await execute({}, { toolCallId: "call_probe" } as any),
+            }
+            yield {
+              type: "finish-step" as const,
+              finishReason: "stop",
+              usage: {
+                inputTokens: 0,
+                outputTokens: 0,
+                totalTokens: 0,
+              },
+            }
+            yield { type: "finish" as const }
+          }
+
+          return { fullStream: fullStream() } as any
+        })
+
+        try {
+          const since = SessionMessage.nowSeq(seeded.sessionID)
+          const policy = WaitPolicy.register({
+            sessionID: seeded.sessionID,
+            messageID: seeded.waitMessageID,
+            callID: seeded.callID,
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+          })
+
+          SessionStatus.set(seeded.sessionID, {
+            type: "waiting",
+            sources: [seeded.sourceID],
+            timeout: 500,
+            mode: "all",
+            since,
+            time: policy.time,
+          })
+
+          const reply = await SessionMessage.deliver({
+            from: seeded.sourceID,
+            to: seeded.sessionID,
+            text: "reply data",
+            awaitWake: true,
+          })
+
+          await SessionPrompt.loop(seeded.sessionID)
+
+          const item = seen[0]
+          expect(item).toBeDefined()
+          if (!item) return
+
+          expect(item.seq).toBe(reply.seq)
+          expect(item.messages).toContain("reply data")
+        } finally {
+          SessionPrompt.clearExtraTools(seeded.sessionID)
+          llmSpy.mockRestore()
+          providerSpy.mockRestore()
           WaitPolicy.clear(seeded.sessionID)
           WaitPolicy.clear(seeded.sourceID)
           await Session.remove(seeded.sourceID)

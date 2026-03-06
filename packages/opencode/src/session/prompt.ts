@@ -206,6 +206,13 @@ export namespace SessionPrompt {
     },
   )
 
+  const refreshGeneration = Instance.state(
+    () => new Map<string, number>(),
+    async (map) => {
+      map.clear()
+    },
+  )
+
   function generation(sessionID: string) {
     return wakeGeneration().get(sessionID) ?? 0
   }
@@ -228,6 +235,21 @@ export namespace SessionPrompt {
   function invalidateWake(sessionID: string) {
     clearScheduledWake(sessionID)
     bump(sessionID)
+  }
+
+  function refresh(sessionID: string) {
+    return refreshGeneration().get(sessionID) ?? 0
+  }
+
+  function invalidateRefresh(sessionID: string) {
+    refreshGeneration().set(sessionID, refresh(sessionID) + 1)
+  }
+
+  function invalidatesTurn(message: SessionMessage.Message) {
+    if (message.from === "human") return true
+    if (message.messageType === "notice") return true
+    if (message.messageType === "wait_result") return true
+    return Identifier.schema("session").safeParse(message.from).success
   }
 
   function hasWakeWork(sessionID: string) {
@@ -938,6 +960,9 @@ export namespace SessionPrompt {
 
     // If the session loop is currently running, let it observe pending messages directly.
     if (state()[sessionID]) {
+      if (invalidatesTurn(message)) {
+        invalidateRefresh(sessionID)
+      }
       wakeAfter().add(sessionID)
       await saved
       return
@@ -2705,6 +2730,9 @@ export namespace SessionPrompt {
       })()
       const startIndex = baseIndex > pendingIndex ? pendingIndex : baseIndex
 
+      const turnRefresh = refresh(sessionID)
+      const shouldRefreshTurn = () => refresh(sessionID) !== turnRefresh
+
       const slice = users.slice(startIndex, endIndex + 1)
       const scope = slice
       const thread = scope.flatMap((m) => [m, ...(byParent.get(m.info.id) ?? [])])
@@ -3381,6 +3409,11 @@ export namespace SessionPrompt {
           })
 
           const built = await buildSystem()
+          if (shouldRefreshTurn()) {
+            await Session.removeMessage({ sessionID, messageID: processor.message.id }).catch(() => {})
+            return "continue" as const
+          }
+
           const result = await processor.process({
             user: lastUser,
             agent,
@@ -3400,9 +3433,29 @@ export namespace SessionPrompt {
             ],
             tools,
             model,
+            shouldRefresh: shouldRefreshTurn,
           })
 
           if (result !== "compact") {
+            const attemptParts = await MessageV2.parts(processor.message.id)
+            const answered = isAssistantAnswered(processor.message)
+            if (shouldRefreshTurn() && !answered) {
+              if (attemptParts.length === 0) {
+                await Session.removeMessage({ sessionID, messageID: processor.message.id }).catch(() => {})
+                processed = undefined
+              }
+              if (attemptParts.length > 0) {
+                processed = processor.message
+              }
+              return "continue" as const
+            }
+
+            if (result === "continue" && attemptParts.length === 0) {
+              await Session.removeMessage({ sessionID, messageID: processor.message.id }).catch(() => {})
+              processed = undefined
+              return result
+            }
+
             processed = processor.message
             return result
           }

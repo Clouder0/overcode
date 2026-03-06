@@ -48,10 +48,11 @@ export namespace SessionProcessor {
       partFromToolCall(toolCallID: string) {
         return toolcalls[toolCallID]
       },
-      async process(streamInput: LLM.StreamInput) {
+      async process(streamInput: LLM.StreamInput & { shouldRefresh?: () => boolean }) {
         log.info("process")
         needsCompaction = false
         compactionRequest = undefined
+        const shouldRefresh = streamInput.shouldRefresh ?? (() => false)
         const config = await Config.get()
         const shouldBreak = config.experimental?.continue_loop_on_deny !== true
 
@@ -170,11 +171,23 @@ export namespace SessionProcessor {
             const storeReasoning = streamInput.agent.name !== "compaction"
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             let stopStream = false
+            let boundary: "tool" | "finish" | undefined
+
+            if (shouldRefresh()) {
+              return "continue" as const
+            }
 
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
               input.abort.throwIfAborted()
+              if (boundary && shouldRefresh()) {
+                if (boundary === "tool") {
+                  input.assistantMessage.finish = input.assistantMessage.finish ?? "tool-calls"
+                }
+                break
+              }
+              boundary = undefined
               switch (value.type) {
                 case "stream-start" as any: {
                   const warnings = (value as { warnings?: unknown }).warnings
@@ -352,6 +365,11 @@ export namespace SessionProcessor {
                     }
 
                     delete toolcalls[value.toolCallId]
+                    if (shouldRefresh()) {
+                      input.assistantMessage.finish = input.assistantMessage.finish ?? "tool-calls"
+                      stopStream = true
+                    }
+                    boundary = "tool"
                   }
                   break
                 }
@@ -442,6 +460,8 @@ export namespace SessionProcessor {
                   if (await SessionCompaction.isOverflow({ tokens: usage.tokens, model: input.model })) {
                     needsCompaction = true
                   }
+                  if (shouldRefresh()) stopStream = true
+                  boundary = "finish"
                   break
                 }
 
@@ -517,11 +537,17 @@ export namespace SessionProcessor {
               error: e,
               stack: JSON.stringify(e.stack),
             })
+
             const error = MessageV2.fromError(e, { providerID: input.model.providerID })
             const cfg = config
             const retry = SessionRetry.retryable(error)
+            const refreshRetry = retry !== undefined && retrySafe && shouldRefresh()
 
-            if (retry !== undefined && retrySafe) {
+            if (refreshRetry) {
+              input.assistantMessage.finish = input.assistantMessage.finish ?? "unknown"
+            }
+
+            if (retry !== undefined && retrySafe && !refreshRetry) {
               const max = cfg.experimental?.chatMaxRetries ?? 3
               const limited = attempt >= max
               if (!limited) {
@@ -535,7 +561,9 @@ export namespace SessionProcessor {
                 })
                 await cleanup(preserve).catch(() => {})
                 await SessionRetry.sleep(delay, input.abort).catch(() => {})
-                continue
+                if (!shouldRefresh()) {
+                  continue
+                }
               }
             }
 
@@ -552,7 +580,7 @@ export namespace SessionProcessor {
               compactionRequest = { reason: "context_length", fallbackError: error }
             }
 
-            if (!compactOnContextLengthError) {
+            if (!compactOnContextLengthError && !refreshRetry) {
               input.assistantMessage.error = error
               Bus.publish(Session.Event.Error, {
                 sessionID: input.assistantMessage.sessionID,
