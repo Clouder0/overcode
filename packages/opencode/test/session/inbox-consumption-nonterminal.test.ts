@@ -4,6 +4,7 @@ import { Identifier } from "../../src/id/id"
 import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider/provider"
 import { Session } from "../../src/session"
+import { MessageParser } from "../../src/session/message-parser"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionMessage } from "../../src/session/message-routing"
 import { SessionProcessor } from "../../src/session/processor"
@@ -295,7 +296,15 @@ test("consumed inbound wait_result message stays visible in later context", asyn
         const delivered = await SessionMessage.deliver({
           from: source.id,
           to: session.id,
-          text: "wait result",
+          text: MessageParser.formatWaitResult({
+            status: "resolved",
+            timeoutMs: 30000,
+            mode: "all",
+            since: 1,
+            sources: [source.id],
+            responded: [source.id],
+            timedOut: [],
+          }),
           messageType: "wait_result",
         })
 
@@ -326,7 +335,7 @@ test("consumed inbound wait_result message stays visible in later context", asyn
 
               if (seen.calls === 2) {
                 seen.user = input.user.id
-                seen.hasInbound = JSON.stringify(input.messages ?? []).includes("wait result")
+                seen.hasInbound = JSON.stringify(input.messages ?? []).includes("Wait resolved")
               }
 
               args.assistantMessage.finish = "stop"
@@ -359,6 +368,8 @@ test("consumed inbound wait_result message stays visible in later context", asyn
 
         expect(inbound).toBeDefined()
         expect((inbound?.metadata as any)?.opencode?.consumed).toBe(true)
+        expect((inbound?.metadata as any)?.opencode?.messageType).toBe("wait_result")
+        expect((inbound?.metadata as any)?.opencode?.waitStatus).toBe("resolved")
 
         const now = Date.now()
         const humanID = Identifier.ascending("message")

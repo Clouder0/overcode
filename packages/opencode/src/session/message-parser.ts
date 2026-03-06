@@ -44,6 +44,12 @@ export namespace MessageParser {
     agents?: Record<string, string>
   }
 
+  export function waitResultStatus(text: string) {
+    const line = text.trim().split("\n", 1)[0]
+    if (line === "Wait resolved") return "resolved" as const
+    if (line.startsWith("Wait timed out")) return "timedOut" as const
+  }
+
   export function formatWaitResult(input: WaitResultInput): string {
     const lines: string[] = []
 

@@ -462,6 +462,7 @@ export namespace SessionPrompt {
     }
 
     const partID = uiMessage.id.replace(/^msg_/, "prt_")
+    const waitStatus = message.messageType === "wait_result" ? MessageParser.waitResultStatus(message.text) : undefined
     const peerType = (() => {
       if (message.from === "human") return "human" as const
       if (message.messageType === "wait_result") return "system" as const
@@ -483,6 +484,7 @@ export namespace SessionPrompt {
         opencode: {
           seq: message.seq,
           messageType: message.messageType,
+          ...(waitStatus ? { waitStatus } : {}),
         },
       },
     }

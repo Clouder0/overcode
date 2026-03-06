@@ -75,6 +75,7 @@ import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogContext } from "./dialog-context"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
+import { waitResultState } from "../../util/wait-result"
 import { Flag } from "@/flag/flag"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
@@ -1748,10 +1749,11 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   const isIncoming = props.part.direction === "incoming"
   const isHuman = props.part.peerType === "human"
   const isSystem = props.part.peerType === "system"
-  const isWaitResult = isIncoming && isSystem && props.part.peer === "Wait result"
+  const wait = createMemo(() => waitResultState(props.part))
+  const isWaitResult = createMemo(() => wait().isWaitResult)
   const isToHuman = !isIncoming && isHuman
 
-  const [expanded, setExpanded] = createSignal(isSubagentSession() && !isWaitResult)
+  const [expanded, setExpanded] = createSignal(isSubagentSession() && !isWaitResult())
 
   const sessionStatus = createMemo(() => sync.data.session_status?.[props.part.sessionID] as any)
 
@@ -1795,8 +1797,22 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
     return { name: "agent", shortId }
   })
 
-  const arrow = isWaitResult ? "⏱" : isIncoming ? "←" : "→"
-  const color = isToHuman ? theme.primary : isWaitResult ? theme.warning : isIncoming ? theme.info : theme.secondary
+  const arrow = createMemo(() => {
+    if (isWaitResult()) return wait().icon
+    if (isIncoming) return "←"
+    return "→"
+  })
+
+  const color = createMemo(() => {
+    const tone = wait().tone
+    if (tone === "success") return theme.success
+    if (tone === "error") return theme.error
+    if (tone === "warning") return theme.warning
+    if (isToHuman) return theme.primary
+    if (isIncoming) return theme.info
+    return theme.secondary
+  })
+
   const headerPad = isIncoming ? "" : "      "
 
   const contentInfo = createMemo(() => {
@@ -1822,7 +1838,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
   })
 
   const canNavigateToPeer = createMemo(() => props.part.peerType === "agent")
-  const showTimeoutLabel = createMemo(() => isTimeout || isWaitResult)
+  const showTimeoutLabel = createMemo(() => wait().showTimeoutLabel)
 
   const seq = createMemo(() => {
     const meta = props.part.metadata
@@ -1851,19 +1867,19 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
       marginTop={1}
       paddingLeft={2}
       border={["left"]}
-      borderColor={color}
+      borderColor={color()}
       customBorderChars={SplitBorder.customBorderChars}
     >
       <box flexDirection="row">
         <text>
           {headerPad}
-          <span style={{ fg: color }}>{arrow}</span>{" "}
+          <span style={{ fg: color() }}>{arrow()}</span>{" "}
         </text>
         <Show
           when={canNavigateToPeer()}
           fallback={
             <text>
-              <span style={{ fg: isTimeout ? theme.error : color, bold: true }}>{peerInfo().name}</span>
+              <span style={{ fg: isTimeout ? theme.error : color(), bold: true }}>{peerInfo().name}</span>
               {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
             </text>
           }
@@ -1871,7 +1887,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
           <>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: TUI click handler */}
             <text onMouseUp={handlePeerClick}>
-              <span style={{ fg: isTimeout ? theme.error : color, bold: true, underline: true }}>
+              <span style={{ fg: isTimeout ? theme.error : color(), bold: true, underline: true }}>
                 {peerInfo().name}
               </span>
               {peerInfo().shortId && <span style={{ fg: theme.textMuted }}>#{peerInfo().shortId}</span>}
@@ -1900,7 +1916,7 @@ function MessagePartComponent(props: { last: boolean; part: MessagePartData; mes
             fallback={<text fg={theme.text}>{displayContent()}</text>}
           >
             <Show
-              when={isWaitResult}
+              when={isWaitResult()}
               fallback={
                 <code
                   filetype="markdown"
