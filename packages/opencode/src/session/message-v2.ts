@@ -812,7 +812,7 @@ export namespace MessageV2 {
     )
   }
 
-  export const stream = fn(Identifier.schema("session"), async function* (sessionID) {
+  async function sorted(sessionID: string) {
     const keys = await Array.fromAsync(await Storage.list(["message", sessionID]))
     const infos = [] as MessageV2.Info[]
 
@@ -841,9 +841,21 @@ export namespace MessageV2 {
       return a.id.localeCompare(b.id)
     })
 
+    return infos
+  }
+
+  export const streamInfo = fn(Identifier.schema("session"), async function* (sessionID) {
+    const infos = await sorted(sessionID)
+
     for (let i = infos.length - 1; i >= 0; i--) {
       const info = infos[i]
       if (!info) continue
+      yield info
+    }
+  })
+
+  export const stream = fn(Identifier.schema("session"), async function* (sessionID) {
+    for await (const info of streamInfo(sessionID)) {
       yield {
         info,
         parts: await parts(info.id),

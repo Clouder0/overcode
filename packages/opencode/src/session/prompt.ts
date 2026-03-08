@@ -3379,10 +3379,9 @@ export namespace SessionPrompt {
           }
           const live = await Session.get(sessionID)
           const wc = waitContext(sessionMessages)
-          const skillMessages = await Session.messages({ sessionID })
           const scopedSkillMessages = sessionMessages.filter((message) => MessageV2.modelVisible(message))
           const scopedSkillIDs = new Set(scopedSkillMessages.map((message) => message.info.id))
-          const carrySkillMessages = skillMessages.filter((message) => {
+          const carrySkillMessages = msgs.filter((message) => {
             if (!MessageV2.modelVisible(message)) return false
             if (scopedSkillIDs.has(message.info.id)) return false
             if (message.info.role !== "assistant") return false
@@ -3606,8 +3605,7 @@ export namespace SessionPrompt {
     SessionCompaction.prune({ sessionID }).catch((error) => {
       log.error("failed to prune session", { sessionID, error: error?.message })
     })
-    const msgs = await Session.messages({ sessionID })
-    const item = msgs.findLast((msg) => msg.info.role !== "user") ?? msgs.at(-1)
+    const item = await latestResult(sessionID)
     if (item) {
       const active = state()[sessionID]
       const queued = active?.callbacks ?? []
@@ -3635,6 +3633,13 @@ export namespace SessionPrompt {
     return inSessionDirectory(sessionID, () => runLoop(sessionID))
   })
 
+  async function latestResult(sessionID: string) {
+    const infos = await Array.fromAsync(MessageV2.streamInfo(sessionID))
+    const info = infos.find((item) => item.role !== "user") ?? infos[0]
+    if (!info) return
+    return MessageV2.get({ sessionID, messageID: info.id })
+  }
+
   async function lastModel(sessionID: string) {
     const visited = new Set<string>()
     let current = sessionID
@@ -3642,8 +3647,8 @@ export namespace SessionPrompt {
     while (!visited.has(current)) {
       visited.add(current)
 
-      for await (const item of MessageV2.stream(current)) {
-        if (item.info.role === "user" && item.info.model) return item.info.model
+      for await (const info of MessageV2.streamInfo(current)) {
+        if (info.role === "user" && info.model) return info.model
       }
 
       const session = await Session.get(current).catch(() => undefined)
@@ -3668,8 +3673,8 @@ export namespace SessionPrompt {
     while (!visited.has(current)) {
       visited.add(current)
 
-      for await (const item of MessageV2.stream(current)) {
-        if (item.info.role === "user" && item.info.agent) return item.info.agent
+      for await (const info of MessageV2.streamInfo(current)) {
+        if (info.role === "user" && info.agent) return info.agent
       }
 
       const sess = await Session.get(current).catch(() => undefined)
