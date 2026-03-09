@@ -135,7 +135,14 @@ test("non-source agent pending does not interrupt wait and does not get stranded
         }
 
         const run = SessionPrompt.loop(session.id)
-        await Bun.sleep(30)
+
+        for (let i = 0; i < 50; i++) {
+          if (WaitPolicy.isWaiting(session.id)) break
+          await Bun.sleep(10)
+        }
+
+        expect(WaitPolicy.isWaiting(session.id)).toBe(true)
+
         await SessionMessage.deliver({
           from: other.id,
           to: session.id,

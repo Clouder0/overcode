@@ -169,7 +169,6 @@ describe("session.summarize concurrency", () => {
         cleanupSpy.mockRestore()
         cpdSpy.mockRestore()
         loopSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -267,7 +266,6 @@ describe("session.summarize concurrency", () => {
         expect(res1.status).toBe(200)
 
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -293,6 +291,8 @@ describe("session.summarize concurrency", () => {
           await hold
           return { text: "cpd", rctx: false }
         })
+
+        const loopSpy = spyOn(SessionPrompt as any, "loop").mockImplementation(async () => {})
 
         const app = Server.App()
         const session = await Session.create({})
@@ -384,11 +384,12 @@ describe("session.summarize concurrency", () => {
         await run
 
         cpdSpy.mockRestore()
+        expect(loopSpy).toHaveBeenCalledTimes(1)
+        loopSpy.mockRestore()
 
         expect(captured?.delta).toBeDefined()
         expect(captured?.delta).not.toContain("hello while compacting")
 
-        await Session.remove(session.id)
       },
     })
   })
@@ -407,6 +408,8 @@ describe("session.summarize concurrency", () => {
           await hold
           return originalMessages(input)
         })
+
+        const loopSpy = spyOn(SessionPrompt as any, "loop").mockImplementation(async () => {})
 
         const cpdSpy = spyOn(SessionCPD, "update").mockImplementation(async () => {
           return { text: "cpd", rctx: false }
@@ -512,7 +515,8 @@ describe("session.summarize concurrency", () => {
 
         messagesSpy.mockRestore()
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
+        expect(loopSpy).toHaveBeenCalledTimes(1)
+        loopSpy.mockRestore()
       },
     })
   })
@@ -616,7 +620,6 @@ describe("session.summarize concurrency", () => {
         await run
 
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -720,7 +723,6 @@ describe("session.summarize concurrency", () => {
         await run
 
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -821,7 +823,6 @@ describe("session.summarize concurrency", () => {
         await run
 
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -941,7 +942,6 @@ describe("session.summarize concurrency", () => {
 
         cpdSpy.mockRestore()
         cpdSetSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -1040,7 +1040,6 @@ describe("session.summarize concurrency", () => {
 
         cpdSpy.mockRestore()
         cpdSetSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -1136,7 +1135,6 @@ describe("session.summarize concurrency", () => {
         await run
 
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -1243,7 +1241,6 @@ describe("session.summarize concurrency", () => {
 
         cpdSpy.mockRestore()
         loopSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -1348,7 +1345,6 @@ describe("session.summarize concurrency", () => {
         expect((await Session.get(session.id)).time.compacting).toBeUndefined()
 
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -1417,7 +1413,6 @@ describe("session.summarize concurrency", () => {
 
         cpdSpy.mockRestore()
         setSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })
@@ -1531,7 +1526,6 @@ describe("session.summarize concurrency", () => {
         expect(SessionStatus.get(session.id).type).toBe("idle")
 
         cpdSpy.mockRestore()
-        await Session.remove(session.id)
       },
     })
   })

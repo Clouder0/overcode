@@ -119,20 +119,26 @@ test("processor stops stream after wait_agent_message returns waiting", async ()
         return { fullStream: fullStream() } as any
       })
 
-      try {
-        await processor.process({
-          user: (await MessageV2.get({ sessionID: session.id, messageID: userID })).info as any,
-          sessionID: session.id,
-          model,
-          agent: { name: "test" } as any,
-          system: [],
-          abort: new AbortController().signal,
-          messages: [],
-          tools: {},
-        } as any)
-      } finally {
-        llmSpy.mockRestore()
-      }
+      const outcome = await (async () => {
+        try {
+          return await processor.process({
+            user: (await MessageV2.get({ sessionID: session.id, messageID: userID })).info as any,
+            sessionID: session.id,
+            model,
+            agent: { name: "test" } as any,
+            system: [],
+            abort: new AbortController().signal,
+            messages: [],
+            tools: {},
+          } as any)
+        } finally {
+          llmSpy.mockRestore()
+        }
+      })()
+
+      const saved = (await MessageV2.get({ sessionID: session.id, messageID: assistantID })).info as MessageV2.Assistant
+      expect(outcome).toBe("continue")
+      expect(saved.finish).toBe("tool-calls")
 
       const parts = await MessageV2.parts(assistantID)
       const text = parts.filter((p): p is MessageV2.TextPart => p.type === "text").map((p) => p.text)

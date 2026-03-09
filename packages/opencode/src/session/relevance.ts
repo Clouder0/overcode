@@ -60,6 +60,21 @@ export function isUserRelevant(msg: MessageV2.WithParts) {
   })
 }
 
+export function hasAgentHandoff(msg: MessageV2.WithParts) {
+  if (msg.info.role !== "assistant") return false
+  return msg.parts.some(
+    (part) =>
+      part.type === "message" &&
+      part.direction === "outgoing" &&
+      part.peerType === "agent",
+  )
+}
+
+export function hasRelevantLocalText(msg: MessageV2.WithParts) {
+  if (msg.info.role !== "assistant") return false
+  return msg.parts.some((part) => part.type === "text" && isTextRelevant(part))
+}
+
 export function isAssistantAnswered(info: MessageV2.Assistant) {
   if (!info.time.completed) return false
   if (info.summary === true) return false
@@ -68,5 +83,16 @@ export function isAssistantAnswered(info: MessageV2.Assistant) {
   if (info.error) return true
   if (!info.finish) return false
   if (["tool-calls", "unknown"].includes(info.finish)) return false
+  return true
+}
+
+export function isAssistantAnsweredMessage(msg: MessageV2.WithParts) {
+  if (msg.info.role !== "assistant") return false
+  if (!msg.info.time.completed) return false
+  if (msg.info.summary === true) return false
+  if (msg.info.error) return true
+  if (!msg.info.finish) return false
+  if (["tool-calls", "unknown"].includes(msg.info.finish)) return false
+  if (hasAgentHandoff(msg) && !hasRelevantLocalText(msg)) return false
   return true
 }

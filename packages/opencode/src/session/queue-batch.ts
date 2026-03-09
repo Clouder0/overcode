@@ -1,5 +1,5 @@
 import { MessageV2 } from "./message-v2"
-import { isAssistantAnswered } from "./relevance"
+import { isAssistantAnsweredMessage } from "./relevance"
 
 function tools(value: MessageV2.User["tools"]) {
   if (!value) return {}
@@ -41,9 +41,7 @@ export function coveredUsers(msg: MessageV2.WithParts) {
 
 export function isAnswered(input: { userID: string; replies: MessageV2.WithParts[]; covered: Set<string> }) {
   if (input.covered.has(input.userID)) return true
-  return input.replies.some(
-    (msg) => msg.info.role === "assistant" && isAssistantAnswered(msg.info as MessageV2.Assistant),
-  )
+  return input.replies.some((msg) => msg.info.role === "assistant" && isAssistantAnsweredMessage(msg))
 }
 
 export function batchEnd(input: {

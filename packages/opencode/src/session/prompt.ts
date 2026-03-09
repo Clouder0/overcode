@@ -5,7 +5,7 @@ import z from "zod"
 import { Identifier } from "../id/id"
 import { MessageV2 } from "./message-v2"
 import { batchEnd, coveredUsers, isAnswered } from "./queue-batch"
-import { isAssistantAnswered, isRelevantInboundMessage, isTextRelevant, isUserRelevant } from "./relevance"
+import { isAssistantAnsweredMessage, isRelevantInboundMessage, isTextRelevant, isUserRelevant } from "./relevance"
 import { Log } from "../util/log"
 import { SessionRevert } from "./revert"
 import { Session } from "."
@@ -759,7 +759,7 @@ export namespace SessionPrompt {
     if (msg.info.role !== "assistant") return false
     const info = msg.info as MessageV2.Assistant
     if (!info.finish) return false
-    if (isAssistantAnswered(info)) return false
+    if (isAssistantAnsweredMessage(msg)) return false
     if (info.finish === "tool-calls") return true
     if (info.finish === "unknown") return true
     return false
@@ -3340,6 +3340,7 @@ export namespace SessionPrompt {
       }
 
       let processed: MessageV2.Assistant | undefined
+      let processedMsg: MessageV2.WithParts | undefined
       const outcome = await iife(async () => {
         let attempts = 0
         while (true) {
@@ -3429,7 +3430,8 @@ export namespace SessionPrompt {
 
           if (result !== "compact") {
             const attemptParts = await MessageV2.parts(processor.message.id)
-            const answered = isAssistantAnswered(processor.message)
+            const attempt = { info: processor.message, parts: attemptParts } satisfies MessageV2.WithParts
+            const answered = isAssistantAnsweredMessage(attempt)
             if (shouldRefreshTurn() && !answered) {
               if (attemptParts.length === 0) {
                 await Session.removeMessage({ sessionID, messageID: processor.message.id }).catch(() => {})
@@ -3437,6 +3439,7 @@ export namespace SessionPrompt {
               }
               if (attemptParts.length > 0) {
                 processed = processor.message
+                processedMsg = attempt
               }
               return "continue" as const
             }
@@ -3448,6 +3451,7 @@ export namespace SessionPrompt {
             }
 
             processed = processor.message
+            processedMsg = attempt
             return result
           }
 
@@ -3548,7 +3552,8 @@ export namespace SessionPrompt {
 
       if (
         processed &&
-        isAssistantAnswered(processed) &&
+        processedMsg &&
+        isAssistantAnsweredMessage(processedMsg) &&
         processed.finish !== "error" &&
         !processed.error &&
         queued.length > 1
