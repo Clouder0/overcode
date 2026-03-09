@@ -337,7 +337,9 @@ test("subagent loop continues after send_agent_message even with terminal finish
 
         const history = await MessageV2.filterCompacted(MessageV2.stream(child.id))
         const assistants = history.filter((m) => m.info.role === "assistant")
-        const msgParts = assistants.flatMap((m) => m.parts).filter((p): p is MessageV2.MessagePart => p.type === "message")
+        const msgParts = assistants
+          .flatMap((m) => m.parts)
+          .filter((p): p is MessageV2.MessagePart => p.type === "message")
 
         expect(assistants.length).toBe(2)
         expect(msgParts.some((p) => p.direction === "outgoing" && p.peer === parent.id)).toBe(true)
@@ -500,7 +502,9 @@ test("subagent loop stops after terminal reply without outgoing handoff", async 
 
         const history = await MessageV2.filterCompacted(MessageV2.stream(child.id))
         const assistants = history.filter((m) => m.info.role === "assistant")
-        const msgParts = assistants.flatMap((m) => m.parts).filter((p): p is MessageV2.MessagePart => p.type === "message")
+        const msgParts = assistants
+          .flatMap((m) => m.parts)
+          .filter((p): p is MessageV2.MessagePart => p.type === "message")
 
         expect(assistants.length).toBe(1)
         expect(msgParts.some((p) => p.direction === "outgoing" && p.peer === parent.id)).toBe(false)
