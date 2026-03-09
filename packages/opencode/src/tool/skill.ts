@@ -6,13 +6,13 @@ import { SessionToolOverrides } from "../session/tool-overrides"
 import { ConfigMarkdown } from "../config/markdown"
 import { PermissionNext } from "../permission/next"
 import { MessageV2 } from "../session/message-v2"
-import { isUserRelevant } from "../session/relevance"
-import { Instance } from "../project/instance"
 import { Identifier } from "../id/id"
+import { inspectSkillReuse } from "../util/skill-dedupe"
+import { Instance } from "../project/instance"
 
 const MESSAGE_ID_SCHEMA = Identifier.schema("message")
 const CACHE_LIMIT = 4096
-const cache = Instance.state(() => ({
+const inflight = Instance.state(() => ({
   keys: new Set<string>(),
 }))
 
@@ -98,37 +98,7 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
           ),
         )
         .then((value) => Buffer.from(value).toString("hex"))
-
-      const nameForPart = (part: Tool.Context["messages"][number]["parts"][number]) => {
-        if (part.type !== "tool") return
-        if (part.tool !== "skill") return
-        if (part.state.status !== "completed") return
-
-        const meta = part.state.metadata
-        if (meta && typeof meta === "object") {
-          const value = (meta as { name?: unknown }).name
-          if (typeof value === "string" && value.trim().length > 0) return value.trim()
-        }
-
-        const input = part.state.input
-        const value = input && typeof input === "object" ? (input as { name?: unknown }).name : undefined
-        if (typeof value !== "string") return
-        if (value.trim().length === 0) return
-        return value.trim()
-      }
-
-      const markerForPart = (part: Tool.Context["messages"][number]["parts"][number]) => {
-        const hasMetadata = "metadata" in part
-        if (!hasMetadata) return
-        const metadata = part.metadata
-        if (!metadata || typeof metadata !== "object") return
-        const opencode = (metadata as { opencode?: unknown }).opencode
-        if (!opencode || typeof opencode !== "object") return
-        const marker = (opencode as { marker?: unknown }).marker
-        if (!marker || typeof marker !== "object") return
-        const kind = (marker as { kind?: unknown }).kind
-        if (kind === "trim" || kind === "think" || kind === "rctx") return kind
-      }
+      const key = `${ctx.sessionID}:${ctx.messageID}:${skill.name}:${hash}`
 
       const skillContext = (ctx.extra as { skillContext?: unknown } | undefined)?.skillContext
       const turnContext = (ctx.extra as { turnContext?: unknown } | undefined)?.turnContext
@@ -176,83 +146,21 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
 
         return list.filter((message) => MessageV2.modelVisible(message))
       })()
-
-      const merged = (() => {
-        const base = visible.map((message) => ({
-          id: message.info.id,
-          role: message.info.role,
-          parts: message.parts,
-          user: isUserRelevant(message),
-        }))
-        const found = base.findIndex((message) => message.id === ctx.messageID)
-
-        if (found === -1) {
-          return [
-            ...base,
-            {
-              id: ctx.messageID,
-              role: "assistant",
-              parts: current,
-              user: false,
-            },
-          ]
-        }
-
-        if (current.length === 0) return base
-        return base.map((message, index) => {
-          if (index !== found) return message
-          return {
-            ...message,
-            parts: current,
+      const dedupe = inflight().keys.has(key)
+        ? {
+            turns: 0,
+            reuse: { kind: "duplicate_in_turn", turns: 0 } as const,
           }
-        })
-      })()
-
-      const indexed = merged.flatMap((message, messageIndex) =>
-        message.parts.map((part, partIndex) => ({
-          message,
-          messageIndex,
-          part,
-          partIndex,
-        })),
-      )
-
-      const prior = indexed.findLast((item) => {
-        if (item.message.role !== "assistant") return false
-        if (item.part.type !== "tool") return false
-        if (item.part.tool !== "skill") return false
-        if (item.part.state.status !== "completed") return false
-        if (nameForPart(item.part) !== skill.name) return false
-        return true
-      })
-
-      const priorState =
-        prior && prior.part.type === "tool" && prior.part.tool === "skill" && prior.part.state.status === "completed"
-          ? prior.part.state
-          : undefined
-
-      const priorMeta = (() => {
-        if (!priorState) return
-        const meta = priorState.metadata
-        if (!meta || typeof meta !== "object") return
-        return meta as Record<string, unknown>
-      })()
-      const priorHash = typeof priorMeta?.hash === "string" ? priorMeta.hash : undefined
-      const priorAnchor = typeof priorMeta?.anchorUserID === "string" ? priorMeta.anchorUserID : undefined
-      const sameHash = priorHash === hash
-      const compacted = !!priorState?.time.compacted
-      const sameTurn = !!prior && !!priorState && !!anchorUserID && sameHash && priorAnchor === anchorUserID
-
-      const sincePrior = prior
-        ? [
-            ...prior.message.parts.slice(prior.partIndex + 1),
-            ...merged.slice(prior.messageIndex + 1).flatMap((message) => message.parts),
-          ]
-        : []
-
-      const marker = sincePrior.find(markerForPart)
-      const turns = prior ? merged.slice(prior.messageIndex + 1).filter((message) => message.user).length : 0
-      const near = !!prior && !!priorState && !compacted && sameHash && turns <= 1 && !marker
+        : inspectSkillReuse({
+            name: skill.name,
+            hash,
+            anchorUserID,
+            visible,
+            currentMessageID: ctx.messageID,
+            current,
+          })
+      const turns = dedupe.turns
+      const reuse = dedupe.reuse
 
       const session = (ctx.extra as any)?.session as { parentID?: string; sessionType?: string } | undefined
       const isChildSession = session?.sessionType === "subagent" || !!session?.parentID
@@ -262,24 +170,15 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         await SessionToolOverrides.enable(ctx.sessionID, enabledTools)
       }
 
-      const key = `${ctx.sessionID}:${ctx.messageID}:${skill.name}:${hash}`
-      const duplicate = (() => {
-        const s = cache()
-        if (s.keys.has(key)) return true
-        s.keys.add(key)
-        if (s.keys.size <= CACHE_LIMIT) return false
-        const first = s.keys.values().next().value
-        if (typeof first === "string") s.keys.delete(first)
-        return false
-      })()
+      const currentNoReload =
+        "Treat the skill requirement as satisfied for this assistant message. Do not call the skill tool again unless you are in a new assistant message. Continue with the task directly."
+      const visibleNoReload =
+        "Treat the skill requirement as satisfied only while the previously applied skill content remains visible in recent context. If the visible context changes and that applied skill content is no longer present, call the skill tool again. Continue with the task directly."
 
-      const noReload =
-        "Treat the skill requirement as satisfied. Do not call the skill tool again for this unresolved user turn. Continue with the task directly."
-
-      if (duplicate) {
+      if (reuse?.kind === "duplicate_in_turn") {
         return {
           title: `Skill up-to-date: ${skill.name}`,
-          output: [`Skill "${skill.name}" is already active in this assistant message.`, noReload].join("\n"),
+          output: [`Skill "${skill.name}" is already active in this assistant message.`, currentNoReload].join("\n"),
           metadata: {
             name: skill.name,
             dir,
@@ -295,10 +194,13 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         }
       }
 
-      if (sameTurn) {
+      if (reuse?.kind === "same_turn") {
         return {
           title: `Skill up-to-date: ${skill.name}`,
-          output: [`Skill "${skill.name}" is already loaded for this unresolved user turn.`, noReload].join("\n"),
+          output: [
+            `Skill "${skill.name}" is already loaded for this unresolved user turn and still visible in recent context.`,
+            visibleNoReload,
+          ].join("\n"),
           metadata: {
             name: skill.name,
             dir,
@@ -314,10 +216,13 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         }
       }
 
-      if (near) {
+      if (reuse?.kind === "near_context") {
         return {
           title: `Skill already loaded: ${skill.name}`,
-          output: [`Skill "${skill.name}" is already loaded and context is still near.`, noReload].join("\n"),
+          output: [
+            `Skill "${skill.name}" is already loaded and the applied content is still visible in recent context.`,
+            visibleNoReload,
+          ].join("\n"),
           metadata: {
             name: skill.name,
             dir,
@@ -341,6 +246,13 @@ export const SkillTool = Tool.define("skill", async (ctx) => {
         "",
         parsed.content.trim(),
       ].join("\n")
+
+      const s = inflight()
+      s.keys.add(key)
+      if (s.keys.size > CACHE_LIMIT) {
+        const first = s.keys.values().next().value
+        if (typeof first === "string") s.keys.delete(first)
+      }
 
       return {
         title: `Loaded skill: ${skill.name}`,

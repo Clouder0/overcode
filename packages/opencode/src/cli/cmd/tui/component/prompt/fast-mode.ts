@@ -2,7 +2,7 @@ import type { Provider } from "@/provider/provider"
 import { supportsOpenAIFastMode } from "@/provider/openai/service-tier"
 
 export function nextFastModeTier(value: string | undefined) {
-  if (value === "priority") return "auto"
+  if (value === "priority") return
   return "priority"
 }
 

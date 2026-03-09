@@ -183,7 +183,7 @@ describe("session.prompt context_length retry cleanup", () => {
     })
   })
 
-  test("reuses prior same-turn skill load across context-length retry attempts", async () => {
+  test("reapplies skill across context-length retry attempts when prior retry stays hidden", async () => {
     await using tmp = await tmpdir({
       git: true,
       init: async (dir) => {
@@ -386,8 +386,8 @@ Step one.
 
         expect(calls.count).toBeGreaterThanOrEqual(2)
         expect(skill.first?.applied).toBe(true)
-        expect(skill.second?.applied).toBe(false)
-        expect(skill.second?.reason).toBe("same_turn")
+        expect(skill.second?.applied).toBe(true)
+        expect(skill.second?.reason).toBe("applied")
       },
     })
   })

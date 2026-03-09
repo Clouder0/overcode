@@ -119,7 +119,7 @@ test("LLM.stream passes priority service tier for supported models", async () =>
   })
 })
 
-test("LLM.stream lets explicit auto service tier override model defaults", async () => {
+test("LLM.stream omits explicit auto service tier in normal mode", async () => {
   await using tmp = await tmpdir({ git: true })
 
   await Instance.provide({
@@ -140,7 +140,7 @@ test("LLM.stream lets explicit auto service tier override model defaults", async
       })
 
       expect(streamCalls).toHaveLength(1)
-      expect(streamCalls[0].providerOptions?.openai?.serviceTier).toBe("auto")
+      expect(streamCalls[0].providerOptions?.openai?.serviceTier).toBeUndefined()
     },
   })
 })

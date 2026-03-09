@@ -401,12 +401,14 @@ Step one.
       expect((second.metadata as any).applied).toBe(false)
       expect((second.metadata as any).status).toBe("noop")
       expect((second.metadata as any).reason).toBe("near_context")
-      expect(second.output).toContain("Do not call the skill tool again for this unresolved user turn.")
+      expect(second.output).toContain(
+        "Treat the skill requirement as satisfied only while the previously applied skill content remains visible in recent context.",
+      )
     },
   })
 })
 
-test("same-message duplicate skill call no-ops even without persisted context", async () => {
+test("same-message duplicate skill call noops before current-message result is persisted", async () => {
   await using tmp = await tmpdir({
     git: true,
     init: async (dir) => {
@@ -458,7 +460,6 @@ Step one.
       expect((second.metadata as any).applied).toBe(false)
       expect((second.metadata as any).status).toBe("noop")
       expect((second.metadata as any).reason).toBe("duplicate_in_turn")
-      expect(second.output).toContain("Do not call the skill tool again for this unresolved user turn.")
     },
   })
 })
@@ -1107,7 +1108,7 @@ Step one.
   })
 })
 
-test("identical reload no-ops when prior load exists only on current message", async () => {
+test("identical reload uses duplicate_in_turn when prior load exists only on current message", async () => {
   await using tmp = await tmpdir({
     git: true,
     init: async (dir) => {
@@ -1169,7 +1170,7 @@ Step one.
 
       expect((second.metadata as any).applied).toBe(false)
       expect((second.metadata as any).status).toBe("noop")
-      expect((second.metadata as any).reason).toBe("near_context")
+      expect((second.metadata as any).reason).toBe("duplicate_in_turn")
     },
   })
 })
@@ -1253,7 +1254,7 @@ Step one.
   })
 })
 
-test("same-turn dedup no-ops despite marker boundaries when anchor matches", async () => {
+test("same-turn dedup does not cross marker boundaries when anchor matches", async () => {
   await using tmp = await tmpdir({
     git: true,
     init: async (dir) => {
@@ -1315,15 +1316,105 @@ Step one.
         },
       } as any)
 
-      expect((second.metadata as any).applied).toBe(false)
-      expect((second.metadata as any).status).toBe("noop")
-      expect((second.metadata as any).reason).toBe("same_turn")
-      expect(second.output).toContain("Do not call the skill tool again for this unresolved user turn.")
+      expect((second.metadata as any).applied).toBe(true)
+      expect((second.metadata as any).status).toBe("applied")
+      expect((second.metadata as any).reason).toBe("applied")
     },
   })
 })
 
-test("promotes repeated near-context no-op to same-turn on next attempt", async () => {
+test("visible applied load stays authoritative when a later noop remains visible", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, ".opencode", "skill", "brainstorming", "SKILL.md"),
+        `---
+name: brainstorming
+description: Brainstorm skill
+---
+
+# Brainstorming
+
+Step one.
+`,
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agent = await Agent.get("build")
+      const skillTool = await SkillTool.init({ agent })
+
+      const first = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_visible_applied_anchor",
+        messageID: "msg-1",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [],
+        extra: {
+          turnContext: {
+            anchorUserID: "u0",
+          },
+        },
+      } as any)
+
+      const applied = priorSkillPart({
+        id: "p-applied",
+        name: "brainstorming",
+        metadata: first.metadata as any,
+      })
+
+      const second = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_visible_applied_anchor",
+        messageID: "msg-2",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [applied]), userHistory("u1")],
+        extra: {
+          turnContext: {
+            anchorUserID: "u1",
+          },
+        },
+      } as any)
+
+      expect((second.metadata as any).reason).toBe("near_context")
+
+      const near = priorSkillPart({
+        id: "p-near",
+        name: "brainstorming",
+        metadata: second.metadata as any,
+      })
+
+      const third = await skillTool.execute({ name: "brainstorming" }, {
+        sessionID: "session_visible_applied_anchor",
+        messageID: "msg-3",
+        agent: agent.name,
+        abort: new AbortController().signal,
+        metadata() {},
+        async ask() {},
+        messages: [assistantHistory("a1", [applied]), assistantHistory("a2", [near]), userHistory("u1")],
+        extra: {
+          turnContext: {
+            anchorUserID: "u1",
+          },
+        },
+      } as any)
+
+      expect((third.metadata as any).applied).toBe(false)
+      expect((third.metadata as any).status).toBe("noop")
+      expect((third.metadata as any).reason).toBe("near_context")
+    },
+  })
+})
+
+test("reapplies when only prior no-op skill loads remain visible", async () => {
   await using tmp = await tmpdir({
     git: true,
     init: async (dir) => {
@@ -1399,7 +1490,7 @@ Step one.
         abort: new AbortController().signal,
         metadata() {},
         async ask() {},
-        messages: [assistantHistory("a1", [applied]), assistantHistory("a2", [near]), userHistory("u1")],
+        messages: [assistantHistory("a2", [near]), userHistory("u1")],
         extra: {
           turnContext: {
             anchorUserID: "u1",
@@ -1407,9 +1498,9 @@ Step one.
         },
       } as any)
 
-      expect((third.metadata as any).applied).toBe(false)
-      expect((third.metadata as any).status).toBe("noop")
-      expect((third.metadata as any).reason).toBe("same_turn")
+      expect((third.metadata as any).applied).toBe(true)
+      expect((third.metadata as any).status).toBe("applied")
+      expect((third.metadata as any).reason).toBe("applied")
     },
   })
 })

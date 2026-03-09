@@ -71,7 +71,8 @@ Before writing any assistant text that is meant to communicate information (repo
 Never assume that writing assistant text will reach another agent.
 
 Skill invocation rule:
-- If a skill call reports up-to-date/no-op for any reason (duplicate_in_turn, same_turn, near_context), treat the skill requirement as satisfied and do not call the same skill again for this unresolved user turn.
+- If a skill call reports \`duplicate_in_turn\`, treat the skill requirement as satisfied for the current assistant message.
+- If a skill call reports \`same_turn\` or \`near_context\`, treat the skill requirement as satisfied only while the previously applied skill content remains visible in recent context. If the visible context changes and that applied skill content is no longer present, call the skill tool again.
 
 How to choose the recipient session ID:
 - If you are replying to an agent message, use the sender session id shown in the message header.

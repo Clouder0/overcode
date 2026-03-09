@@ -29,6 +29,7 @@ export function supportsOpenAIServiceTier(model: Pick<Provider.Model, "api">, ti
 
 export function sanitizeOpenAIServiceTier(model: Pick<Provider.Model, "api">, tier: string | undefined) {
   if (!tier) return
+  if (tier === "auto") return
   if (tier !== "auto" && tier !== "flex" && tier !== "priority") return
   if (!supportsOpenAIServiceTier(model, tier)) return
   return tier

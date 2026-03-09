@@ -53,9 +53,9 @@ describe("fast mode prompt helpers", () => {
     expect(result.badge).toBe("")
   })
 
-  test("toggle helper flips between priority and auto", () => {
+  test("toggle helper flips between priority and cleared normal mode", () => {
     expect(nextFastModeTier(undefined)).toBe("priority")
     expect(nextFastModeTier("auto")).toBe("priority")
-    expect(nextFastModeTier("priority")).toBe("auto")
+    expect(nextFastModeTier("priority")).toBeUndefined()
   })
 })

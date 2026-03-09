@@ -52,12 +52,17 @@ describe("session.system message protocol", () => {
     expect(protocol).toContain('A: wait_agent_message(sources=["ses_B"], since=2) → counts the message from ses_B.')
   })
 
-  test("documents that no-op skill loads satisfy requirement", () => {
+  test("documents that noop skill reuse depends on current message or visible applied content", () => {
     const protocol = SystemPrompt.messageProtocol("primary", "ses_test").join("\n")
 
     expect(protocol).toContain(
-      "If a skill call reports up-to-date/no-op for any reason (duplicate_in_turn, same_turn, near_context), treat the skill requirement as satisfied",
+      "If a skill call reports `duplicate_in_turn`, treat the skill requirement as satisfied for the current assistant message.",
     )
-    expect(protocol).toContain("do not call the same skill again for this unresolved user turn")
+    expect(protocol).toContain(
+      "If a skill call reports `same_turn` or `near_context`, treat the skill requirement as satisfied only while the previously applied skill content remains visible in recent context.",
+    )
+    expect(protocol).toContain(
+      "If the visible context changes and that applied skill content is no longer present, call the skill tool again.",
+    )
   })
 })

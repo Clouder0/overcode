@@ -75,7 +75,7 @@ describe("OpenAI service tier helpers", () => {
         } as any,
         "auto",
       ),
-    ).toBe("auto")
+    ).toBeUndefined()
   })
 
   test("reports fast mode availability for supported OpenAI-family models", () => {
